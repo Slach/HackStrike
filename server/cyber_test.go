@@ -1043,3 +1043,46 @@ func TestWeaponSwitch(t *testing.T) {
 		t.Fatalf("pistol = 18 dmg, hp=%d", a.hp)
 	}
 }
+
+// Снапшот обязан сообщать jacked (плейтест M2-2: десинк «сервер джекнут,
+// дека не показана» замораживал игрока навечно — клиент самоисцеляется по
+// этому флагу).
+func TestSnapReportsJacked(t *testing.T) {
+	w, clock := cyberTestWorld(t)
+	h := w.addPlayer(1, "Neo", "hacker", 0)
+	jackAt(w, h, "t1")
+	w.takeOut()
+
+	w.broadcastSnap()
+	var got any
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "snap" {
+			continue
+		}
+		players, _ := om.msg["players"].([]snapPlayer)
+		for _, p := range players {
+			if p.ID == h.id {
+				got = p.Jacked
+			}
+		}
+	}
+	if got != true {
+		t.Fatalf("snap.jacked for jacked hacker = %v, want true", got)
+	}
+
+	w.handleMessage(h, message{"t": "jackout"})
+	*clock = clock.Add(time.Second / 30)
+	w.simulateTick()
+	w.broadcastSnap()
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "snap" {
+			continue
+		}
+		players, _ := om.msg["players"].([]snapPlayer)
+		for _, p := range players {
+			if p.ID == h.id && p.Jacked {
+				t.Fatal("snap.jacked must be false after jackout")
+			}
+		}
+	}
+}

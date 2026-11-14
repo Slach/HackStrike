@@ -287,6 +287,7 @@ func (w *world) jackout(pl *player) {
 	if !pl.jacked {
 		return
 	}
+	log.Printf("room: player %d jackout", pl.id)
 	pl.jacked = false
 	pl.jackHost = nil
 	pl.progs = nil

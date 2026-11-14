@@ -378,6 +378,10 @@ type snapPlayer struct {
 	HP    int     `json:"hp"`
 	Alive bool    `json:"alive"`
 	Safe  bool    `json:"safe"` // всегда false в M1
+	// Jacked — хакер стоит в деке (M2): тело уязвимо и не двигается. Клиент
+	// использует флаг для самоисцеления десинка «сервер джекнут, дека не
+	// показана» — иначе ESC мёртв и игрок застревает (плейтест M2-2).
+	Jacked bool `json:"jacked,omitempty"`
 }
 
 func (w *world) broadcastSnap() {
@@ -394,7 +398,7 @@ func (w *world) broadcastSnap() {
 			ID: p.id, Name: p.name, Team: p.team, Cls: p.cls,
 			X: pos[0], Y: pos[1], Z: pos[2],
 			Yaw: round3(p.yaw), Pitch: round3(p.pitch),
-			HP: p.hp, Alive: p.alive, Safe: false,
+			HP: p.hp, Alive: p.alive, Safe: false, Jacked: p.jacked,
 		})
 	}
 	// timeLeft — миллисекунды (клиент M1 читает это поле); timeLeftMs —

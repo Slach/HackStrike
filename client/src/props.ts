@@ -139,7 +139,9 @@ export class PropsView {
       door: mk('door', [0.04, 0.07, 0.055], [0.01, 0.03, 0.02]),
       antenna: glow('antenna', [0.2, 0.9, 0.5]),
       led: glow('led', [0.15, 0.75, 0.42]),
-      cable: mk('cable', [0.05, 0.13, 0.09], [0.02, 0.09, 0.05]),
+      // Кабели — самосветящийся янтарь (плейтест M2-2: «не видно, как идут
+      // провода»): контраст к зелёной неоновой теме, виден и у тёмного пола.
+      cable: glow('cable', [0.85, 0.55, 0.1]),
       cableDead: mk('cableDead', [0.07, 0.07, 0.07], [0.012, 0.014, 0.012]),
       sphere: glow('sphere', [0.04, 0.3, 0.16]),
     }
@@ -252,7 +254,7 @@ export class PropsView {
     cable.mesh?.dispose()
     const path = cable.severed ? droopPath(cable.path) : cable.path
     // Кабель — заметный неоновый жгут (плейтест: «не видно, как идут провода»).
-    cable.mesh = MeshBuilder.CreateTube(`prop.${cable.id}`, { path, radius: 0.09 }, this.scene)
+    cable.mesh = MeshBuilder.CreateTube(`prop.${cable.id}`, { path, radius: 0.11 }, this.scene)
     cable.mesh.enableEdgesRendering(0.95)
     ;(cable.mesh as import('@babylonjs/core/Meshes/mesh').Mesh).edgesWidth = 1.5
     cable.mesh.material = cable.severed ? this.mats.cableDead : this.mats.cable

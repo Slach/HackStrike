@@ -129,6 +129,13 @@ function handleSnap(snap: SnapMsg): void {
   }
   hud.setRoster(snap.players, myId)
   const me = myId !== null ? latestMeta.get(myId) : undefined
+  // Самоисцеление десинка (плейтест M2-2): сервер считает нас джекнутыми, а
+  // дека не показана — ESC в таком состоянии мёртв (гейт hackview.active),
+  // игрок навечно стоял бы у терминала. Шлём jackout сами.
+  if (me !== undefined && me.jacked && !hackview.active) {
+    console.warn('[hs] desync: server jacked, deck closed — auto jackout')
+    sock.sendJackout()
+  }
   if (me !== undefined) {
     if (lastMyHp > me.hp) hud.damageFlash()
     lastMyHp = me.hp

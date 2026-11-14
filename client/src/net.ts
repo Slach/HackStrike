@@ -85,6 +85,8 @@ export interface SnapPlayer {
   hp: number
   alive: boolean
   safe: boolean
+  /** Хакер стоит в деке (M2): тело уязвимо; snap-флаг для самоисцеления десинка. */
+  jacked: boolean
 }
 
 export interface Snapshot {
@@ -169,6 +171,7 @@ function parsePlayer(v: unknown): SnapPlayer | null {
     hp: num(p.hp, 0),
     alive: p.alive !== false,
     safe: p.safe === true,
+    jacked: p.jacked === true,
   }
 }
 
