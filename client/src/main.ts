@@ -30,7 +30,7 @@ const RENDER_DELAY_MS = 100
 const INPUT_INTERVAL_MS = 1000 / 30
 const KILLFEED_ATTRIBUTION_MS = 3000
 const SNIPER_FOV_COS = Math.cos((25 * Math.PI) / 180) // конус «в поле зрения» для авто-зума
-const SNIPER_ZOOM_RANGE = 30 // дальше — зум не включается (м)
+const SNIPER_ZOOM_RANGE = 35 // дальше — зум не включается (м)
 
 type SnapMsg = Extract<ServerMessage, { t: 'snap' }>
 type ShotMsg = Extract<ServerMessage, { t: 'shot' }>
@@ -293,9 +293,9 @@ engine.runRenderLoop(() => {
   scope.update(performance.now(), myCls, enemyInFov)
   hud.scope(scope.engaged)
 
-  // Снайпер стреляет только в зуме (зум сам включается через 0.1 с
-  // после появления врага в поле зрения — ГДД §3.3).
-  if (playing && alive && !matchOver && controls.locked && world !== null && (myCls !== 'sniper' || scope.engaged)) {
+  // Снайпер стреляет только в зуме, зум — сразу при появлении врага в прямой
+  // видимости; выстрел — после 0.1 с удержания (ГДД §3.3).
+  if (playing && alive && !matchOver && controls.locked && world !== null && (myCls !== 'sniper' || scope.armed)) {
     const enemies: TargetBox[] = []
     for (const p of states.values()) {
       if (p.id === myId || !p.meta.alive || p.meta.team === myTeam) continue

@@ -26,23 +26,26 @@ export interface TargetBox {
 const MINIGUN_SPINUP = 0.5 // GDD §3.1: first 0.5s of aiming, no shots
 const MINIGUN_HOLD = 1.0 // spin-up holds for 1s after losing the target
 
-// Sniper auto-scope (GDD §3.3): zoom x1.5 engages 0.1s after an enemy enters
-// the field of view; the sniper only auto-fires while scoped; zoom drops
-// 1s after the last enemy leaves the view.
-const SNIPER_ACQUIRE_MS = 100
+// Sniper auto-scope (GDD §3.3): zoom x1.5 snaps on the moment an enemy is
+// in direct view; the shot is only allowed after the scope has been held
+// for 0.1s; zoom drops 1s after the last enemy leaves the view.
+const SNIPER_FIRE_DELAY_MS = 100
 const SNIPER_HOLD_MS = 1000
 const SNIPER_ZOOM = 1.5
 
 export class Scope {
   engaged = false
-  private firstSeenMs = 0
+  /** engaged AND held long enough to allow a shot. */
+  armed = false
+  private engagedSinceMs = 0
   private lastSeenMs = 0
 
   constructor(private baseFov: number, private camera: { fov: number }) {}
 
   reset(): void {
     this.engaged = false
-    this.firstSeenMs = 0
+    this.armed = false
+    this.engagedSinceMs = 0
     this.lastSeenMs = 0
     this.camera.fov = this.baseFov
   }
@@ -52,16 +55,11 @@ export class Scope {
       if (this.engaged || this.camera.fov !== this.baseFov) this.reset()
       return
     }
-    if (enemyInFov) {
-      if (this.firstSeenMs === 0) this.firstSeenMs = nowMs
-      this.lastSeenMs = nowMs
-    } else {
-      this.firstSeenMs = 0
-    }
-    this.engaged =
-      this.firstSeenMs !== 0 &&
-      nowMs - this.firstSeenMs >= SNIPER_ACQUIRE_MS &&
-      nowMs - this.lastSeenMs <= SNIPER_HOLD_MS
+    if (enemyInFov) this.lastSeenMs = nowMs
+    const wasEngaged = this.engaged
+    this.engaged = nowMs - this.lastSeenMs <= SNIPER_HOLD_MS
+    if (this.engaged && !wasEngaged) this.engagedSinceMs = nowMs
+    this.armed = this.engaged && nowMs - this.engagedSinceMs >= SNIPER_FIRE_DELAY_MS
     this.camera.fov = this.engaged ? this.baseFov / SNIPER_ZOOM : this.baseFov
   }
 }
