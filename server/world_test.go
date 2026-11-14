@@ -92,6 +92,27 @@ func TestRebalanceTeams(t *testing.T) {
 	}
 }
 
+
+// Имена уникальны: второй «Slach» становится «Slach-2»; после выхода имя
+// освобождается.
+func TestUniqueNames(t *testing.T) {
+	w, _ := testWorldWithEmbeddedMap(t)
+	a := w.addPlayer(1, "Slach", "assault", -1)
+	b := w.addPlayer(2, "Slach", "assault", -1)
+	c := w.addPlayer(3, "slach", "assault", -1) // sanitizeName, вероятно, не меняет регистр — тоже дубликат
+	if a.name != "Slach" || b.name != "Slach-2" {
+		t.Fatalf("want Slach / Slach-2, got %q / %q", a.name, b.name)
+	}
+	if c.name == "Slach" || c.name == "Slach-2" {
+		t.Fatalf("third same name must get -3, got %q", c.name)
+	}
+	w.removePlayer(a.id) // уходит исходный «Slach» (не «Slach-2»!)
+	d := w.addPlayer(4, "Slach", "assault", -1)
+	if d.name != "Slach" {
+		t.Fatalf("freed name must be reusable, got %q", d.name)
+	}
+}
+
 // Input: лимит 60/с — всё сверх отбрасывается (не применяется).
 
 // Выбор команды в join: просьба (0|1) уважается, если не создаёт перекос ≥2

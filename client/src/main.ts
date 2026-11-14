@@ -216,7 +216,13 @@ hud.onRespawn = (cls) => {
 // Relock on any input after the lock was lost (Esc, tab switch). Chrome
 // rejects immediate relock for ~1.2s after an Esc exit; the request is
 // silently dropped and the next mousedown/keydown picks it up.
-const tryRelock = () => {
+// NB: never grab the pointer from UI controls (respawn button, class cards):
+// engaging pointer-lock mid-gesture makes Chrome swallow the button's click
+// event, so the respawn overlay would never close on mouse click.
+const isUiTarget = (e: Event): boolean =>
+  e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null
+const tryRelock = (e: Event) => {
+  if (isUiTarget(e)) return
   if (playing && !controls.locked) controls.requestLock()
 }
 document.addEventListener('mousedown', tryRelock)

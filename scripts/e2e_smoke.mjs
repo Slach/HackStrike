@@ -169,15 +169,18 @@ await sleep(300)
 const remaining = clients.filter((c) => c.ws.readyState === 1).map((c) => lastSnap(c).players.find((p) => p.id === welcome(c).id).team)
 check('после ухода 2v0 → 1v1', new Set(remaining).size === remaining.length, remaining.join(','))
 
-// --- 7. явный выбор команды: двое просят противоположные стороны ---
+// --- 7. одинаковые имена получают суффикс, выбор команды уважается ---
 {
   const x = await connect()
   const y = await connect()
-  x.ws.send(JSON.stringify({ t: 'join', name: 'E2E_X', cls: 'assault', team: 0 }))
-  y.ws.send(JSON.stringify({ t: 'join', name: 'E2E_Y', cls: 'assault', team: 1 }))
+  x.ws.send(JSON.stringify({ t: 'join', name: 'Doppel', cls: 'assault', team: 0 }))
+  y.ws.send(JSON.stringify({ t: 'join', name: 'Doppel', cls: 'assault', team: 1 }))
   const wx = await waitFor(x, (m) => m.t === 'welcome')
   const wy = await waitFor(y, (m) => m.t === 'welcome')
   check('join с выбором команды уважается', wx.team === 0 && wy.team === 1, `${wx.team}/${wy.team}`)
+  await sleep(400)
+  const names = lastSnap(x).players.filter((p) => p.name.startsWith('Doppel')).map((p) => p.name)
+  check('дубликат имени получает суффикс -2', names.length === 2 && new Set(names).size === 2, names.join(' & '))
   x.ws.close()
   y.ws.close()
 }

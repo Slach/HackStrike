@@ -145,6 +145,7 @@ export class Hud {
 
   private deploy(): void {
     const name = this.el.name.value.trim() || 'hack'
+    localStorage.setItem('hs.name', name) // не генерировать заново при каждом заходе
     this.onJoin(name, this.joinCls, this.joinTeam)
   }
 
@@ -155,7 +156,9 @@ export class Hud {
   showJoin(): void {
     this.el.join.classList.remove('hidden')
     if (this.el.name.value === '') {
-      this.el.name.value = `hack_${Math.floor(100 + Math.random() * 900)}`
+      // Saved name first (persisted on deploy); fresh hack_XXX only once.
+      const saved = localStorage.getItem('hs.name')
+      this.el.name.value = saved && saved.trim() ? saved : `hack_${Math.floor(100 + Math.random() * 900)}`
     }
     this.refreshDeploy()
   }

@@ -3,6 +3,7 @@ package main
 import (
 	"math/rand"
 	"sort"
+	"strconv"
 	"time"
 )
 
@@ -92,6 +93,27 @@ func (w *world) startMatchIfNeeded() {
 	}
 }
 
+// uniqueName — имена в комнате уникальны: занятое имя получает суффикс -2,
+// -3… (в комнате не должно быть двух «Slach», иначе ростер/киллфед нечитаемы).
+func (w *world) uniqueName(want string) string {
+	base := sanitizeName(want)
+	name := base
+	for i := 2; i < 100; i++ {
+		taken := false
+		for _, p := range w.players {
+			if p.name == name {
+				taken = true
+				break
+			}
+		}
+		if !taken {
+			return name
+		}
+		name = base + "-" + strconv.Itoa(i)
+	}
+	return name
+}
+
 // addPlayer — вход в игру по "join": спавн, welcome. Команда: просьба
 // игрока (wantTeam 0|1) уважается, если не создаёт перекос ≥2 (друзья,
 // зашедшие вместе, больше не окажутся в одной команде из-за тай-брейка
@@ -107,7 +129,7 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 			team = wantTeam
 		}
 	}
-	pl := &player{id: id, name: sanitizeName(name), team: team}
+	pl := &player{id: id, name: w.uniqueName(name), team: team}
 	w.spawnPlayer(pl, cls)
 	w.players[id] = pl
 	w.startMatchIfNeeded()
