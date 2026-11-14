@@ -617,13 +617,32 @@ func TestScanMessage(t *testing.T) {
 	}
 
 	runAndWait(message{"t": "run", "prog": "vulnscan", "dev": "d1"})
-	runAndWait(message{"t": "run", "prog": "trojan", "dev": "d1"})
+	// Vulnscan тоже пересылает scan: узел помечается vulned для этого хакера
+	// (обратная связь «нажал 2 — увидел результат»), поэтому сканов уже 2.
 	if len(scans) != 2 {
+		t.Fatalf("scan must be resent on vuln completion, got %d scans", len(scans))
+	}
+	var d1v scanDevice
+	for _, om := range scans {
+		if devs, ok := om["devices"].([]scanDevice); ok {
+			for _, d := range devs {
+				if d.ID == "d1" {
+					d1v = d
+				}
+			}
+		}
+	}
+	if !d1v.Vulned {
+		t.Fatalf("d1 must carry vulned=true for the vulnscanning hacker: %+v", d1v)
+	}
+
+	runAndWait(message{"t": "run", "prog": "trojan", "dev": "d1"})
+	if len(scans) != 3 {
 		t.Fatalf("scan must be resent on owner change, got %d scans", len(scans))
 	}
-	devs, ok = scans[1]["devices"].([]scanDevice)
+	devs, ok = scans[2]["devices"].([]scanDevice) // scans[1] — vulned-скан, scans[2] — смена владельца
 	if !ok || len(devs) != 5 {
-		t.Fatalf("resent scan: %+v", scans[1]["devices"])
+		t.Fatalf("resent scan: %+v", scans[2]["devices"])
 	}
 	byID := map[string]scanDevice{}
 	for _, d := range devs {

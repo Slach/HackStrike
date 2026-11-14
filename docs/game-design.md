@@ -394,7 +394,7 @@ S→C:
 {"t":"jackin","host":"t1","deck":{"cpu":1.0,"npu":0.5,"ram":4,"net":100}}
 {"t":"deck","cpuLoad":0.5,"npuLoad":0,"ramUsed":2,"netLoad":0.1,
  "progs":[{"id":7,"prog":"vulnscan","dev":"d1","etaMs":1500}]}   // 2 Гц, только джекнутому
-{"t":"scan","devices":[{"id":"d1","kind":"door","x":10,"y":1,"z":20,"owner":3,"links":["s1"]}]}  // после portscan/изменений
+{"t":"scan","devices":[{"id":"d1","kind":"door","x":10,"y":1,"z":20,"owner":3,"links":["s1"],"vulned":true}]}  // после portscan/изменений; vulned:true — уязвимость найдена МОИМ vulnscan'ом (omitempty, доп. 2026-11-14: обратная связь «2 → результат»)
 {"t":"denied","reason":"ram_full|not_vulned|not_owner|not_jacked|no_los|too_far"}
 ```
 `snap` расширяется полем `props` (всем):

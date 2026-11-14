@@ -52,6 +52,7 @@ export interface ScanDevice {
   z: number
   owner: number | null // playerId of the last hacker to trojan it
   links: string[] // ids of adjacent devices
+  vulned?: boolean // my vulnscan found an exploit here (omitted when false)
 }
 
 export interface DeckProg {
@@ -206,6 +207,7 @@ function parseDevice(v: unknown): ScanDevice | null {
     z: num(p.z, 0),
     owner: typeof p.owner === 'number' && Number.isFinite(p.owner) ? p.owner : null,
     links: Array.isArray(p.links) ? p.links.filter((l): l is string => typeof l === 'string') : [],
+    vulned: p.vulned === true,
   }
 }
 

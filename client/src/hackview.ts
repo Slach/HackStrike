@@ -166,6 +166,7 @@ export class HackView {
   private devices = new Map<string, ScanDevice>()
   private readonly doorOpen = new Map<string, boolean>()
   private target: string | null = null
+  private vulned = new Map<string, true>()
   private tabs: Tab[] = [{ key: 'deck', dev: null }]
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
@@ -244,6 +245,14 @@ export class HackView {
   onScan(msg: ScanMsg): void {
     const next = new Map<string, ScanDevice>()
     for (const d of msg.devices) next.set(d.id, d)
+    // vulnscan завершился: сервер присылает vulned:true — хакер должен это
+    // увидеть (иначе «нажал 2 и ничего не произошло»).
+    for (const d of msg.devices) {
+      if (d.vulned && !this.vulned.has(d.id)) {
+        this.toast(`УЯЗВИМОСТЬ НАЙДЕНА: ${d.id.toUpperCase()} — ТРОЯНЬ [3]`)
+      }
+    }
+    this.vulned = new Map([...next].filter(([, d]) => d.vulned === true).map(([id]) => [id, true] as const))
     // Таб на устройство при появлении владения (ГДД §12.6).
     for (const d of msg.devices) {
       if (d.owner !== null && d.owner === this.myId && !this.tabs.some((t) => t.dev === d.id)) {
@@ -419,9 +428,11 @@ export class HackView {
       this.toast('ВЫБЕРИТЕ ЦЕЛЬ НА КАРТЕ СЕТИ')
       return
     }
+    const devSuffix = needDev && this.target !== null ? ` → ${this.target.toUpperCase()}` : ''
     this.deps.send(
       needDev && this.target !== null ? { t: 'run', prog, dev: this.target } : { t: 'run', prog },
     )
+    this.toast(`ЗАПУЩЕНО: ${PROG_LABEL[prog] ?? prog}${devSuffix}`)
   }
 
   private toast(text: string): void {
@@ -799,6 +810,14 @@ export class HackView {
         ring.setAttribute('r', '11')
         ring.classList.add('svg-sel')
         svg.append(ring)
+      }
+      if (d.vulned === true) {
+        const vm = svgEl('circle')
+        vm.setAttribute('cx', String(cx))
+        vm.setAttribute('cy', String(cy))
+        vm.setAttribute('r', '10')
+        vm.classList.add('svg-vulned')
+        svg.append(vm)
       }
       const c = svgEl('circle')
       c.setAttribute('cx', String(cx))

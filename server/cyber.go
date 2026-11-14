@@ -5,7 +5,10 @@ package main
 // деки с честными очередями, двери как первые CONTROLLERS, нож/пули режут
 // кабели. Всё состояние трогает только горутина комнаты (инвариант 2).
 
-import "math"
+import (
+	"log"
+	"math"
+)
 
 // M2-константы (§12.1–§12.4; менять только через ГДД).
 const (
@@ -257,6 +260,7 @@ func (w *world) jackout(pl *player) {
 // --- программы ------------------------------------------------------------
 
 func (w *world) denied(pl *player, reason string) {
+	log.Printf("room: player %d denied: %s", pl.id, reason)
 	w.sendTo(pl.id, message{"t": "denied", "reason": reason})
 }
 
@@ -294,6 +298,7 @@ func (w *world) handleRun(pl *player, msg message) {
 	}
 	pl.progs = append(pl.progs, &program{id: pl.nextProgID, prog: prog, dev: devID, work: work})
 	pl.nextProgID++
+	log.Printf("room: player %d run %s %s", pl.id, prog, devID)
 }
 
 // handleCtrl — {"t":"ctrl"} (§12.5): toggle двери. Только владелец trojan,
@@ -355,6 +360,7 @@ func (w *world) completeProgram(pl *player, p *program) {
 	case "vulnscan":
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.vulnedBy[pl.id] = true // M2: навсегда (§12.4)
+			w.sendScan(pl)             // обновить карту: узел помечается «уязвимо»
 		}
 	case "trojan":
 		if dev := w.cyber.devices[p.dev]; dev != nil {
@@ -384,6 +390,9 @@ type scanDevice struct {
 	Z     float64  `json:"z"`
 	Owner any      `json:"owner"` // null = нейтральное
 	Links []string `json:"links"`
+	// Vulned — уязвимость, найденная МОИМ vulnscan'ом (для этого хакера);
+	// omitempty: поле появляется только когда true (§12.5, доп. 2026-11-14).
+	Vulned bool `json:"vulned,omitempty"`
 }
 
 // sendScan — кибер-карта хакера: только открытые его portscan'ом устройства
@@ -402,6 +411,9 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.owner != 0 {
 			sd.Owner = d.owner
+		}
+		if d.vulnedBy[pl.id] {
+			sd.Vulned = true
 		}
 		devs = append(devs, sd)
 	}
