@@ -38,6 +38,7 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   too_far: 'СЛИШКОМ ДАЛЕКО',
   firewall: 'FIREWALL — ДОСТУП ЗАПРЕЩЁН',
   bad_target: 'FIREWALL — ТОЛЬКО ТЕРМИНАЛ ИЛИ РАДИО',
+  antivirus: 'ANTIVIRUS — УСТАНОВКА TROJAN ОТБИТА',
 }
 
 const KIND_LABEL: Readonly<Record<PropKind, string>> = {
@@ -54,6 +55,7 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   trojan: 'TROJAN',
   watcher: 'WATCHER',
   firewall: 'FIREWALL',
+  antivirus: 'ANTIVIRUS',
 }
 
 const HISTORY_MAX = 60 // 30 с истории при 2 Гц deck-сообщений
@@ -175,6 +177,8 @@ export class HackView {
   private watched = new Map<string, true>()
   /** Устройства с чьим-то firewall (M3 §13.5) — ореол + тост об установке. */
   private firewalled = new Map<string, true>()
+  /** Устройства с чьим-то antivirus (M3 §13.6) — ореол + тост об установке. */
+  private antivirused = new Map<string, true>()
   private tabs: Tab[] = [{ key: 'deck', dev: null }]
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
@@ -275,6 +279,14 @@ export class HackView {
       }
     }
     this.firewalled = new Map([...next].filter(([, d]) => d.firewalled === true).map(([id]) => [id, true] as const))
+    // Обратная связь antivirus (§13.6): резидентный процесс видим всем
+    // скавшим; износ (oreol исчез) — атакующий видит, что путь открыт.
+    for (const d of msg.devices) {
+      if (d.antivirused === true && !this.antivirused.has(d.id)) {
+        this.toast(`ANTIVIRUS: ${d.id.toUpperCase()}`)
+      }
+    }
+    this.antivirused = new Map([...next].filter(([, d]) => d.antivirused === true).map(([id]) => [id, true] as const))
     // Таб на устройство при появлении владения (ГДД §12.6).
     for (const d of msg.devices) {
       if (d.owner !== null && d.owner === this.myId && !this.tabs.some((t) => t.dev === d.id)) {
@@ -403,6 +415,9 @@ export class HackView {
     } else if (e.code === 'Digit5') {
       e.preventDefault()
       this.runProg('firewall')
+    } else if (e.code === 'Digit6') {
+      e.preventDefault()
+      this.runProg('antivirus')
     }
   }
 
@@ -602,6 +617,7 @@ export class HackView {
       ['3 ТРОЯН', 'trojan'],
       ['4 WATCHER', 'watcher'],
       ['5 FIREWALL', 'firewall'],
+      ['6 ANTIVIRUS', 'antivirus'],
     ] as const) {
       const b = el('button', 'hv-btn')
       b.textContent = label + this.targetSuffix()
@@ -724,7 +740,7 @@ export class HackView {
   private fillProgs(list: HTMLElement): void {
     list.replaceChildren()
     if (this.progs.length === 0) {
-      list.append(txt('div', 'hv-dim', 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4/5'))
+      list.append(txt('div', 'hv-dim', 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4/5/6'))
       return
     }
     for (const p of this.progs) {
@@ -883,6 +899,16 @@ export class HackView {
         fw.setAttribute('r', '15')
         fw.classList.add('svg-firewalled')
         svg.append(fw)
+      }
+      // Antivirus на устройстве (чей — не важно: резидентный процесс
+      // наблюдаем из сети, §13.6) — фиолетовый пунктирный ореол.
+      if (d.antivirused === true) {
+        const av = svgEl('circle')
+        av.setAttribute('cx', String(cx))
+        av.setAttribute('cy', String(cy))
+        av.setAttribute('r', '12')
+        av.classList.add('svg-antivirused')
+        svg.append(av)
       }
       // Захваченное устройство: жирное кольцо цвета команды владельца —
       // «это уже моё/ихнее» видно с первого взгляда (плейтест M2).

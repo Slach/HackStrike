@@ -234,9 +234,10 @@ const sock = new GameSocket({
         break
       case 'alert': {
         // Сработал триггер (M3 §13.2): watcher — чужой вход; firewall —
-        // отбитая попытка входа (§13.5). В деке-WM — тост, иначе — HUD.
+        // отбитая попытка входа (§13.5); antivirus — отбита попытка trojan
+        // (§13.6). В деке-WM — тост, иначе — HUD.
         const whoName = latestMeta.get(msg.who)?.name ?? `#${msg.who}`
-        const mark = msg.src === 'firewall' ? 'F' : 'W'
+        const mark = msg.src === 'firewall' ? 'F' : msg.src === 'antivirus' ? 'A' : 'W'
         const text = `${mark} ▸ ${msg.dev.toUpperCase()} ← ${whoName}`
         if (hackview.active) hackview.onAlert(text)
         else hud.alert(text)

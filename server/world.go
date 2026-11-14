@@ -180,6 +180,9 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 			if d.firewalled == s.oldID { // §13.5: F5 не снимает firewall
 				d.firewalled = id
 			}
+			if d.antivirused == s.oldID { // §13.6: F5 не снимает antivirus
+				d.antivirused = id
+			}
 		}
 		if !pl.alive {
 			pl.respawnAt = w.now()

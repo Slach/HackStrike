@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' // GDD §12.4, §13.1, §13.5
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' // GDD §12.4, §13.1, §13.5, §13.6
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -54,6 +54,7 @@ export interface ScanDevice {
   vulned?: boolean // my vulnscan found an exploit here (omitted when false)
   watched?: boolean // my watcher trigger sits on this device (M3, omitted when false)
   firewalled?: boolean // someone's firewall sits on this device (M3 §13.5, visible to everyone who scanned it)
+  antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
 }
 
 export interface DeckProg {
@@ -216,6 +217,7 @@ function parseDevice(v: unknown): ScanDevice | null {
     vulned: p.vulned === true,
     watched: p.watched === true,
     firewalled: p.firewalled === true,
+    antivirused: p.antivirused === true,
   }
 }
 

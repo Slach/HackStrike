@@ -1118,3 +1118,145 @@ func TestFirewall(t *testing.T) {
 		t.Fatalf("jack-in must pass after the firewall is flushed, out=%v", out)
 	}
 }
+
+// Antivirus (M3 §13.6): установка (too_far без скана, слот свободен,
+// antivirused в scan), чужой trojan отбит (denied antivirus атакующему,
+// ровно один alert src=antivirus хозяину, владение НЕ перешло, чужой firewall
+// НЕ выкурён, antivirus изношен), свой trojan проходит, гонка версий:
+// переустановка снова отбивает, без переустановки повторная попытка
+// атакующего проходит (тупика нет).
+func TestAntivirus(t *testing.T) {
+	w, _ := cyberTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", 0)   // team 0: защитник
+	foe := w.addPlayer(2, "f", "hacker", 1) // team 1: атакующий
+	w.takeOut()
+
+	// runCollect — как runAndWaitM2, но возвращает исходящие сообщения
+	// (нужны denied/alert от завершившейся программы).
+	runCollect := func(pl *player, msg message) []outMsg {
+		w.handleMessage(pl, msg)
+		for i := 0; i < 400 && len(pl.progs) > 0; i++ {
+			w.simulateTick()
+		}
+		if len(pl.progs) > 0 {
+			t.Fatalf("program did not finish: %v", msg)
+		}
+		return w.takeOut()
+	}
+
+	jackAt(w, h, "t1")
+	// Цель не открыта portscan'ом — too_far (как watcher/firewall).
+	w.handleMessage(h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
+	assertDenied(t, w, h, "too_far")
+
+	for i := 0; i < 3; i++ {
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
+	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "t2"}) // для интеракции с выкуриванием
+	if w.cyber.devices["t2"].antivirused != h.id || w.cyber.devices["t2"].firewalled != h.id {
+		t.Fatalf("setup: antivirus+firewall must be installed on t2 by h")
+	}
+	if len(h.progs) != 0 {
+		t.Fatalf("installed antivirus must free the deck slot (lives on the device)")
+	}
+	// scan помечает устройство antivirused:true (наблюдаемый процесс — всем,
+	// кто скавш; здесь — хозяину).
+	w.sendScan(h)
+	var avSeen bool
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "scan" || om.to != h.id {
+			continue
+		}
+		for _, d := range om.msg["devices"].([]scanDevice) {
+			if d.ID == "t2" && d.Antivirused {
+				avSeen = true
+			}
+		}
+	}
+	if !avSeen {
+		t.Fatalf("scan must mark t2 antivirused")
+	}
+
+	// Свой trojan проходит свободно (свой antivirus свою команду не бьёт):
+	// antivirus на d1, h троянит d1 — владение перешло, antivirus не изношен.
+	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "d1"})
+	runCollect(h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
+	runCollect(h, message{"t": "run", "prog": "trojan", "dev": "d1"})
+	if w.cyber.devices["d1"].owner != h.id {
+		t.Fatalf("own trojan must pass own antivirus, owner=%v", w.cyber.devices["d1"].owner)
+	}
+	if w.cyber.devices["d1"].antivirused != h.id {
+		t.Fatalf("own trojan must NOT wear the antivirus")
+	}
+
+	// Чужой trojan на t2 отбит: denied antivirus, ровно один alert
+	// src=antivirus хозяину, владение НЕ перешло, firewall НЕ выкурён,
+	// antivirus изношен (гонка версий).
+	out := foePrepTrojan(t, w, foe)
+	assertDeniedOut(t, out, foe, "antivirus")
+	alerts := 0
+	for _, om := range out {
+		if om.msg["t"] == "alert" && om.to == h.id && om.msg["dev"] == "t2" {
+			alerts++
+			if om.msg["src"] != "antivirus" {
+				t.Fatalf("alert src = %v, want antivirus", om.msg["src"])
+			}
+		}
+	}
+	if alerts != 1 {
+		t.Fatalf("repelled trojan must fire exactly one antivirus alert, got %d", alerts)
+	}
+	t2 := w.cyber.devices["t2"]
+	if t2.owner != 0 || t2.firewalled != h.id {
+		t.Fatalf("repelled trojan must not change owner or flush firewall: owner=%v fw=%v", t2.owner, t2.firewalled)
+	}
+	if t2.antivirused != 0 {
+		t.Fatalf("antivirus must be worn out after repelling one trojan")
+	}
+
+	// Гонка версий: защитник переустановил — повторная попытка снова отбита.
+	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
+	if t2.antivirused != h.id {
+		t.Fatalf("setup: antivirus must be reinstalled")
+	}
+	out = runCollect(foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	assertDeniedOut(t, out, foe, "antivirus")
+
+	// Контр-плей без тупика: без переустановки повторный trojan проходит —
+	// владение перешло, чужой firewall выкурен, вход открыт.
+	out = runCollect(foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	if t2.owner != foe.id {
+		t.Fatalf("retry trojan must succeed against the worn-out antivirus, owner=%v", t2.owner)
+	}
+	if t2.firewalled != 0 {
+		t.Fatalf("successful trojan must flush the old firewall")
+	}
+	w.handleMessage(foe, message{"t": "jackout"})
+	out = jackAt(w, foe, "t2")
+	if !foe.jacked {
+		t.Fatalf("jack-in must pass after capturing t2, out=%v", out)
+	}
+}
+
+// foePrepTrojan — атакующий входит в сеть с нейтральной точки, открывает t2,
+// vulnscan'ит и запускает trojan; возвращает исходящие сообщения trojan'а.
+func foePrepTrojan(t *testing.T, w *world, foe *player) []outMsg {
+	t.Helper()
+	out := jackAt(w, foe, "t1")
+	if !foe.jacked {
+		t.Fatalf("setup: foe must jack into neutral t1, out=%v", out)
+	}
+	for i := 0; i < 3; i++ {
+		runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	}
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "vulnscan", "dev": "t2"})
+	w.handleMessage(foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	for i := 0; i < 400 && len(foe.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	if len(foe.progs) > 0 {
+		t.Fatalf("setup: trojan must finish")
+	}
+	return w.takeOut()
+}

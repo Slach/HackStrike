@@ -19,11 +19,12 @@ const (
 	deckNPU = 0.5
 	deckRAM = 4 // слота программ
 
-	portscanWork = 2.0 // с работы при полной CPU-доле (§12.4)
-	vulnscanWork = 3.0
-	trojanWork   = 2.0
-	watcherWork  = 1.0 // §13.1: пассивный слушатель — дешевле vulnscan'а
-	firewallWork = 1.5 // §13.5: активный фильтр — дороже watcher'а, дешевле trojan'а
+	portscanWork  = 2.0 // с работы при полной CPU-доле (§12.4)
+	vulnscanWork  = 3.0
+	trojanWork    = 2.0
+	watcherWork   = 1.0 // §13.1: пассивный слушатель — дешевле vulnscan'а
+	firewallWork  = 1.5 // §13.5: активный фильтр — дороже watcher'а, дешевле trojan'а
+	antivirusWork = 1.5 // §13.6: активная защита — тот же ярус, что firewall
 
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
 
@@ -56,11 +57,12 @@ type device struct {
 	netMbps float64
 	box     aabb // дверь: AABB-коллайдер (open отключает)
 
-	owner      uint64          // владелец trojan (0 = нейтральное)
-	open       bool            // дверь: стартует закрытой
-	vulnedBy   map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
-	watcherBy  map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
-	firewalled uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
+	owner       uint64          // владелец trojan (0 = нейтральное)
+	open        bool            // дверь: стартует закрытой
+	vulnedBy    map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
+	watcherBy   map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
+	firewalled  uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
+	antivirused uint64          // хозяин antivirus-процесса (§13.6; 0 = нет)
 }
 
 // cable — ребро сети (§12.3): полилиния. M2-2: перерубание удалено —
@@ -232,6 +234,8 @@ func progWork(name string) float64 {
 		return watcherWork
 	case "firewall":
 		return firewallWork
+	case "antivirus":
+		return antivirusWork
 	}
 	return 0
 }
@@ -449,6 +453,21 @@ func (w *world) completeProgram(pl *player, p *program) {
 		}
 	case "trojan":
 		if dev := w.cyber.devices[p.dev]; dev != nil {
+			// §13.6: чужой antivirus отбивает установку trojan (denied +
+			// alert хозяину) и изнашивается — гонка версий: повторная попытка
+			// проходит, если защитник не переустановил. Свой/союзный
+			// antivirus trojan не встречает.
+			if av := dev.antivirused; av != 0 && av != pl.id {
+				if owner, ok := w.players[av]; !ok || owner.team != pl.team {
+					if ok && owner.alive {
+						w.sendTo(av, message{"t": "alert", "dev": dev.id, "who": pl.id, "src": "antivirus"})
+					}
+					dev.antivirused = 0 // сигнатуры пробиты — фильтр изношен
+					w.denied(pl, "antivirus")
+					w.resendScanFor(p.dev) // ореол antivirused исчез с карты
+					return
+				}
+			}
 			dev.owner = pl.id // userland; двери дают владельцу toggle
 			// §13.5: новый trojan выкуривает чужой firewall — обход без
 			// тупика (взломщик получает и владение, и открытый вход).
@@ -469,6 +488,14 @@ func (w *world) completeProgram(pl *player, p *program) {
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.firewalled = pl.id
 			w.resendScanFor(p.dev) // на карте появится ореол firewalled
+		}
+	case "antivirus":
+		// §13.6: резидентный процесс живёт на устройстве (как trojan), слот
+		// RAM освобождён. Один antivirus на устройство: чужая установка
+		// перезаписывает хозяина (переустановка после износа — гонка версий).
+		if dev := w.cyber.devices[p.dev]; dev != nil {
+			dev.antivirused = pl.id
+			w.resendScanFor(p.dev) // на карте появится ореол antivirused
 		}
 	}
 }
@@ -502,6 +529,10 @@ type scanDevice struct {
 	// Наблюдаемый сетевой фильтр — виден всем, кто открыл устройство
 	// (в отличие от личных vulned/watched).
 	Firewalled bool `json:"firewalled,omitempty"`
+	// Antivirused — на устройстве стоит чей-то antivirus (§13.6), omitempty.
+	// Резидентный процесс наблюдаем из сети — виден всем, кто открыл
+	// устройство (как firewalled).
+	Antivirused bool `json:"antivirused,omitempty"`
 }
 
 // sendScan — кибер-карта хакера: только открытые его portscan'ом устройства
@@ -529,6 +560,9 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.firewalled != 0 {
 			sd.Firewalled = true
+		}
+		if d.antivirused != 0 {
+			sd.Antivirused = true
 		}
 		devs = append(devs, sd)
 	}
