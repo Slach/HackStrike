@@ -91,10 +91,9 @@ func assertDenied(t *testing.T, w *world, pl *player, reason string) {
 	}
 }
 
-// BFS-достижимость с учётом severed (§12.4/§12.7): обрыв кабеля отрезает
-// всё за ним; радио-точка имеет беспроводной аплинк к ближайшему switch
-// (r1→s1: 18 м против 25 м до s2) и через него видит сеть.
-func TestCyberBFSAndSevered(t *testing.T) {
+// BFS-достижимость (§12.4): радио-точка имеет беспроводной аплинк к
+// ближайшему switch (r1→s1) и через него видит сеть. M2-2: кабели всегда целы.
+func TestCyberBFS(t *testing.T) {
 	w, _ := cyberTestWorld(t)
 	cs := w.cyber
 
@@ -106,28 +105,7 @@ func TestCyberBFSAndSevered(t *testing.T) {
 		t.Fatalf("radio uplink must reach the network, got %v", got)
 	}
 
-	// Беспроводной аплинк не режется: bullet-путь (cutCableAlong) вообще
-	// не находит его — у wireless-кабеля нет AABB-боксов.
-	for _, c := range cs.cables {
-		if c.wireless {
-			if len(c.boxes) != 0 {
-				t.Fatalf("wireless uplink must have no physical boxes")
-			}
-		}
-	}
-
-	cs.cables[2].severed = true // c3: магистраль s1—s2
-	if got := cs.reachable("t1"); !reflect.DeepEqual(got, map[string]bool{"t1": true, "s1": true, "d1": true, "r1": true}) {
-		t.Fatalf("after severing c3, t1 side = %v (r1 остаётся на стороне s1 через аплинк)", got)
-	}
-	if got := cs.reachable("t2"); !reflect.DeepEqual(got, map[string]bool{"t2": true, "s2": true}) {
-		t.Fatalf("after severing c3, t2 side = %v", got)
-	}
-
-	cs.cables[3].severed = true // c4: кормящий кабель двери
-	if got := cs.reachable("t1"); !reflect.DeepEqual(got, map[string]bool{"t1": true, "s1": true, "r1": true}) {
-		t.Fatalf("after severing c4, d1 must be unreachable: %v", got)
-	}
+	// M2-2: перерубания нет — топология постоянна.
 }
 
 // Джек-ин: только хакер, edge space, терминал 2 м / радио radius, jackin с
@@ -454,20 +432,7 @@ func TestDoorCollision(t *testing.T) {
 	}
 }
 
-// Пули тоже режут кабели (§6): трассерный луч до точки попадания.
-func TestBulletCutsCable(t *testing.T) {
-	w, _ := cyberTestWorld(t)
-	a := w.addPlayer(1, "a", "assault", -1)
-	w.takeOut()
-	a.pos = vec3{5, 1, 11}
-	w.handleMessage(a, message{"t": "fire", "yaw": 0, "pitch": -1.55})
-	if !w.cyber.cables[0].severed {
-		t.Fatalf("bullet must sever the cable")
-	}
-	w.takeOut()
-}
-
-// snap.props (§12.5): поля по kind, динамика open/severed.
+// snap.props (§12.5): поля по kind, динамика open.
 func TestSnapProps(t *testing.T) {
 	w, _ := cyberTestWorld(t)
 	w.addPlayer(1, "p", "assault", -1)
@@ -495,12 +460,8 @@ func TestSnapProps(t *testing.T) {
 		d["x"] != 20.0 || d["y"] != 1.0 || d["z"] != 20.0 {
 		t.Fatalf("door snap entry: %+v", d)
 	}
-	c := byID["c1"]
-	if c["kind"] != "cable" || c["severed"] != false {
-		t.Fatalf("cable snap entry: %+v", c)
-	}
-	if _, has := c["x"]; has {
-		t.Fatalf("cable snap entry must not carry coords (§12.5): %+v", c)
+	if _, has := byID["c1"]; has {
+		t.Fatalf("cables are not in snap.props anymore (M2-2): %+v", byID["c1"])
 	}
 	if r := byID["r1"]; r["kind"] != "radio" || r["radius"] != 8.0 {
 		t.Fatalf("radio snap entry: %+v", r)
@@ -512,15 +473,11 @@ func TestSnapProps(t *testing.T) {
 		t.Fatalf("terminal snap entry: %+v", tm)
 	}
 
-	// Динамика: toggle и перерубание видны всем в следующем снапе.
+	// Динамика: toggle виден всем в следующем снапе.
 	w.cyber.devices["d1"].open = true
-	w.cyber.cables[0].severed = true
 	byID = propsOf()
 	if byID["d1"]["open"] != true {
 		t.Fatalf("open=true must appear in snap.props")
-	}
-	if byID["c1"]["severed"] != true {
-		t.Fatalf("severed=true must appear in snap.props")
 	}
 }
 
@@ -665,7 +622,6 @@ func TestScanMessage(t *testing.T) {
 func TestM2AcceptanceFlow(t *testing.T) {
 	w, clock := cyberTestWorld(t)
 	h := w.addPlayer(1, "h", "hacker", -1)
-	foe := w.addPlayer(2, "f", "hacker", -1)
 	w.takeOut()
 	jackAt(w, h, "t1")
 
@@ -704,21 +660,10 @@ func TestM2AcceptanceFlow(t *testing.T) {
 		t.Fatalf("toggled door must appear open=true in snap.props")
 	}
 
-	// Пули другого игрока перерубают кормящий кабель двери c4 (s1→d1,
-	// диагональ 5,15 → 20,20 на высоте ~1.15).
-	foe.pos = vec3{12.5, 1, 17.5}
-	w.handleMessage(foe, message{"t": "fire", "yaw": 0, "pitch": -1.55})
-	if !w.cyber.cables[3].severed {
-		t.Fatalf("enemy bullets must sever the door cable")
-	}
-
-	// Повторный portscan не находит дверь за перерубленным кабелем.
+	// M2-2: перерубания нет — повторный portscan видит ту же сеть.
 	runAndWait(message{"t": "run", "prog": "portscan"})
-	if h.scanned["d1"] {
-		t.Fatalf("re-scan must not see d1 behind the severed cable")
-	}
-	if !h.scanned["t2"] || !h.scanned["s2"] {
-		t.Fatalf("re-scan must still see the rest of the network: %v", h.scanned)
+	if !h.scanned["d1"] || !h.scanned["t2"] || !h.scanned["s2"] {
+		t.Fatalf("re-scan must still see the network: %v", h.scanned)
 	}
 
 	w.handleMessage(h, message{"t": "jackout"})
@@ -744,19 +689,6 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "r1", "r2"} {
 		if !reach[id] {
 			t.Fatalf("%s must be reachable from t1 on m1 (радио — через аплинк)", id)
-		}
-	}
-	for _, c := range cs.cables {
-		if c.wireless && len(c.boxes) != 0 {
-			t.Fatalf("wireless uplink %s must have no physical boxes", c.id)
-		}
-	}
-	// Кабели режутся ножом: ни один сегмент не внутри статической геометрии.
-	for _, c := range cs.cables {
-		for _, b := range c.boxes {
-			if m.overlapsAny(b) {
-				t.Fatalf("cable %s buried in geometry: %v..%v", c.id, b.min, b.max)
-			}
 		}
 	}
 	// Двери стоят в проходах (не пересекают стены) и вне джек-ин радиусов спавнов.

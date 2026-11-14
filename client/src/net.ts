@@ -30,7 +30,7 @@ export type ClientMessage =
 export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'cable'
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
- *  the server sent them, so an absent "open"/"severed" means "keep the last
+ *  the server sent them, so an absent "open" means "keep the last
  *  known value" on the consumer side. */
 export interface SnapProp {
   id: string
@@ -39,7 +39,6 @@ export interface SnapProp {
   y?: number
   z?: number
   open?: boolean // door
-  severed?: boolean // cable
   radius?: number // radio
 }
 
@@ -190,7 +189,6 @@ function parseProp(v: unknown): SnapProp | null {
     prop.z = z
   }
   if (typeof p.open === 'boolean') prop.open = p.open
-  if (typeof p.severed === 'boolean') prop.severed = p.severed
   const radius = num(p.radius, Number.NaN)
   if (Number.isFinite(radius) && radius > 0) prop.radius = radius
   return prop

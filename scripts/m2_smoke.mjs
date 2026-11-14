@@ -28,18 +28,9 @@ const waitFor = (c, pred, ms = 8000) => new Promise((res, rej) => {
 
 const map = await (await fetch(`${BASE}/api/map`)).json()
 const t1 = map.props.find((p) => p.id === 't1')
-const c1 = map.props.find((p) => p.id === 'c1')
-// ближний к базе сегмент 0→1 (вдоль стены комнаты базы, прямая видимость)
-const cableMid = [
-  (c1.points[0][0] + c1.points[1][0]) / 2,
-  (c1.points[0][1] + c1.points[1][1]) / 2,
-  (c1.points[0][2] + c1.points[1][2]) / 2,
-]
-console.log(`t1@${t1.pos}, c1 середина: ${cableMid.map((v) => v.toFixed(1)).join(',')}`)
-
 const S = await connect() // жертвенный: занимает t1, чтобы H и A оба попали на запад
 const H = await connect() // хакер
-const A = await connect() // автоматчик (режет кабель пулями)
+const A = await connect() // автоматчик
 send(S, { t: 'join', name: 'Balance', cls: 'assault', team: 1 })
 await sleep(300)
 send(H, { t: 'join', name: 'NeoM2', cls: 'hacker', team: 0 })
@@ -106,27 +97,7 @@ for (let i = 0; i < 20; i++) { send(H, { t: 'input', seq: 2000 + i, keys: { w: 1
 const after = meOf(H)
 check('jackout: движение восстановлено', Math.hypot(after.x - before.x, after.z - before.z) > 0.5, `Δ=${Math.hypot(after.x - before.x, after.z - before.z).toFixed(2)}`)
 
-// 7. перерубить c1 пулями → изоляция t1
-{
-  await walkTo(A, 5.5, 29)
-  { const p = meOf(A); if (Math.hypot(5.5 - p.x, 29 - p.z) > 2.5) { console.log(`  каттер НЕ дошёл: (${p.x.toFixed(1)}, ${p.z.toFixed(1)}) team=${p.team} — проход через стены невозможен`); } }
-  for (let i = 0; i < 3; i++) { send(A, { t: 'input', seq: 5000 + i, keys: { w: 0, a: 0, s: 0, d: 0, interact: 0 }, yaw: 0, pitch: 0 }); await sleep(33) }
-  await sleep(150)
-  const a = meOf(A)
-  const dx = cableMid[0] - a.x, dz = cableMid[2] - a.z, dy = cableMid[1] - (a.y + 1.6)
-  const h = Math.hypot(dx, dz)
-  const yaw = Math.atan2(dx, dz), pitch = Math.atan2(dy, h)
-  const n0 = A.msgs.length
-  for (let i = 0; i < 25; i++) { send(A, { t: 'fire', yaw, pitch }); await sleep(150) }
-  const myA = A.msgs.find((m) => m.t === 'welcome').id
-  const tos = A.msgs.slice(n0).filter((m) => m.t === 'shot' && m.by === myA).slice(0, 3).map((s) => s.to)
-  console.log('  первые shot.to:', JSON.stringify(tos))
-}
-await sleep(400)
-const c1prop = () => lastSnap(H).props?.find((p) => p.id === 'c1')
-check('кабель c1 перерублен пулями', c1prop()?.severed === true, `severed=${c1prop()?.severed}`)
-
-// 8. повторный portscan не видит сеть за кабелем
+// M2-2: перерубания нет — повторный portscan видит ту же сеть.
 await walkTo(H, t1.pos[0], t1.pos[2])
 for (let i = 0; i < 3; i++) { send(H, { t: 'input', seq: 3000 + i, keys: { w: 0, a: 0, s: 0, d: 0, interact: 1 }, yaw: 0, pitch: 0 }); await sleep(33) }
 await waitFor(H, (m) => m.t === 'jackin')
@@ -134,7 +105,7 @@ H.msgs.length = 0
 send(H, { t: 'run', prog: 'portscan' })
 const scan2 = await waitFor(H, (m) => m.t === 'scan')
 const ids2 = scan2.devices.map((d) => d.id)
-check('после обрыва сеть не видна (d1/s2 отсутствуют)', !ids2.includes('d1') && !ids2.includes('s2'), ids2.join(',') || '(пусто)')
+check('повторный portscan видит сеть (кабели не режутся)', ids2.includes('d1'), ids2.join(','))
 
 H.ws.close(); A.ws.close()
 console.log(failures === 0 ? '\nM2 SMOKE: ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ ✓' : `\nM2 SMOKE: ПРОВАЛОВ ${failures}`)

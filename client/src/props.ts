@@ -1,6 +1,6 @@
 // M2 cyber props (GDD §12.3 / §12.6): terminals, radio points, switches,
 // doors and cables. Geometry is built from the map data (карта — данные),
-// live state (door open, cable severed) arrives via snap.props. Collisions
+// live state (door open) arrives via snap.props. Collisions
 // are server-side — the door swing here is purely cosmetic, and the cables
 // are visual only (collisions and cable cuts are server-side).
 
@@ -92,37 +92,6 @@ interface CableView {
   id: string
   path: Vector3[]
   meshes: Mesh[]
-  /** Мигающая искра в точке разрыва (только у перерубленного). */
-  spark: Mesh | null
-  severed: boolean
-}
-
-/** Перерубленный кабель рвётся на два обрубка с провисающими концами;
- *  разрыв — в середине самого длинного сегмента. Возвращает обрубки и точку разрыва. */
-function severedPaths(points: readonly Vector3[]): { stubs: Vector3[][]; cut: Vector3 } {
-  let si = 0
-  let sl = -1
-  for (let i = 0; i + 1 < points.length; i++) {
-    const l = points[i].subtract(points[i + 1]).length()
-    if (l > sl) {
-      sl = l
-      si = i
-    }
-  }
-  const a = points[si]
-  const b = points[si + 1]
-  const cut = new Vector3((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2)
-  const pull = (from: Vector3): Vector3 =>
-    // конец обрубка оттянут к точке разрыва и провисает вниз
-    new Vector3(
-      from.x + (cut.x - from.x) * 0.12,
-      from.y + (cut.y - from.y) * 0.12 - 0.22,
-      from.z + (cut.z - from.z) * 0.12,
-    )
-  const head = points.slice(0, si + 1).map((p) => p.clone())
-  head.push(pull(a))
-  const tail = [pull(b), ...points.slice(si + 1).map((p) => p.clone())]
-  return { stubs: [head, tail], cut }
 }
 
 export class PropsView {
@@ -133,7 +102,6 @@ export class PropsView {
   private readonly cables = new Map<string, CableView>()
   private readonly mats: Record<string, StandardMaterial>
   private miniCache: MiniProp[] = []
-  private sparkT = 0 // фаза мерцания искр перерубленных кабелей
 
   private constructor(private scene: Scene) {
     const mk = (name: string, diffuse: [number, number, number], emissive: [number, number, number]): StandardMaterial => {
@@ -158,9 +126,7 @@ export class PropsView {
       // Кабели — самосветящийся янтарь (плейтест M2-2: «не видно, как идут
       // провода»): контраст к зелёной неоновой теме, виден и у тёмного пола.
       cable: glow('cable', [0.85, 0.55, 0.1]),
-      cableDead: mk('cableDead', [0.07, 0.07, 0.07], [0.012, 0.014, 0.012]),
       sphere: glow('sphere', [0.04, 0.3, 0.16]),
-      spark: glow('spark', [1.0, 0.72, 0.2]),
     }
     this.mats.sphere.alpha = 0.06 // тусклая сфера радиуса радио-точки, видна всем
   }
@@ -262,7 +228,7 @@ export class PropsView {
 
   private buildCable(id: string, points: readonly [number, number, number][]): void {
     if (points.length < 2) return
-    const cable: CableView = { id, path: points.map((p) => new Vector3(...p)), meshes: [], spark: null, severed: false }
+    const cable: CableView = { id, path: points.map((p) => new Vector3(...p)), meshes: [] }
     this.cables.set(id, cable)
     this.rebuildCable(cable)
   }
@@ -270,29 +236,13 @@ export class PropsView {
   private rebuildCable(cable: CableView): void {
     for (const m of cable.meshes) m.dispose()
     cable.meshes = []
-    cable.spark?.dispose()
-    cable.spark = null
-    // Кабель — заметный неоновый жгут (плейтест: «не видно, как идут провода»).
-    // Перерубленный рвётся на два обрубка + мигающая искра в точке разрыва.
-    const mkTube = (path: Vector3[], suffix: string): Mesh => {
-      const mesh = MeshBuilder.CreateTube(`prop.${cable.id}${suffix}`, { path, radius: 0.06 }, this.scene)
-      mesh.enableEdgesRendering(0.95)
-      mesh.edgesWidth = 1.5
-      mesh.material = cable.severed ? this.mats.cableDead : this.mats.cable
-      mesh.isPickable = false
-      return mesh
-    }
-    if (!cable.severed) {
-      cable.meshes = [mkTube(cable.path, '')]
-      return
-    }
-    const { stubs, cut } = severedPaths(cable.path)
-    cable.meshes = stubs.map((s, i) => mkTube(s, `.cut${i}`))
-    const spark = MeshBuilder.CreateSphere(`prop.${cable.id}.spark`, { diameter: 0.22, segments: 6 }, this.scene)
-    spark.position.copyFrom(cut)
-    spark.material = this.mats.spark
-    spark.isPickable = false
-    cable.spark = spark
+    // Кабель — тонкий янтарный жгут (M2-2: несекционируемый, всегда цел).
+    const mesh = MeshBuilder.CreateTube(`prop.${cable.id}`, { path: cable.path, radius: 0.06 }, this.scene)
+    mesh.enableEdgesRendering(0.95)
+    mesh.edgesWidth = 1.5
+    mesh.material = this.mats.cable
+    mesh.isPickable = false
+    cable.meshes = [mesh]
   }
 
   /** Live state from snap.props (id → state); unknown ids with positions are
@@ -311,14 +261,6 @@ export class PropsView {
           } else if (p.x !== undefined && p.y !== undefined && p.z !== undefined) {
             this.buildDoor(p.id, [p.x, p.y, p.z], 'x', [...DOOR_DEFAULT_SIZE])
             dirty = true
-          }
-          break
-        }
-        case 'cable': {
-          const cable = this.cables.get(p.id)
-          if (cable !== undefined && p.severed !== undefined && cable.severed !== p.severed) {
-            cable.severed = p.severed
-            this.rebuildCable(cable)
           }
           break
         }
@@ -361,13 +303,13 @@ export class PropsView {
     // Кабели: подсказка дистанции ножа (плейтест M2-2 — «навожусь, ничего
     // не происходит»: режет только вплотную, ≤1.8 м от глаз).
     for (const c of this.cables.values()) {
-      if (c.severed || c.path.length < 2) continue
+      if (c.path.length < 2) continue
       for (let i = 0; i + 1 < c.path.length; i++) {
         const a = c.path[i]
         const b = c.path[i + 1]
         const min: [number, number, number] = [Math.min(a.x, b.x) - 0.25, Math.min(a.y, b.y) - 0.25, Math.min(a.z, b.z) - 0.25]
         const max: [number, number, number] = [Math.max(a.x, b.x) + 0.25, Math.max(a.y, b.y) + 0.25, Math.max(a.z, b.z) + 0.25]
-        boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()} — РЕЖЕТСЯ ПУЛЯМИ`, min, max })
+        boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()}`, min, max })
       }
     }
     for (const b of boxes) {
@@ -410,14 +352,6 @@ export class PropsView {
       d.angle += Math.sign(delta) * Math.min(step, Math.abs(delta))
       // выезд вверх: центр полотна поднимается на высоту двери
       d.pivot.position.y = d.baseY + d.h * d.angle
-    }
-    // Искра перерубленного кабеля мерцает (плейтест: разрыв должен читаться).
-    this.sparkT += dtSec
-    for (const c of this.cables.values()) {
-      if (c.spark === null) continue
-      const f = Math.sin(this.sparkT * 18 + c.id.charCodeAt(1)) * 0.5 + 0.5
-      c.spark.scaling.setAll(0.55 + f * 0.9)
-      c.spark.visibility = 0.35 + f * 0.65
     }
   }
 
