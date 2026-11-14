@@ -12,6 +12,8 @@ export class Controls {
   yaw = 0
   pitch = 0
   locked = false
+  /** Optional inverted vertical look (settings checkbox, GDD §3.2). */
+  invertY = false
   readonly keys: KeysState = { w: 0, a: 0, s: 0, d: 0, interact: 0 }
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -45,10 +47,9 @@ export class Controls {
     // Wire pitch is positive-up (GDD §9.2) and movementY is positive when the
     // mouse moves DOWN — subtract, or every shot sent to the server aims at a
     // vertically mirrored direction while the local camera still feels fine.
-    this.pitch = Math.max(
-      -PITCH_LIMIT,
-      Math.min(PITCH_LIMIT, this.pitch - e.movementY * SENS_RAD_PER_PX),
-    )
+    // invertY flips only the local feel; the wire value stays in convention.
+    const dy = (this.invertY ? e.movementY : -e.movementY) * SENS_RAD_PER_PX
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + dy))
   }
 
   private readonly onPointerLockChange = (): void => {

@@ -63,6 +63,7 @@ export class Hud {
   private readonly el = {
     join: byId('joinScreen'),
     name: byId<HTMLInputElement>('nameInput'),
+    invertY: byId<HTMLInputElement>('invertY'),
     deploy: byId<HTMLButtonElement>('deployBtn'),
     joinStatus: byId('joinStatus'),
     joinCards: byId('joinCards'),
@@ -90,9 +91,18 @@ export class Hud {
     snaps: byId('snaps'),
   }
 
+  /** Vertical mouse inversion, persisted across sessions (client-side only). */
+  get invertYOn(): boolean {
+    return this.el.invertY.checked
+  }
+
   constructor() {
     buildCards(this.el.joinCards, this.joinCls, (c) => (this.joinCls = c))
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
+    this.el.invertY.checked = localStorage.getItem('hs.invertY') === '1'
+    this.el.invertY.addEventListener('change', () => {
+      localStorage.setItem('hs.invertY', this.el.invertY.checked ? '1' : '0')
+    })
     this.el.name.addEventListener('input', () => this.refreshDeploy())
     this.el.name.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.deploy()

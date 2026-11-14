@@ -188,6 +188,7 @@ sock.start() // connect + stats window; without this join has no socket to ride 
 
 hud.onJoin = (name, cls) => {
   myCls = cls
+  controls.invertY = hud.invertYOn // settings checkbox on the join screen
   sock.join(name, cls)
   // The deploy click is a user gesture: grab the mouse right away, no extra
   // "click to lock" step.

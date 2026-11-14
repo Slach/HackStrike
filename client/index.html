@@ -275,6 +275,22 @@
         letter-spacing: 2px;
         color: rgba(55, 255, 155, 0.7);
       }
+      .chk {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: rgba(55, 255, 155, 0.7);
+        cursor: pointer;
+        user-select: none;
+      }
+      .chk input {
+        accent-color: #37ff9b;
+        width: 14px;
+        height: 14px;
+        cursor: pointer;
+      }
       #nameInput {
         background: #02120a;
         border: 1px solid var(--line);
@@ -449,6 +465,7 @@
           <input id="nameInput" maxlength="16" spellcheck="false" autocomplete="off" />
         </div>
         <div id="joinCards" class="cards"></div>
+        <label class="chk"><input id="invertY" type="checkbox" /><span>ИНВЕРСИЯ МЫШИ (Y)</span></label>
         <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
         <div id="joinStatus" class="dim">ЗАГРУЗКА КАРТЫ…</div>
       </div>
