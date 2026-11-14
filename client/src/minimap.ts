@@ -2,6 +2,8 @@
 // allies as dots, the local player as a yaw-rotated arrow, cyber props as
 // small glyphs (M2: terminal/radio/switch, doors colored by open state).
 // Enemies are deliberately never drawn in M1.
+// Cyber layer (M3 §13.8): scan-revealed devices with links, ownership and
+// M3 status halos over the physical map — hacker only, key C toggles it.
 
 import type { MapWorld, WallRect } from './map'
 import { teamCss } from './players'
@@ -27,6 +29,36 @@ export interface MiniProp {
   axis?: 'x' | 'z' // ориентация двери
   len?: number
 }
+
+/** Раскрытое portscan'ом устройство для кибер-слоя (M3 §13.8). */
+export interface MiniCyberDev {
+  id: string
+  x: number
+  z: number
+  kind: MiniPropKind
+  owner: number | null
+  links: readonly string[]
+  vulned?: boolean
+  watched?: boolean
+  firewalled?: boolean
+  antivirused?: boolean
+}
+
+/** Кибер-слой миникарты (§13.8): только раскрытое МОИМ portscan'ом. */
+export interface MiniCyber {
+  myId: number | null
+  ownTeam: number
+  teamOf: (playerId: number) => number | null
+  devices: readonly MiniCyberDev[]
+}
+
+// Цвета кибер-слоя — зафиксированы в ГДД §13.8, консистентны с SVG-картой
+// сети деки (index.html .svg-*).
+const CYBER_WIRE = 'rgba(55,255,155,0.35)' // кабель — сплошная
+const CYBER_WIRELESS = 'rgba(255,210,55,0.5)' // радио — пунктир
+const CYBER_VISION_FILL = 'rgba(55,255,155,0.08)' // зона видимости своей камеры
+const CYBER_VISION_EDGE = 'rgba(55,255,155,0.35)'
+const CAM_VISION_RADIUS = 12 // м, ГДД §13.7
 
 export class Minimap {
   private ctx: CanvasRenderingContext2D
@@ -54,7 +86,13 @@ export class Minimap {
     this.offY = (this.h - bz * this.scale) / 2
   }
 
-  draw(me: MiniSelf | null, allies: readonly MiniAlly[], myTeam: number, props: readonly MiniProp[] = []): void {
+  draw(
+    me: MiniSelf | null,
+    allies: readonly MiniAlly[],
+    myTeam: number,
+    props: readonly MiniProp[] = [],
+    cyber: MiniCyber | null = null,
+  ): void {
     const ctx = this.ctx
     ctx.fillStyle = 'rgba(2,10,6,0.92)'
     ctx.fillRect(0, 0, this.w, this.h)
@@ -74,7 +112,10 @@ export class Minimap {
         ctx.strokeRect(x, y, rw, rh)
       }
     }
+    if (cyber !== null) this.drawCyberVisionZones(cyber)
+    if (cyber !== null) this.drawCyberLinks(cyber)
     this.drawProps(props)
+    if (cyber !== null) this.drawCyberStatus(cyber)
     ctx.fillStyle = teamCss(myTeam)
     for (const a of allies) {
       ctx.beginPath()
@@ -158,6 +199,78 @@ export class Minimap {
         ctx.closePath()
         ctx.stroke()
       }
+    }
+  }
+
+  /** Кибер-слой (§13.8): зоны видимости СВОИХ камер — под контентом. */
+  private drawCyberVisionZones(cyber: MiniCyber): void {
+    const ctx = this.ctx
+    for (const d of cyber.devices) {
+      if (d.kind !== 'camera' || d.owner === null || d.owner !== cyber.myId) continue
+      const r = CAM_VISION_RADIUS * this.scale
+      ctx.fillStyle = CYBER_VISION_FILL
+      ctx.beginPath()
+      ctx.arc(this.px(d.x), this.pz(d.z), r, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = CYBER_VISION_EDGE
+      ctx.lineWidth = 1
+      ctx.stroke()
+    }
+  }
+
+  /** Связи раскрытых устройств (дедуп по паре): кабель сплошной, радио пунктир. */
+  private drawCyberLinks(cyber: MiniCyber): void {
+    const ctx = this.ctx
+    const byId = new Map(cyber.devices.map((d): [string, MiniCyberDev] => [d.id, d]))
+    const seen = new Set<string>()
+    ctx.lineWidth = 1
+    for (const d of cyber.devices) {
+      for (const l of d.links) {
+        const o = byId.get(l)
+        if (o === undefined) continue
+        const key = d.id < o.id ? `${d.id}|${o.id}` : `${o.id}|${d.id}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        const wireless = d.kind === 'radio' || o.kind === 'radio'
+        ctx.strokeStyle = wireless ? CYBER_WIRELESS : CYBER_WIRE
+        ctx.setLineDash(wireless ? [2, 4] : [])
+        ctx.beginPath()
+        ctx.moveTo(this.px(d.x), this.pz(d.z))
+        ctx.lineTo(this.px(o.x), this.pz(o.z))
+        ctx.stroke()
+      }
+    }
+    ctx.setLineDash([])
+  }
+
+  /** Владение (кольцо цвета команды) + статусы M3 (ореолы как в деке). */
+  private drawCyberStatus(cyber: MiniCyber): void {
+    const ctx = this.ctx
+    for (const d of cyber.devices) {
+      const x = this.px(d.x)
+      const y = this.pz(d.z)
+      if (d.owner !== null) {
+        ctx.strokeStyle =
+          d.owner === cyber.myId || cyber.teamOf(d.owner) === cyber.ownTeam ? '#37ff9b' : '#ff4dd2'
+        ctx.lineWidth = d.owner === cyber.myId ? 2.5 : 2
+        ctx.setLineDash([])
+        ctx.beginPath()
+        ctx.arc(x, y, 7, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      const halo = (r: number, color: string, dash: readonly number[]): void => {
+        ctx.strokeStyle = color
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([...dash])
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, Math.PI * 2)
+        ctx.stroke()
+      }
+      if (d.vulned === true) halo(6, '#ffd237', [])
+      if (d.watched === true) halo(10, '#ff9f43', [3, 3])
+      if (d.firewalled === true) halo(9, '#5fd7ff', [2, 4])
+      if (d.antivirused === true) halo(11, '#c792ea', [5, 3])
+      ctx.setLineDash([])
     }
   }
 

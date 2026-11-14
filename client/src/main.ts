@@ -24,6 +24,7 @@ import { Controls } from './controls'
 import { AutoFire, Effects, Scope, type TargetBox } from './combat'
 import { Hud } from './hud'
 import { Minimap } from './minimap'
+import type { MiniCyberDev } from './minimap'
 import { PropsView } from './props'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
@@ -63,6 +64,10 @@ let matchOver = false
 let lastTimeLeft = Number.POSITIVE_INFINITY
 
 let latestMeta = new Map<number, SnapPlayer>()
+/** Устройства, раскрытые МОИМ portscan'ом (M3 §13.8: кибер-слой миникарты;
+ *  персистентны между джек-инами, как devices в hackview — ГДД §12.1). */
+let scanDevs = new Map<string, MiniCyberDev>()
+let cyberMapOn = true // кибер-слой миникарты: по умолчанию ВКЛ у хакера (§13.8)
 const prevAlive = new Map<number, boolean>()
 const lastHits = new Map<number, { by: number; at: number }>()
 const debugShots: ShotMsg[] = [] // ring buffer behind window.__hs for e2e probes
@@ -75,6 +80,7 @@ function resetSession(): void {
   buffer.clear()
   views.clear()
   latestMeta = new Map()
+  scanDevs = new Map()
   prevAlive.clear()
   lastHits.clear()
   matchOver = false
@@ -234,6 +240,25 @@ const sock = new GameSocket({
         break
       case 'scan':
         hackview.onScan(msg)
+        // Кибер-миникарта (§13.8): те же знания, что у деки; scan — полный
+        // срез, заменяем карту целиком (как this.devices в hackview).
+        scanDevs = new Map(
+          msg.devices.map((d): [string, MiniCyberDev] => [
+            d.id,
+            {
+              id: d.id,
+              x: d.x,
+              z: d.z,
+              kind: d.kind === 'cable' ? 'switch' : d.kind,
+              owner: d.owner,
+              links: d.links,
+              vulned: d.vulned,
+              watched: d.watched,
+              firewalled: d.firewalled,
+              antivirused: d.antivirused,
+            },
+          ]),
+        )
         break
       case 'denied':
         hackview.onDenied(msg)
@@ -306,6 +331,14 @@ window.addEventListener(
   },
   { capture: true },
 )
+
+// Кибер-слой миникарты (M3 §13.8): тогл клавишей C, только хакер. Слой
+// знания (scanDevs) копится у любого игрока, но рисуется лишь хакеру.
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyC' || e.repeat) return
+  if (e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null) return
+  if (playing && myCls === 'hacker') cyberMapOn = !cyberMapOn
+})
 
 hud.onJoin = (name, cls, team) => {
   myCls = cls
@@ -474,6 +507,14 @@ engine.runRenderLoop(() => {
       allies,
       myTeam,
       propsView?.miniProps() ?? [],
+      cyberMapOn && myCls === 'hacker' && scanDevs.size > 0
+        ? {
+            myId,
+            ownTeam: myTeam,
+            teamOf: (id) => latestMeta.get(id)?.team ?? null,
+            devices: [...scanDevs.values()],
+          }
+        : null,
     )
   }
 
@@ -498,6 +539,7 @@ declare global {
       hackview: HackView
       propsView: PropsView | null
       doorAngle: (id: string) => number | null
+      cyberMap: () => { on: boolean; devices: Map<string, MiniCyberDev> } // M3 §13.8
     }
   }
 }
@@ -510,4 +552,5 @@ window.__hs = {
   hackview,
   propsView: null, // ставится после загрузки карты
   doorAngle: (id) => propsView?.doorAngle(id) ?? null,
+  cyberMap: () => ({ on: cyberMapOn && myCls === 'hacker', devices: scanDevs }),
 }
