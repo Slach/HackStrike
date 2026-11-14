@@ -342,6 +342,18 @@ export class PropsView {
     for (const s of this.switches.values()) {
       boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, 1, s.z - 0.5], max: [s.x + 0.5, 1.9, s.z + 0.5] })
     }
+    // Кабели: подсказка дистанции ножа (плейтест M2-2 — «навожусь, ничего
+    // не происходит»: режет только вплотную, ≤1.8 м от глаз).
+    for (const c of this.cables.values()) {
+      if (c.severed || c.path.length < 2) continue
+      for (let i = 0; i + 1 < c.path.length; i++) {
+        const a = c.path[i]
+        const b = c.path[i + 1]
+        const min: [number, number, number] = [Math.min(a.x, b.x) - 0.25, Math.min(a.y, b.y) - 0.25, Math.min(a.z, b.z) - 0.25]
+        const max: [number, number, number] = [Math.max(a.x, b.x) + 0.25, Math.max(a.y, b.y) + 0.25, Math.max(a.z, b.z) + 0.25]
+        boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()} — НОЖ, ВПЛОТНУЮ (≤1.8 М)`, min, max })
+      }
+    }
     for (const b of boxes) {
       const t = rayBoxAABB(origin, dir, b.min, b.max)
       if (t !== null && t < bestT) {
