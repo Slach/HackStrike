@@ -47,8 +47,10 @@ function parseMapProps(raw: readonly unknown[]): MapProp[] {
     const r = item as Record<string, unknown>
     const id = typeof r.id === 'string' && r.id.length > 0 ? r.id : null
     const kind = PROP_KINDS.includes(r.kind as PropKind) ? (r.kind as PropKind) : null
-    const pos = tuple3(r.pos)
-    if (id === null || kind === null || pos === null) continue
+    // У кабеля нет pos — только points; требование pos выбрасывало их всех
+    // (плейтест: «не вижу проводов»).
+    const pos = tuple3(r.pos) ?? [0, 0, 0]
+    if (id === null || kind === null) continue
     out.push({
       kind,
       id,
