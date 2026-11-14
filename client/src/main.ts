@@ -311,6 +311,8 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
   (map) => {
     world = MapWorld.build(scene, map)
     propsView = PropsView.build(scene, map) // M2: терминалы/радио/switch/двери/кабели
+    window.__hs = window.__hs ?? undefined // noop-guard
+    if (window.__hs) window.__hs.propsView = propsView
     minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, world)
     hud.setMapStatus(null)
   },
@@ -442,6 +444,8 @@ declare global {
       players: () => Map<number, SnapPlayer>
       shots: () => ShotMsg[]
       hackview: HackView
+      propsView: PropsView | null
+      doorAngle: (id: string) => number | null
     }
   }
 }
@@ -452,4 +456,6 @@ window.__hs = {
   players: () => latestMeta,
   shots: () => [...debugShots],
   hackview,
+  propsView: null, // ставится после загрузки карты
+  doorAngle: (id) => propsView?.doorAngle(id) ?? null,
 }

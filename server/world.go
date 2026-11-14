@@ -223,15 +223,16 @@ func (w *world) rebalanceTeams() {
 		} else if counts[0]-counts[1] < 2 {
 			return
 		}
-		// Последний пришедший — максимальный id (id монотонны).
+		// Последний пришедший — максимальный id (id монотонны). Джекнутых
+		// не трогаем: телепорт хакера из-под деки ломает сессию сканирования.
 		var mover *player
 		for _, p := range w.players {
-			if p.team == from && (mover == nil || p.id > mover.id) {
+			if p.team == from && !p.jacked && (mover == nil || p.id > mover.id) {
 				mover = p
 			}
 		}
 		if mover == nil {
-			return
+			return // двигать некого (все джекнуты) — подождём, Jack-out ослабит перекос
 		}
 		mover.team = to
 		if mover.alive {

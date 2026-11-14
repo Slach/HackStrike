@@ -362,6 +362,7 @@ func (w *world) handleCtrl(pl *player, msg message) {
 		return
 	}
 	dev.open = !dev.open // snap.props разнесёт всем (§12.5)
+	log.Printf("room: player %d ctrl %s -> open=%v", pl.id, dev.id, dev.open)
 }
 
 // cyberTick — честные очереди (§12.4): доля каждой программы = 1/N,

@@ -299,6 +299,11 @@ export class PropsView {
   }
 
   /** Анимация дверей: доворот к целевому углу, ~0.3 с на 90°. */
+  /** Угол створки двери (для e2e-проверок анимации). */
+  doorAngle(id: string): number | null {
+    return this.doors.get(id)?.angle ?? null
+  }
+
   tick(dtSec: number): void {
     if (this.doors.size === 0) return
     const step = (Math.PI / 2) * Math.min(1, dtSec / DOOR_SWING_S)
