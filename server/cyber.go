@@ -65,12 +65,13 @@ type device struct {
 // cable — ребро сети (§12.3): полилиния + тонкие коллайдеры для ножа/пуль.
 // Коллайдеры живут отдельно от геометрии карты и движению не мешают.
 type cable struct {
-	id      string
-	fromDev string
-	toDev   string
-	points  []vec3
-	boxes   []aabb
-	severed bool // перерублен: ребро исчезает из графа (§6)
+	id       string
+	fromDev  string
+	toDev    string
+	points   []vec3
+	boxes    []aabb
+	severed  bool // перерублен: ребро исчезает из графа (§6)
+	wireless bool // радио-аплинк: не режется, на карте рисуется пунктиром
 }
 
 // cyberState — граф сети; часть world.
@@ -138,6 +139,34 @@ func buildCyber(m *gameMap) *cyberState {
 		}
 		cs.cables = append(cs.cables, c)
 	}
+	// Радио-точка — беспроводной аплинк к ближайшему switch (§12.1,
+	// решение владельца 2026-11-14: без аплинка радио мертво — portscan от
+	// него не видит сеть). Аплинк не режется физически; NET-бутылочное горло
+	// — сама точка (20 Мбит).
+	for _, p := range m.props {
+		if p.Kind != "radio" {
+			continue
+		}
+		var best *device
+		bestD := -1.0
+		for _, d := range cs.devices {
+			if d.kind != "switch" {
+				continue
+			}
+			if dist := d.pos.sub(vec3(p.Pos)).length(); bestD < 0 || dist < bestD {
+				best, bestD = d, dist
+			}
+		}
+		if best == nil {
+			continue
+		}
+		cs.cables = append(cs.cables, &cable{
+			id:       p.ID + "-uplink",
+			fromDev:  p.ID,
+			toDev:    best.id,
+			wireless: true,
+		})
+	}
 	return cs
 }
 
@@ -145,7 +174,7 @@ func buildCyber(m *gameMap) *cyberState {
 func (cs *cyberState) neighbors(id string) []string {
 	out := make([]string, 0, 2)
 	for _, c := range cs.cables {
-		if c.severed {
+		if c.severed && !c.wireless {
 			continue
 		}
 		switch {
@@ -236,6 +265,12 @@ func (w *world) interactTick(pl *player) {
 }
 
 func (w *world) jackin(pl *player, dev *device) {
+	// Точка входа — тоже сетевое устройство (§6): захвачена другим хакером —
+	// джек-ин закрыт, перехватить точку можно только из другого места сети.
+	if dev.owner != 0 && dev.owner != pl.id {
+		w.denied(pl, "not_owner")
+		return
+	}
 	pl.jacked = true
 	pl.jackHost = dev
 	pl.progs = nil
@@ -287,7 +322,9 @@ func (w *world) handleRun(pl *player, msg message) {
 	devID := str(msg, "dev")
 	if prog != "portscan" {
 		dev, ok := w.cyber.devices[devID]
-		if !ok || !w.cyber.reachable(pl.jackHost.id)[devID] {
+		// Цель должна быть обнаружена (scanned — туман войны portscan'а) И
+		// оставаться достижимой по текущей сети (обрыв кабеля отрезает управление).
+		if !ok || !pl.scanned[devID] || !w.cyber.reachable(pl.jackHost.id)[devID] {
 			w.denied(pl, "too_far")
 			return
 		}
@@ -355,7 +392,31 @@ func (w *world) cyberTick(pl *player, dt float64) {
 func (w *world) completeProgram(pl *player, p *program) {
 	switch p.prog {
 	case "portscan":
-		pl.scanned = w.cyber.reachable(pl.jackHost.id)
+		// Прогрессивное открытие (решение владельца): один portscan добавляет
+		// ровно один хоп от уже известных устройств, а не всю сеть сразу.
+		// Прогрессивное открытие (решение владельца): один portscan добавляет
+		// один хоп от известного, а карта — ЖИВОЙ вид сети: устройства за
+		// перерубленными кабелями исчезают со скана (§12.7).
+		if pl.scanned == nil {
+			pl.scanned = map[string]bool{pl.jackHost.id: true}
+		}
+		reach := w.cyber.reachable(pl.jackHost.id)
+		frontier := make([]string, 0, len(pl.scanned))
+		for id := range pl.scanned {
+			frontier = append(frontier, id)
+		}
+		for _, id := range frontier {
+			for _, n := range w.cyber.neighbors(id) {
+				if reach[n] {
+					pl.scanned[n] = true
+				}
+			}
+		}
+		for id := range pl.scanned {
+			if !reach[id] {
+				delete(pl.scanned, id)
+			}
+		}
 		w.sendScan(pl)
 	case "vulnscan":
 		if dev := w.cyber.devices[p.dev]; dev != nil {

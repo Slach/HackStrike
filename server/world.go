@@ -41,12 +41,35 @@ type world struct {
 	// now инъектится для тестов; в проде time.Now.
 	now func() time.Time
 	out []outMsg
+
+	// sessions — отключившиеся игроки по имени: F5/обрыв не должен
+	// телепортировать домой и сбрасывать захваты (плейтест M2).
+	sessions map[string]*session
+}
+
+// sessionTTL — сколько ждём вернувшегося игрока.
+const sessionTTL = 5 * time.Minute
+
+// session — что переживает переподключение. oldID нужен, чтобы перемапить
+// device.owner/vulnedBy на новый id.
+type session struct {
+	oldID    uint64
+	team     int
+	cls      string
+	pos      vec3
+	vy       float64
+	grounded bool
+	hp       int
+	alive    bool
+	scanned  map[string]bool
+	at       time.Time
 }
 
 func newWorld(m *gameMap) *world {
 	return &world{
 		m:         m,
 		players:   make(map[uint64]*player),
+		sessions:  make(map[string]*session),
 		cyber:     buildCyber(m),
 		fragLimit: fragLimit,
 		matchLen:  matchDuration,
@@ -133,7 +156,30 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 		}
 	}
 	pl := &player{id: id, name: w.uniqueName(name), team: team}
-	w.spawnPlayer(pl, cls)
+	canon := sanitizeName(name)
+	if s, ok := w.sessions[canon]; ok && w.now().Sub(s.at) < sessionTTL {
+		// Вернувшийся игрок: команда/позиция/класс/hp/знания сети как было,
+		// владение устройствами и vulned-заметки перемапливаются на новый id.
+		delete(w.sessions, canon)
+		team = s.team
+		pl.team = team
+		pl.cls, pl.pos, pl.vy, pl.grounded = s.cls, s.pos, s.vy, s.grounded
+		pl.hp, pl.alive, pl.scanned = s.hp, s.alive, s.scanned
+		for _, d := range w.cyber.devices {
+			if d.owner == s.oldID {
+				d.owner = id
+			}
+			if d.vulnedBy[s.oldID] {
+				d.vulnedBy[id] = true
+				delete(d.vulnedBy, s.oldID)
+			}
+		}
+		if !pl.alive {
+			pl.respawnAt = w.now()
+		}
+	} else {
+		w.spawnPlayer(pl, cls)
+	}
 	w.players[id] = pl
 	w.startMatchIfNeeded()
 	w.sendTo(id, message{"t": "welcome", "id": id, "team": pl.team, "tick": w.tick})
@@ -141,6 +187,23 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 }
 
 func (w *world) removePlayer(id uint64) {
+	if pl, ok := w.players[id]; ok {
+		// Сессия по имени: F5/обрыв восстанавливает команду, позицию, класс,
+		// hp, знания сети; владение устройствами перемапится на новый id
+		// при возврате (см. addPlayer). Экспирация — sessionTTL.
+		w.sessions[pl.name] = &session{
+			oldID:    id,
+			team:     pl.team,
+			cls:      pl.cls,
+			pos:      pl.pos,
+			vy:       pl.vy,
+			grounded: pl.grounded,
+			hp:       pl.hp,
+			alive:    pl.alive,
+			scanned:  pl.scanned,
+			at:       w.now(),
+		}
+	}
 	delete(w.players, id)
 }
 

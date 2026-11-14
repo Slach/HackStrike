@@ -69,20 +69,26 @@ for (let i = 0; i < 3; i++) { send(H, { t: 'input', seq: 900 + i, keys: { w: 0, 
 const jackin = await waitFor(H, (m) => m.t === 'jackin')
 check('джек-ин', jackin.host === 't1' && jackin.deck && jackin.deck.ram === 4, `net=${jackin.deck.net}`)
 
-// 3. portscan → сеть открыта
-send(H, { t: 'run', prog: 'portscan' })
-let scan = await waitFor(H, (m) => m.t === 'scan')
+// 3. portscan ×3 (прогрессивный, 1 хоп за запуск) → сеть открыта
+const scansCount = () => H.msgs.filter((m) => m.t === 'scan').length
+for (let i = 0; i < 3; i++) {
+  const before = scansCount()
+  send(H, { t: 'run', prog: 'portscan' })
+  await waitFor(H, (m) => m.t === 'scan' && false, 1).catch(() => {}) // noop
+  while (scansCount() <= before) await sleep(100)
+  await sleep(300)
+}
+const scan = [...H.msgs].reverse().find((m) => m.t === 'scan')
 const ids1 = scan.devices.map((d) => d.id)
-check('portscan нашёл сеть (вкл. дверь d1 и s2)', ids1.includes('d1') && ids1.includes('s2'), ids1.join(','))
+check('3 portscan-а раскрыли сеть (вкл. дверь d1 и s2)', ids1.includes('d1') && ids1.includes('s2'), ids1.join(','))
 
 // 4. vulnscan → trojan → владение дверью
 send(H, { t: 'run', prog: 'vulnscan', dev: 'd1' })
 await sleep(3600) // 3 c при полной доле + запас
 send(H, { t: 'run', prog: 'trojan', dev: 'd1' })
 await sleep(2600)
-scan = await waitFor(H, (m) => m.t === 'scan' && m.devices.find((d) => d.id === 'd1' && d.owner === jackin?.deck ? false : d.owner !== null) ? m : null, 6000).catch(() => null)
-const owned = H.msgs.filter((m) => m.t === 'scan').map((m) => m.devices.find((d) => d.id === 'd1')).pop()
 const myId = H.msgs.find((m) => m.t === 'welcome').id
+const owned = [...H.msgs].reverse().find((m) => m.t === 'scan')?.devices.find((d) => d.id === 'd1')
 check('trojan захватил дверь', owned && owned.owner === myId, `owner=${owned && owned.owner}`)
 
 // 5. ctrl toggle → состояние двери перевернулось в snap.props

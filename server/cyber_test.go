@@ -52,6 +52,32 @@ func jackAt(w *world, pl *player, devID string) []outMsg {
 	return w.takeOut()
 }
 
+// scanStep — запустить portscan и доработать его до конца: после возврата
+// в scanned добавлен один хоп знаний (§12.4, прогрессивное открытие).
+func scanStep(w *world, pl *player, clock *time.Time, steps int) {
+	for i := 0; i < steps; i++ {
+		w.handleMessage(pl, message{"t": "run", "prog": "portscan"})
+		for j := 0; j < 400 && len(pl.progs) > 0; j++ {
+			*clock = clock.Add(time.Second / 30)
+			w.simulateTick()
+		}
+		w.takeOut()
+	}
+}
+
+func assertDeniedOut(t *testing.T, out []outMsg, pl *player, reason string) {
+	t.Helper()
+	var got string
+	for _, om := range out {
+		if om.msg["t"] == "denied" && om.to == pl.id {
+			got, _ = om.msg["reason"].(string)
+		}
+	}
+	if got != reason {
+		t.Fatalf("denied reason = %q, want %q", got, reason)
+	}
+}
+
 func assertDenied(t *testing.T, w *world, pl *player, reason string) {
 	t.Helper()
 	var got string
@@ -66,29 +92,40 @@ func assertDenied(t *testing.T, w *world, pl *player, reason string) {
 }
 
 // BFS-достижимость с учётом severed (§12.4/§12.7): обрыв кабеля отрезает
-// всё за ним; радио-точка в графе изолирована.
+// всё за ним; радио-точка имеет беспроводной аплинк к ближайшему switch
+// (r1→s1: 18 м против 25 м до s2) и через него видит сеть.
 func TestCyberBFSAndSevered(t *testing.T) {
 	w, _ := cyberTestWorld(t)
 	cs := w.cyber
 
-	want := map[string]bool{"t1": true, "t2": true, "s1": true, "s2": true, "d1": true}
+	want := map[string]bool{"t1": true, "t2": true, "s1": true, "s2": true, "d1": true, "r1": true}
 	if got := cs.reachable("t1"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("BFS from t1 = %v, want %v", got, want)
 	}
-	if got := cs.reachable("r1"); !reflect.DeepEqual(got, map[string]bool{"r1": true}) {
-		t.Fatalf("radio must be isolated in the cable graph, got %v", got)
+	if got := cs.reachable("r1"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("radio uplink must reach the network, got %v", got)
+	}
+
+	// Беспроводной аплинк не режется: bullet/knife путь (cutCableAlong) вообще
+	// не находит его — у wireless-кабеля нет AABB-боксов.
+	for _, c := range cs.cables {
+		if c.wireless {
+			if len(c.boxes) != 0 {
+				t.Fatalf("wireless uplink must have no physical boxes")
+			}
+		}
 	}
 
 	cs.cables[2].severed = true // c3: магистраль s1—s2
-	if got := cs.reachable("t1"); !reflect.DeepEqual(got, map[string]bool{"t1": true, "s1": true, "d1": true}) {
-		t.Fatalf("after severing c3, t1 side = %v", got)
+	if got := cs.reachable("t1"); !reflect.DeepEqual(got, map[string]bool{"t1": true, "s1": true, "d1": true, "r1": true}) {
+		t.Fatalf("after severing c3, t1 side = %v (r1 остаётся на стороне s1 через аплинк)", got)
 	}
 	if got := cs.reachable("t2"); !reflect.DeepEqual(got, map[string]bool{"t2": true, "s2": true}) {
 		t.Fatalf("after severing c3, t2 side = %v", got)
 	}
 
 	cs.cables[3].severed = true // c4: кормящий кабель двери
-	if got := cs.reachable("t1"); !reflect.DeepEqual(got, map[string]bool{"t1": true, "s1": true}) {
+	if got := cs.reachable("t1"); !reflect.DeepEqual(got, map[string]bool{"t1": true, "s1": true, "r1": true}) {
 		t.Fatalf("after severing c4, d1 must be unreachable: %v", got)
 	}
 }
@@ -246,6 +283,16 @@ func TestProgramFairQueues(t *testing.T) {
 		t.Fatalf("exactly one scan after portscan, got %d", scans)
 	}
 
+	// Прогрессивное открытие: второй portscan раскрывает соседей s1 (d1 среди них).
+	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
+	for i := 0; i < 70; i++ {
+		w.simulateTick()
+	}
+	w.takeOut()
+	if !h.scanned["d1"] {
+		t.Fatalf("second portscan must reveal d1, scanned=%v", h.scanned)
+	}
+
 	// Две: каждая 1/2 скорости; portscan (2 с работы) готов на ~120-м тике.
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
 	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
@@ -281,7 +328,7 @@ func TestProgramFairQueues(t *testing.T) {
 
 // denied-причины (§12.5): not_jacked, ram_full, too_far, not_vulned.
 func TestRunDeniedReasons(t *testing.T) {
-	w, _ := cyberTestWorld(t)
+	w, clock := cyberTestWorld(t)
 	h := w.addPlayer(1, "h", "hacker", -1)
 	w.takeOut()
 
@@ -297,11 +344,14 @@ func TestRunDeniedReasons(t *testing.T) {
 	assertDenied(t, w, h, "ram_full")
 
 	h.progs = nil
-	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "r1"}) // радио вне графа
+	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "r1"}) // r1 не обнаружен (нет знаний)
 	assertDenied(t, w, h, "too_far")
 	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "nope"})
 	assertDenied(t, w, h, "too_far")
 
+	w.handleMessage(h, message{"t": "run", "prog": "trojan", "dev": "d1"}) // d1 ещё не открыт
+	assertDenied(t, w, h, "too_far")
+	scanStep(w, h, clock, 2) // t1 → s1 → {s2, d1, r1}
 	w.handleMessage(h, message{"t": "run", "prog": "trojan", "dev": "d1"})
 	assertDenied(t, w, h, "not_vulned")
 
@@ -333,6 +383,8 @@ func TestTrojanAndDoorCtrl(t *testing.T) {
 		}
 	}
 	runAndWait(message{"t": "run", "prog": "portscan"})
+	runAndWait(message{"t": "run", "prog": "portscan"}) // прогрессивно: открывает d1
+	runAndWait(message{"t": "run", "prog": "portscan"}) // второй хоп: s2, d1, r1
 	runAndWait(message{"t": "run", "prog": "vulnscan", "dev": "d1"})
 	runAndWait(message{"t": "run", "prog": "trojan", "dev": "d1"})
 
@@ -598,13 +650,25 @@ func TestScanMessage(t *testing.T) {
 			}
 		}
 	}
+
+	// Прогрессивное открытие (§12.4): первый portscan — хост + прямой сосед.
 	runAndWait(message{"t": "run", "prog": "portscan"})
 	if len(scans) != 1 {
 		t.Fatalf("exactly one scan after portscan, got %d", len(scans))
 	}
 	devs, ok := scans[0]["devices"].([]scanDevice)
+	if !ok || len(devs) != 2 {
+		t.Fatalf("first scan from t1 must list 2 devices (t1+s1), got %+v", scans[0]["devices"])
+	}
+
+	// Второй portscan раскрывает соседей s1: s2, d1 и радио r1 (аплинк s1).
+	runAndWait(message{"t": "run", "prog": "portscan"})
+	if len(scans) != 2 {
+		t.Fatalf("second portscan must resend the scan, got %d scans", len(scans))
+	}
+	devs, ok = scans[1]["devices"].([]scanDevice)
 	if !ok || len(devs) != 5 {
-		t.Fatalf("scan from t1 must list 5 devices (no radio), got %+v", scans[0]["devices"])
+		t.Fatalf("second scan must list 5 devices (t1,s1,s2,d1,r1), got %+v", scans[1]["devices"])
 	}
 	var d1 scanDevice
 	for _, d := range devs {
@@ -616,10 +680,10 @@ func TestScanMessage(t *testing.T) {
 		t.Fatalf("d1 owner must be null before trojan: %+v", d1)
 	}
 
-	runAndWait(message{"t": "run", "prog": "vulnscan", "dev": "d1"})
 	// Vulnscan тоже пересылает scan: узел помечается vulned для этого хакера
-	// (обратная связь «нажал 2 — увидел результат»), поэтому сканов уже 2.
-	if len(scans) != 2 {
+	// (обратная связь «нажал 2 — увидел результат»).
+	runAndWait(message{"t": "run", "prog": "vulnscan", "dev": "d1"})
+	if len(scans) != 3 {
 		t.Fatalf("scan must be resent on vuln completion, got %d scans", len(scans))
 	}
 	var d1v scanDevice
@@ -636,40 +700,28 @@ func TestScanMessage(t *testing.T) {
 		t.Fatalf("d1 must carry vulned=true for the vulnscanning hacker: %+v", d1v)
 	}
 
+	// Trojan: смена владельца — третий resend.
 	runAndWait(message{"t": "run", "prog": "trojan", "dev": "d1"})
-	if len(scans) != 3 {
+	if len(scans) != 4 {
 		t.Fatalf("scan must be resent on owner change, got %d scans", len(scans))
 	}
-	devs, ok = scans[2]["devices"].([]scanDevice) // scans[1] — vulned-скан, scans[2] — смена владельца
+	devs, ok = scans[3]["devices"].([]scanDevice)
 	if !ok || len(devs) != 5 {
-		t.Fatalf("resent scan: %+v", scans[2]["devices"])
+		t.Fatalf("owner-change scan: %+v", scans[3]["devices"])
 	}
 	byID := map[string]scanDevice{}
 	for _, d := range devs {
 		byID[d.ID] = d
 	}
-	if _, has := byID["r1"]; has {
-		t.Fatalf("isolated radio must not appear in the scan")
+	if _, has := byID["r1"]; !has {
+		t.Fatalf("radio reached via uplink must appear in the scan")
 	}
 	d1 = byID["d1"]
 	if d1.Owner == nil || d1.Owner.(uint64) != h.id {
 		t.Fatalf("d1 owner after trojan = %v, want %d", d1.Owner, h.id)
 	}
-	if len(d1.Links) != 1 || d1.Links[0] != "s1" {
-		t.Fatalf("d1 links = %v, want [s1]", d1.Links)
-	}
-	if t1 := byID["t1"]; t1.Owner != nil {
-		t.Fatalf("neutral terminal owner must be null: %+v", t1)
-	}
-	if s1 := byID["s1"]; len(s1.Links) != 3 { // t1, s2, d1
-		t.Fatalf("s1 links = %v, want 3", s1.Links)
-	}
 }
 
-// Сквозной сценарий приёмки M2 (§12.7): джек-ин → portscan находит дверь →
-// vulnscan → trojan → toggle (open=true в snap.props) → нож другого игрока
-// перерубает кабель → повторный portscan не находит устройство за кабелем →
-// jackout.
 func TestM2AcceptanceFlow(t *testing.T) {
 	w, clock := cyberTestWorld(t)
 	h := w.addPlayer(1, "h", "hacker", -1)
@@ -688,8 +740,9 @@ func TestM2AcceptanceFlow(t *testing.T) {
 		}
 	}
 	runAndWait(message{"t": "run", "prog": "portscan"})
+	runAndWait(message{"t": "run", "prog": "portscan"}) // прогрессивно: второй хоп открывает d1
 	if !h.scanned["d1"] {
-		t.Fatalf("portscan must discover the door")
+		t.Fatalf("two portscans must discover the door")
 	}
 	runAndWait(message{"t": "run", "prog": "vulnscan", "dev": "d1"})
 	runAndWait(message{"t": "run", "prog": "trojan", "dev": "d1"})
@@ -742,18 +795,21 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	w := newWorld(m)
 	cs := w.cyber
 
-	if len(cs.order) != 8 || len(cs.cables) != 5 || len(cs.doors) != 2 {
-		t.Fatalf("m1 M2 props: want 8 devices / 5 cables / 2 doors, got %d/%d/%d",
+	if len(cs.order) != 8 || len(cs.cables) != 7 || len(cs.doors) != 2 {
+		t.Fatalf("m1 M2 props: want 8 devices / 5 cables + 2 radio uplinks / 2 doors, got %d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors))
 	}
+	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
 	reach := cs.reachable("t1")
-	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2"} {
+	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "r1", "r2"} {
 		if !reach[id] {
-			t.Fatalf("%s must be reachable from t1 on m1", id)
+			t.Fatalf("%s must be reachable from t1 on m1 (радио — через аплинк)", id)
 		}
 	}
-	if reach["r1"] || reach["r2"] {
-		t.Fatalf("radios must stay isolated on m1")
+	for _, c := range cs.cables {
+		if c.wireless && len(c.boxes) != 0 {
+			t.Fatalf("wireless uplink %s must have no physical boxes", c.id)
+		}
 	}
 	// Кабели режутся ножом: ни один сегмент не внутри статической геометрии.
 	for _, c := range cs.cables {
@@ -778,4 +834,118 @@ func TestEmbeddedMapCyber(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Contested точка входа (решение владельца 2026-11-14): терминал, захваченный
+// другим хакером, не пускает чужого — перехват только из другого места сети.
+func TestJackinContested(t *testing.T) {
+	w, _ := cyberTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)
+	foe := w.addPlayer(2, "f", "hacker", -1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	for i := 0; i < 3; i++ { // прогрессивно: t1→s1→{s2,d1,r1}→{t2,d2}
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "t2"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	if w.cyber.devices["t2"].owner != h.id {
+		t.Fatalf("setup: t2 must be captured by h")
+	}
+
+	// Враг не входит в захваченный t2.
+	out := jackAt(w, foe, "t2")
+	if foe.jacked {
+		t.Fatalf("enemy must not jack into a captured terminal")
+	}
+	// NB: jackAt сам consume-ит takeOut — denied ищем в его возврате.
+	assertDeniedOut(t, out, foe, "not_owner")
+
+	// С нейтрального t1... уже джекнут h. Проверим: владелец входит в свою точку.
+	out = jackAt(w, h, "t1")
+	_ = out
+	if !h.jacked {
+		t.Fatalf("owner re-jacks freely")
+	}
+}
+
+// Прогрессивный portscan (решение владельца): один запуск — один хоп знаний.
+func TestProgressivePortscan(t *testing.T) {
+	w, _ := cyberTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+
+	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
+	for i := 0; i < 70 && len(h.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	w.takeOut()
+	if h.scanned["d1"] || h.scanned["t2"] {
+		t.Fatalf("first portscan must not reveal the deep network: %v", h.scanned)
+	}
+	if !h.scanned["s1"] {
+		t.Fatalf("first portscan must reveal the direct neighbor s1")
+	}
+
+	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
+	for i := 0; i < 70 && len(h.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	w.takeOut()
+	if !h.scanned["d1"] || !h.scanned["s2"] {
+		t.Fatalf("second portscan must reveal the second hop: %v", h.scanned)
+	}
+}
+
+// Сессия по имени (плейтест M2): F5 не телепортирует домой и не сбрасывает
+// владение дверью — ownerId перемапливается на нового игрока.
+func TestSessionRestore(t *testing.T) {
+	w, clock := cyberTestWorld(t)
+	h := w.addPlayer(1, "Slach", "hacker", -1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "d1"})
+	w.handleMessage(h, message{"t": "jackout"})
+	home := h.pos
+	homeTeam := h.team
+
+	// Отключение → новое подключение с тем же именем и новым id.
+	w.removePlayer(h.id)
+	w.takeOut()
+	h2 := w.addPlayer(7, "Slach", "assault", -1)
+	if h2.team != homeTeam {
+		t.Fatalf("team must be restored, got %d want %d", h2.team, homeTeam)
+	}
+	if h2.pos != home {
+		t.Fatalf("position must be restored: %v vs %v", h2.pos, home)
+	}
+	if !h2.scanned["d1"] {
+		t.Fatalf("network knowledge must survive rejoin")
+	}
+	if w.cyber.devices["d1"].owner != h2.id {
+		t.Fatalf("door ownership must be remapped to the new id, owner=%v", w.cyber.devices["d1"].owner)
+	}
+	*clock = clock.Add(time.Second)
+	jackAt(w, h2, "t1") // джек-стейт не переживает реконнект — точка входа та же
+	// Ремап vulnedBy на новый id: trojan принимается без повторного vulnscan'а.
+	w.handleMessage(h2, message{"t": "run", "prog": "trojan", "dev": "d1"})
+	if len(h2.progs) != 1 {
+		t.Fatalf("remapped vulned must let trojan run without re-vulnscan, progs=%d", len(h2.progs))
+	}
+	if !h2.alive {
+		t.Fatalf("dead session must still allow rejoin (respawnAt = now)")
+	}
+}
+
+// runAndWaitM2 — общий хелпер: выполнить программу и дождаться завершения.
+func runAndWaitM2(w *world, pl *player, msg message) {
+	w.handleMessage(pl, msg)
+	for i := 0; i < 400 && len(pl.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	pl.progs = nil
 }

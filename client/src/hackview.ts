@@ -515,7 +515,7 @@ export class HackView {
 
     const foot = el('div', 'hv-foot')
     foot.textContent =
-      '⌘/CTRL+T ТАБ · ⌘/CTRL+W ЗАКРЫТЬ · ⌘/CTRL+1..9 / F1..F9 ПЕРЕКЛЮЧИТЬ · ⌘/CTRL+H / ⌘/CTRL+V СПЛИТ'
+      'T ТАБ · W ЗАКРЫТЬ · ЦИФРЫ / F1..F9 ПЕРЕКЛЮЧИТЬ · H/V СПЛИТ · ESC ВЫХОД'
     main.append(foot)
 
     if (this.menuOpen) main.append(this.buildMenu())
@@ -706,6 +706,15 @@ export class HackView {
       ref.status.textContent = open ? 'ОТКРЫТА' : 'ЗАКРЫТА'
       ref.status.classList.toggle('open', open)
       ref.status.classList.toggle('closed', !open)
+      // Обрыв кабеля отрезает и управление (контр-хакинг §6): узел без связей
+      // = сеть отсечена, тоггл недоступен.
+      const dev = this.devices.get(ref.dev)
+      const severed = dev !== undefined && dev.links.length === 0
+      if (ref.btn !== null) {
+        ref.btn.disabled = severed
+        ref.btn.title = severed ? 'сеть устройства отсечена' : ''
+      }
+      ref.status.classList.toggle('severed', severed)
     }
   }
 
@@ -777,7 +786,8 @@ export class HackView {
       const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
       if (seen.has(key)) return
       seen.add(key)
-      line(px(a.x), py(a.z), px(b.x), py(b.z), 'svg-link')
+      const wireless = a.kind === 'radio' || b.kind === 'radio'
+      line(px(a.x), py(a.z), px(b.x), py(b.z), wireless ? 'svg-link svg-wireless' : 'svg-link')
     }
     for (const d of nodes) {
       for (const l of d.links) {
@@ -818,6 +828,19 @@ export class HackView {
         vm.setAttribute('r', '10')
         vm.classList.add('svg-vulned')
         svg.append(vm)
+      }
+      // Захваченное устройство: жирное кольцо цвета команды владельца —
+      // «это уже моё/ихнее» видно с первого взгляда (плейтест M2).
+      if (d.owner !== null) {
+        const own = svgEl('circle')
+        own.setAttribute('cx', String(cx))
+        own.setAttribute('cy', String(cy))
+        own.setAttribute('r', '13')
+        own.setAttribute('stroke', this.ownerColor(d.owner))
+        own.setAttribute('stroke-width', d.owner === this.myId ? '3' : '2')
+        own.setAttribute('fill', 'none')
+        own.classList.add('svg-owned')
+        svg.append(own)
       }
       const c = svgEl('circle')
       c.setAttribute('cx', String(cx))
