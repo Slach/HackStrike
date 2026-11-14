@@ -2,7 +2,7 @@
 // doors and cables. Geometry is built from the map data (карта — данные),
 // live state (door open, cable severed) arrives via snap.props. Collisions
 // are server-side — the door swing here is purely cosmetic, and the cables
-// are visual only (the knife hitbox lives on the server).
+// are visual only (collisions and cable cuts are server-side).
 
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
@@ -275,7 +275,7 @@ export class PropsView {
     // Кабель — заметный неоновый жгут (плейтест: «не видно, как идут провода»).
     // Перерубленный рвётся на два обрубка + мигающая искра в точке разрыва.
     const mkTube = (path: Vector3[], suffix: string): Mesh => {
-      const mesh = MeshBuilder.CreateTube(`prop.${cable.id}${suffix}`, { path, radius: 0.11 }, this.scene)
+      const mesh = MeshBuilder.CreateTube(`prop.${cable.id}${suffix}`, { path, radius: 0.06 }, this.scene)
       mesh.enableEdgesRendering(0.95)
       mesh.edgesWidth = 1.5
       mesh.material = cable.severed ? this.mats.cableDead : this.mats.cable
@@ -339,22 +339,6 @@ export class PropsView {
   }
 
   /** Анимация дверей: доворот к целевому углу, ~0.3 с на 90°. */
-  /** AABB неперерубленных кабелей — цели для ножа (автоудар при наведении). */
-  cableBoxes(): { id: string; min: [number, number, number]; max: [number, number, number] }[] {
-    const out: { id: string; min: [number, number, number]; max: [number, number, number] }[] = []
-    for (const c of this.cables.values()) {
-      if (c.severed || c.path.length < 2) continue
-      for (let i = 0; i + 1 < c.path.length; i++) {
-        const a = c.path[i]
-        const b = c.path[i + 1]
-        const min: [number, number, number] = [Math.min(a.x, b.x) - 0.08, Math.min(a.y, b.y) - 0.08, Math.min(a.z, b.z) - 0.08]
-        const max: [number, number, number] = [Math.max(a.x, b.x) + 0.08, Math.max(a.y, b.y) + 0.08, Math.max(a.z, b.z) + 0.08]
-        out.push({ id: c.id, min, max })
-      }
-    }
-    return out
-  }
-
   /** Пропс под прицелом (ховер-метка): ближайший AABB на луче. */
   propAt(origin: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, maxDist: number): string | null {
     let best: string | null = null
@@ -383,7 +367,7 @@ export class PropsView {
         const b = c.path[i + 1]
         const min: [number, number, number] = [Math.min(a.x, b.x) - 0.25, Math.min(a.y, b.y) - 0.25, Math.min(a.z, b.z) - 0.25]
         const max: [number, number, number] = [Math.max(a.x, b.x) + 0.25, Math.max(a.y, b.y) + 0.25, Math.max(a.z, b.z) + 0.25]
-        boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()} — НОЖ, ВПЛОТНУЮ (≤1.8 М)`, min, max })
+        boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()} — РЕЖЕТСЯ ПУЛЯМИ`, min, max })
       }
     }
     for (const b of boxes) {

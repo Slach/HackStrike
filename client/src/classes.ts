@@ -52,7 +52,7 @@ export const CLASSES: readonly ClassDef[] = [
   {
     key: 'hacker',
     label: 'ХАКЕР',
-    weapon: 'ПИСТОЛЕТ + НОЖ',
+    weapon: 'ПИСТОЛЕТ',
     hp: 100,
     speed: 6.0,
     damage: 18,

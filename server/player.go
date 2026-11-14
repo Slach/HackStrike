@@ -28,13 +28,6 @@ var classes = map[string]classStats{
 
 const defaultClass = "assault"
 
-// hackWeapons — переключаемый арсенал хакера (Q на клиенте): пистолет
-// (дальний) и нож (melee 60 + перерубает кабели, §12.1).
-var hackWeapons = map[string]weapon{
-	"pistol": {name: "pistol", damage: 18, interval: time.Second / 3},
-	"knife":  {name: "knife", damage: 60, interval: 1200 * time.Millisecond},
-}
-
 func classOr(cls string) (string, classStats) {
 	if st, ok := classes[cls]; ok {
 		return cls, st
@@ -86,9 +79,6 @@ type player struct {
 
 	inputSeq uint64
 	keys     keysState
-
-	// Активное оружие хакера (M2): "" = классовое; нож — для кабелей (§3.2).
-	activeWeapon string
 
 	lastShot         time.Time
 	inputCount       int // анти-спам: не более maxInputRate в секунду

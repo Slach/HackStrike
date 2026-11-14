@@ -1,7 +1,6 @@
 package main
 
 import (
-	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -107,7 +106,7 @@ func TestCyberBFSAndSevered(t *testing.T) {
 		t.Fatalf("radio uplink must reach the network, got %v", got)
 	}
 
-	// Беспроводной аплинк не режется: bullet/knife путь (cutCableAlong) вообще
+	// Беспроводной аплинк не режется: bullet-путь (cutCableAlong) вообще
 	// не находит его — у wireless-кабеля нет AABB-боксов.
 	for _, c := range cs.cables {
 		if c.wireless {
@@ -455,69 +454,6 @@ func TestDoorCollision(t *testing.T) {
 	}
 }
 
-// Нож (§12.1): 60 урона в пределах 1.8 м + LOS; перерубает кабель с одного
-// удара; темп 1.2 удара/с валидируется.
-func TestKnife(t *testing.T) {
-	w, clock := cyberTestWorld(t)
-	h := w.addPlayer(1, "h", "hacker", -1)
-	victim := w.addPlayer(2, "v", "assault", -1)
-	w.takeOut()
-
-	// Дефолт хакера — пистолет; врубаем нож (Q на клиенте, §3.2).
-	w.handleMessage(h, message{"t": "weapon", "w": "knife"})
-
-	// Кабель c1: прямой сегмент t1(5,1,8) — s1(5,1,15), сечение 0.15 на y≈1.15.
-	h.pos = vec3{5, 1, 11}
-	w.handleMessage(h, message{"t": "fire", "yaw": 0, "pitch": -1.55}) // смотрим вниз
-	if !w.cyber.cables[0].severed {
-		t.Fatalf("knife must sever the cable in one hit")
-	}
-	if got := w.cyber.reachable("t1"); len(got) != 1 || !got["t1"] {
-		t.Fatalf("severed cable must cut t1 off the graph: %v", got)
-	}
-	// В snap.props ушло severed=true (снап идёт тиком после выстрела).
-	var severedSeen bool
-	w.simulateTick()
-	for _, om := range w.takeOut() {
-		if om.msg["t"] != "snap" {
-			continue
-		}
-		for _, pr := range om.msg["props"].([]any) {
-			if m := pr.(message); m["id"] == "c1" && m["severed"] == true {
-				severedSeen = true
-			}
-		}
-	}
-	if !severedSeen {
-		t.Fatalf("snap.props must carry severed=true for c1")
-	}
-
-	// Урон: жертва в 1.66 м по центрам, LOS чист (пауза > темпа ножа 1.2 с).
-	*clock = clock.Add(2 * time.Second)
-	victim.pos = vec3{5, 1, 12.5}
-	w.handleMessage(h, message{"t": "fire", "yaw": 0, "pitch": 0})
-	if hp := victim.hp; hp != 125-60 {
-		t.Fatalf("knife damage: hp=%d, want %d", hp, 125-60)
-	}
-
-	// Вне дистанции (3.1 м) — мимо.
-	*clock = clock.Add(2 * time.Second)
-	victim.pos = vec3{5, 1, 14}
-	w.handleMessage(h, message{"t": "fire", "yaw": 0, "pitch": 0})
-	if victim.hp != 65 {
-		t.Fatalf("out of range knife must miss: hp=%d", victim.hp)
-	}
-
-	// Темп: удар раньше 1/1.2 с отброшен.
-	*clock = clock.Add(100 * time.Millisecond)
-	victim.pos = vec3{5, 1, 12.5}
-	w.handleMessage(h, message{"t": "fire", "yaw": 0, "pitch": 0})
-	if victim.hp != 65 {
-		t.Fatalf("knife rate limit: hp=%d", victim.hp)
-	}
-	w.takeOut()
-}
-
 // Пули тоже режут кабели (§6): трассерный луч до точки попадания.
 func TestBulletCutsCable(t *testing.T) {
 	w, _ := cyberTestWorld(t)
@@ -768,12 +704,12 @@ func TestM2AcceptanceFlow(t *testing.T) {
 		t.Fatalf("toggled door must appear open=true in snap.props")
 	}
 
-	// Нож другого игрока перерубает кормящий кабель двери c4 (s1→d1,
+	// Пули другого игрока перерубают кормящий кабель двери c4 (s1→d1,
 	// диагональ 5,15 → 20,20 на высоте ~1.15).
 	foe.pos = vec3{12.5, 1, 17.5}
 	w.handleMessage(foe, message{"t": "fire", "yaw": 0, "pitch": -1.55})
 	if !w.cyber.cables[3].severed {
-		t.Fatalf("enemy knife must sever the door cable")
+		t.Fatalf("enemy bullets must sever the door cable")
 	}
 
 	// Повторный portscan не находит дверь за перерубленным кабелем.
@@ -987,60 +923,6 @@ func TestFireBlockedByClosedDoor(t *testing.T) {
 	s = shots(w)
 	if len(s) != 1 || s[0]["hit"] == nil {
 		t.Fatalf("open door must not block, got %+v", s)
-	}
-}
-
-// Переключение оружия хакера (§3.2, M2): Q — пистолет ⇄ нож. Нож: 60 dmg
-// в melee и режет кабель; не-хакеру переключение запрещено.
-func TestWeaponSwitch(t *testing.T) {
-	w, clock := cyberTestWorld(t)
-	h := w.addPlayer(1, "h", "hacker", -1)
-	a := w.addPlayer(2, "a", "assault", -1)
-	w.takeOut()
-
-	// Дефолт — пистолет.
-	w.handleMessage(h, message{"t": "fire", "yaw": 0, "pitch": 0})
-	if h.activeWeapon != "" {
-		t.Fatalf("default weapon must be the class pistol")
-	}
-
-	// Не-хакеру — игнор.
-	w.handleMessage(a, message{"t": "weapon", "w": "knife"})
-	w.handleMessage(a, message{"t": "fire", "yaw": 0, "pitch": 0})
-	// (assault стреляет своим AR — на нож не переключился)
-	if a.activeWeapon != "" {
-		t.Fatalf("non-hacker must not switch weapons")
-	}
-
-	// Хакер врубает нож: режет кабель c1 (t1→s1) и бьёт в melee.
-	*clock = clock.Add(2 * time.Second) // после деолтного выстрела — иначе rate-limit
-	w.handleMessage(h, message{"t": "weapon", "w": "knife"})
-	if h.activeWeapon != "knife" {
-		t.Fatalf("hacker must switch to knife")
-	}
-	// встанем рядом с сегментом c1 (x=5, z 8→15): точка (5.5,1,12), кабель на -X
-	h.pos = vec3{5.5, 1, 12}
-	w.handleMessage(h, message{"t": "fire", "yaw": -math.Pi / 2, "pitch": -1.239}) // atan2(1.45,0.5): точно в центр кабеля (5,1.15,12)
-	c1 := w.cyber.cables[0]
-	if !c1.severed {
-		t.Fatalf("knife must cut the cable")
-	}
-
-	// melee-удар по игроку рядом: 60 урона.
-	*clock = clock.Add(2 * time.Second)
-	a.pos = vec3{5.0, 1, 12.2}
-	a.hp = classes["assault"].hp
-	w.handleMessage(h, message{"t": "fire", "yaw": -math.Pi / 2, "pitch": -0.5})
-	if a.hp != classes["assault"].hp-60 {
-		t.Fatalf("knife melee = 60 dmg, hp=%d", a.hp)
-	}
-
-	// Обратно на пистолет — обычный hitscan.
-	*clock = clock.Add(2 * time.Second)
-	w.handleMessage(h, message{"t": "weapon", "w": "pistol"})
-	w.handleMessage(h, message{"t": "fire", "yaw": -math.Pi / 2, "pitch": -0.5})
-	if a.hp != classes["assault"].hp-60-18 {
-		t.Fatalf("pistol = 18 dmg, hp=%d", a.hp)
 	}
 }
 

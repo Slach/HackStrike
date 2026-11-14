@@ -26,7 +26,6 @@ const (
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
 
 	cableThickness = 0.15 // сечение кабель-коллайдера (§12.3)
-	knifeRange     = 1.8  // м: melee ножа (§12.1)
 
 	// progNetMbps — «поток» одной активной программы для графика netLoad
 	// (чисто отображение: 10 Мбит/с × N / канал точки входа).
@@ -642,54 +641,4 @@ func (w *world) cutCableAlong(origin, dir vec3, maxDist float64) *cable {
 		best.severed = true // ребро исчезает из графа (восстановление — потом)
 	}
 	return best
-}
-
-// knife — удар ножом (§12.1): 60 урона, дистанция 1.8 м + LOS; без конуса и
-// магнетизма. Кабель режется с одного удара — луч из глаз по сегментам.
-func (w *world) knife(pl *player, yaw, pitch float64) {
-	pl.yaw, pl.pitch = yaw, pitch
-	origin := pl.pos.add(vec3{0, eyeHeight, 0})
-	dir := aimDir(yaw, pitch)
-
-	// Закрытая дверь останавливает и нож: резать кабели за ней нельзя.
-	doorStop := knifeRange
-	if end, ok := w.raycastAll(origin, dir); ok {
-		if dl := end.sub(origin).length(); dl < doorStop {
-			doorStop = dl
-		}
-	}
-	w.cutCableAlong(origin, dir, doorStop)
-
-	var victim *player
-	best := knifeRange
-	for _, p := range w.players {
-		if p.id == pl.id || !p.alive {
-			continue
-		}
-		center := p.pos.add(vec3{0, playerHeight / 2, 0})
-		rel := center.sub(origin)
-		dist := rel.length()
-		if dist > best || dist < 1e-6 || rel.dot(dir) <= 0 {
-			continue // далеко или за спиной — «луч из глаз»
-		}
-		if w.segmentBlockedAll(origin, center) {
-			continue
-		}
-		victim, best = p, dist
-	}
-
-	to := origin.add(dir.scaled(knifeRange))
-	var hit any
-	if victim != nil {
-		to = victim.pos.add(vec3{0, playerHeight / 2, 0})
-		hit = victim.id
-	}
-	killed := false
-	if victim != nil {
-		killed = w.damage(pl, victim, hackWeapons["knife"].damage)
-	}
-	w.broadcast(message{"t": "shot", "by": pl.id, "hit": hit, "from": origin.round2(), "to": to.round2()})
-	if killed {
-		w.sendTo(victim.id, message{"t": "death", "by": pl.id, "respawnAt": victim.respawnAt.UnixMilli()})
-	}
 }
