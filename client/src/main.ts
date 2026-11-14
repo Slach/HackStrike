@@ -356,9 +356,9 @@ engine.runRenderLoop(() => {
     if (near !== null) {
       const label = `${near.kind === 'radio' ? 'РАДИО-ТОЧКА' : 'ТЕРМИНАЛ'} ${near.id.toUpperCase()}`
       if (myCls !== 'hacker') {
-        // «Только хакер» — не далее радиуса точки входа: издалека подсказка
-        // не нужна (плейтест M2-2), чтобы не засорять HUD чужим классом.
-        if (near.dist <= near.range) hint = `ДЖЕК-ИН // ${label} — ТОЛЬКО ХАКЕР`
+        // «Только хакер» — вплотную (2 м), издалека подсказка не нужна
+        // (плейтест M2-2), чтобы не засорять HUD чужим классом.
+        if (near.dist <= 2) hint = `ДЖЕК-ИН // ${label} — ТОЛЬКО ХАКЕР`
       } else if (near.dist <= near.range) {
         hint = `SPACE — ДЖЕК-ИН // ${label}`
       } else {
