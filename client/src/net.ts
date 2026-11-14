@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' // GDD §12.4, §13.1
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' // GDD §12.4, §13.1, §13.5
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -53,6 +53,7 @@ export interface ScanDevice {
   links: string[] // ids of adjacent devices
   vulned?: boolean // my vulnscan found an exploit here (omitted when false)
   watched?: boolean // my watcher trigger sits on this device (M3, omitted when false)
+  firewalled?: boolean // someone's firewall sits on this device (M3 §13.5, visible to everyone who scanned it)
 }
 
 export interface DeckProg {
@@ -110,8 +111,9 @@ export type ServerMessage =
   | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   | { t: 'denied'; reason: string }
-  // M3 (GDD §13.2): another hacker jacked into a device with my watcher.
-  | { t: 'alert'; dev: string; who: number }
+  // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
+  // into my watched device) from firewall (enemy jack-in attempt blocked).
+  | { t: 'alert'; dev: string; who: number; src?: string }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -213,6 +215,7 @@ function parseDevice(v: unknown): ScanDevice | null {
     links: Array.isArray(p.links) ? p.links.filter((l): l is string => typeof l === 'string') : [],
     vulned: p.vulned === true,
     watched: p.watched === true,
+    firewalled: p.firewalled === true,
   }
 }
 
@@ -328,7 +331,8 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     case 'alert': {
       const dev = str(m.dev)
       if (dev === null) return null
-      return { t: 'alert', dev, who: num(m.who, -1) }
+      const src = str(m.src)
+      return { t: 'alert', dev, who: num(m.who, -1), src: src === null ? undefined : src }
     }
     default:
       return null

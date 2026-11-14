@@ -233,9 +233,11 @@ const sock = new GameSocket({
         hackview.onDenied(msg)
         break
       case 'alert': {
-        // Сработал watcher (M3 §13.2): в деке-WM — тост, иначе — строка HUD.
+        // Сработал триггер (M3 §13.2): watcher — чужой вход; firewall —
+        // отбитая попытка входа (§13.5). В деке-WM — тост, иначе — HUD.
         const whoName = latestMeta.get(msg.who)?.name ?? `#${msg.who}`
-        const text = `W ▸ ${msg.dev.toUpperCase()} ← ${whoName}`
+        const mark = msg.src === 'firewall' ? 'F' : 'W'
+        const text = `${mark} ▸ ${msg.dev.toUpperCase()} ← ${whoName}`
         if (hackview.active) hackview.onAlert(text)
         else hud.alert(text)
         break

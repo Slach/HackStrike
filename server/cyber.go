@@ -23,9 +23,9 @@ const (
 	vulnscanWork = 3.0
 	trojanWork   = 2.0
 	watcherWork  = 1.0 // §13.1: пассивный слушатель — дешевле vulnscan'а
+	firewallWork = 1.5 // §13.5: активный фильтр — дороже watcher'а, дешевле trojan'а
 
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
-
 
 	// progNetMbps — «поток» одной активной программы для графика netLoad
 	// (чисто отображение: 10 Мбит/с × N / канал точки входа).
@@ -56,10 +56,11 @@ type device struct {
 	netMbps float64
 	box     aabb // дверь: AABB-коллайдер (open отключает)
 
-	owner     uint64          // владелец trojan (0 = нейтральное)
-	open      bool            // дверь: стартует закрытой
-	vulnedBy  map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
-	watcherBy map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
+	owner      uint64          // владелец trojan (0 = нейтральное)
+	open       bool            // дверь: стартует закрытой
+	vulnedBy   map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
+	watcherBy  map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
+	firewalled uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
 }
 
 // cable — ребро сети (§12.3): полилиния. M2-2: перерубание удалено —
@@ -229,6 +230,8 @@ func progWork(name string) float64 {
 		return trojanWork
 	case "watcher":
 		return watcherWork
+	case "firewall":
+		return firewallWork
 	}
 	return 0
 }
@@ -255,6 +258,18 @@ func (w *world) jackin(pl *player, dev *device) {
 		w.denied(pl, "not_owner")
 		return
 	}
+	// §13.5: firewall фильтрует точку входа — вражеским вход закрыт,
+	// владельцу фильтра и его союзникам открыт. Отбитая попытка не молчит:
+	// alert хозяину фильтра (живому — мёртвым не шлём, §5.5).
+	if fw := dev.firewalled; fw != 0 && fw != pl.id {
+		if owner, ok := w.players[fw]; !ok || owner.team != pl.team {
+			if ok && owner.alive {
+				w.sendTo(fw, message{"t": "alert", "dev": dev.id, "who": pl.id, "src": "firewall"})
+			}
+			w.denied(pl, "firewall")
+			return
+		}
+	}
 	pl.jacked = true
 	pl.jackHost = dev
 	pl.progs = nil
@@ -278,7 +293,7 @@ func (w *world) fireWatchers(dev *device, who *player) {
 		if !ok || !owner.alive {
 			continue
 		}
-		w.sendTo(ownerID, message{"t": "alert", "dev": dev.id, "who": who.id})
+		w.sendTo(ownerID, message{"t": "alert", "dev": dev.id, "who": who.id, "src": "watcher"})
 	}
 }
 
@@ -332,6 +347,12 @@ func (w *world) handleRun(pl *player, msg message) {
 		}
 		if prog == "trojan" && !dev.vulnedBy[pl.id] {
 			w.denied(pl, "not_vulned")
+			return
+		}
+		// §13.5: firewall ставится только на точку входа — фильтровать
+		// jack-in у switch/дверей нечего.
+		if prog == "firewall" && dev.kind != "terminal" && dev.kind != "radio" {
+			w.denied(pl, "bad_target")
 			return
 		}
 	}
@@ -429,6 +450,11 @@ func (w *world) completeProgram(pl *player, p *program) {
 	case "trojan":
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.owner = pl.id // userland; двери дают владельцу toggle
+			// §13.5: новый trojan выкуривает чужой firewall — обход без
+			// тупика (взломщик получает и владение, и открытый вход).
+			if dev.firewalled != 0 && dev.firewalled != pl.id {
+				dev.firewalled = 0
+			}
 			w.resendScanFor(p.dev)
 		}
 	case "watcher":
@@ -436,6 +462,13 @@ func (w *world) completeProgram(pl *player, p *program) {
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.watcherBy[pl.id] = true
 			w.resendScanFor(p.dev) // на карте появится отметка watched
+		}
+	case "firewall":
+		// §13.5: фильтр живёт на устройстве (как trojan), слот RAM освобождён.
+		// Повторная установка тем же хакером — no-op (один firewall на девайс).
+		if dev := w.cyber.devices[p.dev]; dev != nil {
+			dev.firewalled = pl.id
+			w.resendScanFor(p.dev) // на карте появится ореол firewalled
 		}
 	}
 }
@@ -465,6 +498,10 @@ type scanDevice struct {
 	Vulned bool `json:"vulned,omitempty"`
 	// Watched — на устройстве стоит МОЙ watcher-триггер (§13.2), omitempty.
 	Watched bool `json:"watched,omitempty"`
+	// Firewalled — на устройстве стоит чей-то firewall (§13.5), omitempty.
+	// Наблюдаемый сетевой фильтр — виден всем, кто открыл устройство
+	// (в отличие от личных vulned/watched).
+	Firewalled bool `json:"firewalled,omitempty"`
 }
 
 // sendScan — кибер-карта хакера: только открытые его portscan'ом устройства
@@ -489,6 +526,9 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.watcherBy[pl.id] {
 			sd.Watched = true
+		}
+		if d.firewalled != 0 {
+			sd.Firewalled = true
 		}
 		devs = append(devs, sd)
 	}

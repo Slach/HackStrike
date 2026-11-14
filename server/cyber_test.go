@@ -935,7 +935,7 @@ func TestFireBlockedByClosedDoor(t *testing.T) {
 	// Дверь между стрелком и жертвой: тонкая панель в z=10.
 	w.cyber = buildCyber(&gameMap{Name: "d", Bounds: [3]float64{40, 8, 40},
 		Colliders: []collider{{Min: [3]float64{0, 0, 0}, Max: [3]float64{40, 1, 40}, Kind: "floor"}},
-		props: []mapProp{{Kind: "door", ID: "d1", Pos: [3]float64{0, 1, 10}, Size: [3]float64{8, 3, 0.3}, Axis: "x", To: ""}}})
+		props:     []mapProp{{Kind: "door", ID: "d1", Pos: [3]float64{0, 1, 10}, Size: [3]float64{8, 3, 0.3}, Axis: "x", To: ""}}})
 	victim := w.addPlayer(9, "v", "heavy", -1)
 	victim.pos = vec3{0, 1, 12} // за дверью
 	w.takeOut()
@@ -1004,5 +1004,117 @@ func TestSnapReportsJacked(t *testing.T) {
 				t.Fatal("snap.jacked must be false after jackout")
 			}
 		}
+	}
+}
+
+// Firewall (M3 §13.5): установка (too_far без скана, bad_target на switch),
+// чужой jack-in отбит (denied firewall + alert src=firewall хозяину),
+// союзник и владелец проходят, отбитая попытка НЕ триггерит watcher,
+// обход без тупика: чужой vulnscan+trojan выкуривает firewall.
+func TestFirewall(t *testing.T) {
+	w, _ := cyberTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)   // team 0
+	foe := w.addPlayer(2, "f", "hacker", -1) // team 1
+	w.takeOut()
+	jackAt(w, h, "t1")
+
+	// Цель не открыта portscan'ом — too_far (как watcher/trojan).
+	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	assertDenied(t, w, h, "too_far")
+
+	// Firewall только на точку входа: switch — bad_target.
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"}) // +s1
+	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "s1"})
+	assertDenied(t, w, h, "bad_target")
+
+	// Открыли сеть до t2, поставили firewall (+watcher для интеракции):
+	// фильтр живёт на устройстве, слот деки свободен.
+	for i := 0; i < 2; i++ {
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	if w.cyber.devices["t2"].firewalled != h.id {
+		t.Fatalf("firewall must be installed on t2 by h")
+	}
+	if len(h.progs) != 0 {
+		t.Fatalf("installed firewall must free the deck slot (lives on the device)")
+	}
+	// scan помечает устройство firewalled:true (наблюдаемый фильтр — всем,
+	// кто скавш; здесь — хозяину).
+	w.sendScan(h)
+	var fwSeen bool
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "scan" || om.to != h.id {
+			continue
+		}
+		for _, d := range om.msg["devices"].([]scanDevice) {
+			if d.ID == "t2" && d.Firewalled {
+				fwSeen = true
+			}
+		}
+	}
+	if !fwSeen {
+		t.Fatalf("scan must mark t2 firewalled")
+	}
+
+	// Чужой (вражеская команда) jack-in отбит: denied firewall + ровно один
+	// alert src=firewall (watcher НЕ срабатывает — входа не было, §13.5).
+	out := jackAt(w, foe, "t2")
+	if foe.jacked {
+		t.Fatalf("enemy must not jack into a firewalled terminal")
+	}
+	assertDeniedOut(t, out, foe, "firewall")
+	alerts := 0
+	for _, om := range out {
+		if om.msg["t"] == "alert" && om.to == h.id && om.msg["dev"] == "t2" {
+			alerts++
+			if om.msg["src"] != "firewall" {
+				t.Fatalf("alert src = %v, want firewall", om.msg["src"])
+			}
+		}
+	}
+	if alerts != 1 {
+		t.Fatalf("blocked attempt must fire exactly one firewall alert, got %d", alerts)
+	}
+
+	// Союзник владельца проходит свободно (свой firewall не запирает команду).
+	ally := w.addPlayer(3, "a", "hacker", 0)
+	w.takeOut()
+	out = jackAt(w, ally, "t2")
+	if !ally.jacked {
+		t.Fatalf("ally must pass the owner's firewall, out=%v", out)
+	}
+	w.handleMessage(ally, message{"t": "jackout"})
+
+	// Владелец тоже проходит.
+	w.handleMessage(h, message{"t": "jackout"})
+	out = jackAt(w, h, "t2")
+	if !h.jacked {
+		t.Fatalf("owner must pass own firewall, out=%v", out)
+	}
+	w.handleMessage(h, message{"t": "jackout"})
+
+	// Обход без тупика: враг входит в другом месте, выкуривает firewall
+	// trojan'ом — фильтр снят, вход открыт, владение перешло.
+	out = jackAt(w, foe, "t1")
+	if !foe.jacked {
+		t.Fatalf("setup: foe must jack into neutral t1, out=%v", out)
+	}
+	for i := 0; i < 3; i++ {
+		runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	}
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "vulnscan", "dev": "t2"})
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	if w.cyber.devices["t2"].firewalled != 0 {
+		t.Fatalf("enemy trojan must flush the old firewall")
+	}
+	if w.cyber.devices["t2"].owner != foe.id {
+		t.Fatalf("setup: t2 must be captured by foe")
+	}
+	w.handleMessage(foe, message{"t": "jackout"})
+	out = jackAt(w, foe, "t2")
+	if !foe.jacked {
+		t.Fatalf("jack-in must pass after the firewall is flushed, out=%v", out)
 	}
 }

@@ -36,6 +36,8 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   not_jacked: 'НЕ В СЕТИ',
   no_los: 'НЕТ ПРЯМОЙ ВИДИМОСТИ',
   too_far: 'СЛИШКОМ ДАЛЕКО',
+  firewall: 'FIREWALL — ДОСТУП ЗАПРЕЩЁН',
+  bad_target: 'FIREWALL — ТОЛЬКО ТЕРМИНАЛ ИЛИ РАДИО',
 }
 
 const KIND_LABEL: Readonly<Record<PropKind, string>> = {
@@ -51,6 +53,7 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   vulnscan: 'VULNSCAN',
   trojan: 'TROJAN',
   watcher: 'WATCHER',
+  firewall: 'FIREWALL',
 }
 
 const HISTORY_MAX = 60 // 30 с истории при 2 Гц deck-сообщений
@@ -170,6 +173,8 @@ export class HackView {
   private vulned = new Map<string, true>()
   /** Устройства с моим watcher-триггером (M3 §13.1) — для ореола на карте. */
   private watched = new Map<string, true>()
+  /** Устройства с чьим-то firewall (M3 §13.5) — ореол + тост об установке. */
+  private firewalled = new Map<string, true>()
   private tabs: Tab[] = [{ key: 'deck', dev: null }]
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
@@ -263,6 +268,13 @@ export class HackView {
       }
     }
     this.watched = new Map([...next].filter(([, d]) => d.watched === true).map(([id]) => [id, true] as const))
+    // Обратная связь firewall (§13.5): фильтр на карте видим всем скавшим.
+    for (const d of msg.devices) {
+      if (d.firewalled === true && !this.firewalled.has(d.id)) {
+        this.toast(`FIREWALL: ${d.id.toUpperCase()}`)
+      }
+    }
+    this.firewalled = new Map([...next].filter(([, d]) => d.firewalled === true).map(([id]) => [id, true] as const))
     // Таб на устройство при появлении владения (ГДД §12.6).
     for (const d of msg.devices) {
       if (d.owner !== null && d.owner === this.myId && !this.tabs.some((t) => t.dev === d.id)) {
@@ -388,6 +400,9 @@ export class HackView {
     } else if (e.code === 'Digit4') {
       e.preventDefault()
       this.runProg('watcher')
+    } else if (e.code === 'Digit5') {
+      e.preventDefault()
+      this.runProg('firewall')
     }
   }
 
@@ -586,6 +601,7 @@ export class HackView {
       ['2 VULNSCAN', 'vulnscan'],
       ['3 ТРОЯН', 'trojan'],
       ['4 WATCHER', 'watcher'],
+      ['5 FIREWALL', 'firewall'],
     ] as const) {
       const b = el('button', 'hv-btn')
       b.textContent = label + this.targetSuffix()
@@ -708,7 +724,7 @@ export class HackView {
   private fillProgs(list: HTMLElement): void {
     list.replaceChildren()
     if (this.progs.length === 0) {
-      list.append(txt('div', 'hv-dim', 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4'))
+      list.append(txt('div', 'hv-dim', 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4/5'))
       return
     }
     for (const p of this.progs) {
@@ -857,6 +873,16 @@ export class HackView {
         wt.setAttribute('r', '10')
         wt.classList.add('svg-watched')
         svg.append(wt)
+      }
+      // Firewall на устройстве (чей — не важно: фильтр наблюдаем из сети,
+      // §13.5) — голубой пунктирный ореол по аналогии со watched.
+      if (d.firewalled === true) {
+        const fw = svgEl('circle')
+        fw.setAttribute('cx', String(cx))
+        fw.setAttribute('cy', String(cy))
+        fw.setAttribute('r', '15')
+        fw.classList.add('svg-firewalled')
+        svg.append(fw)
       }
       // Захваченное устройство: жирное кольцо цвета команды владельца —
       // «это уже моё/ихнее» видно с первого взгляда (плейтест M2).

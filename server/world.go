@@ -177,6 +177,9 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 				d.watcherBy[id] = true
 				delete(d.watcherBy, s.oldID)
 			}
+			if d.firewalled == s.oldID { // §13.5: F5 не снимает firewall
+				d.firewalled = id
+			}
 		}
 		if !pl.alive {
 			pl.respawnAt = w.now()
