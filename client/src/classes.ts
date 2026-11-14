@@ -25,7 +25,7 @@ export const CLASSES: readonly ClassDef[] = [
     damage: 150,
     rate: '1 / 1.2с',
     fireInterval: 1.2,
-    note: 'авто-зум ×2, ваншот кроме heavy',
+    note: 'авто-зум ×1.5, ваншот кроме heavy',
   },
   {
     key: 'assault',

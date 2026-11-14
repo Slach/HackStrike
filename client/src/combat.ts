@@ -26,12 +26,12 @@ export interface TargetBox {
 const MINIGUN_SPINUP = 0.5 // GDD §3.1: first 0.5s of aiming, no shots
 const MINIGUN_HOLD = 1.0 // spin-up holds for 1s after losing the target
 
-// Sniper auto-scope (GDD §3.3): zoom x2 engages 0.1s after an enemy enters
+// Sniper auto-scope (GDD §3.3): zoom x1.5 engages 0.1s after an enemy enters
 // the field of view; the sniper only auto-fires while scoped; zoom drops
 // 1s after the last enemy leaves the view.
 const SNIPER_ACQUIRE_MS = 100
 const SNIPER_HOLD_MS = 1000
-const SNIPER_ZOOM = 2
+const SNIPER_ZOOM = 1.5
 
 export class Scope {
   engaged = false
