@@ -911,6 +911,60 @@
         font-size: 15px;
         padding: 12px;
       }
+      /* лента камеры (M3 §13.7): список видимых игроков в табе устройства */
+      .cam-ui {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex: 1;
+        justify-content: center;
+      }
+      .cam-owner {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #baffdd;
+        text-align: center;
+      }
+      .cam-title {
+        font-size: 16px;
+        letter-spacing: 5px;
+        font-weight: 700;
+        color: #37ff9b;
+        text-shadow: 0 0 14px rgba(55, 255, 155, 0.5);
+        text-align: center;
+      }
+      .cam-feed {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 240px;
+        overflow-y: auto;
+      }
+      .cam-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px dashed rgba(55, 255, 155, 0.15);
+        padding-bottom: 4px;
+        font-size: 13px;
+      }
+      .cam-name {
+        font-weight: 700;
+      }
+      .cam-cls {
+        color: rgba(170, 255, 210, 0.75);
+        letter-spacing: 1px;
+        font-size: 11px;
+      }
+      .cam-pos {
+        color: rgba(170, 255, 210, 0.55);
+        font-size: 11px;
+      }
+      .cam-empty {
+        color: rgba(170, 255, 210, 0.55);
+        letter-spacing: 2px;
+        text-align: center;
+      }
       .dev-info {
         display: flex;
         flex-direction: column;

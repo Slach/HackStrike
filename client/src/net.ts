@@ -27,7 +27,7 @@ export type ClientMessage =
   | { t: 'run'; prog: RunProg; dev?: string }
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'cable'
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable'
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
  *  the server sent them, so an absent "open" means "keep the last
@@ -40,6 +40,7 @@ export interface SnapProp {
   z?: number
   open?: boolean // door
   radius?: number // radio
+  owner?: number // camera (M3 §13.7): LED-индикатор владения; отсутствует = нейтральная
 }
 
 /** Device discovered by portscan (GDD §12.5 "scan"). */
@@ -55,6 +56,17 @@ export interface ScanDevice {
   watched?: boolean // my watcher trigger sits on this device (M3, omitted when false)
   firewalled?: boolean // someone's firewall sits on this device (M3 §13.5, visible to everyone who scanned it)
   antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
+}
+
+/** Один «кадр» ленты камеры (M3 §13.7): живой игрок в зоне видимости. */
+export interface CamSeen {
+  id: number
+  name: string
+  team: number
+  cls: string
+  x: number
+  y: number
+  z: number
 }
 
 export interface DeckProg {
@@ -115,6 +127,8 @@ export type ServerMessage =
   // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
   // into my watched device) from firewall (enemy jack-in attempt blocked).
   | { t: 'alert'; dev: string; who: number; src?: string }
+  // M3 (GDD §13.7): camera feed — 2 Hz, only to the living trojan owner.
+  | { t: 'cam'; dev: string; seen: CamSeen[] }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -132,7 +146,7 @@ export interface GameSocketHandlers {
 }
 
 const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'cable']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable']
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
@@ -197,6 +211,8 @@ function parseProp(v: unknown): SnapProp | null {
   if (typeof p.open === 'boolean') prop.open = p.open
   const radius = num(p.radius, Number.NaN)
   if (Number.isFinite(radius) && radius > 0) prop.radius = radius
+  const owner = num(p.owner, Number.NaN)
+  if (Number.isFinite(owner) && owner > 0) prop.owner = owner
   return prop
 }
 
@@ -335,6 +351,29 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       if (dev === null) return null
       const src = str(m.src)
       return { t: 'alert', dev, who: num(m.who, -1), src: src === null ? undefined : src }
+    }
+    case 'cam': {
+      const dev = str(m.dev)
+      if (dev === null) return null
+      const seen: CamSeen[] = []
+      if (Array.isArray(m.seen)) {
+        for (const s of m.seen) {
+          if (typeof s !== 'object' || s === null) continue
+          const r = s as Record<string, unknown>
+          const id = num(r.id, Number.NaN)
+          if (!Number.isFinite(id)) continue
+          seen.push({
+            id,
+            name: typeof r.name === 'string' && r.name.length > 0 ? r.name : `p${id}`,
+            team: num(r.team, 0) === 1 ? 1 : 0,
+            cls: str(r.cls) ?? 'assault',
+            x: num(r.x, 0),
+            y: num(r.y, 0),
+            z: num(r.z, 0),
+          })
+        }
+      }
+      return { t: 'cam', dev, seen }
     }
     default:
       return null

@@ -680,13 +680,13 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	w := newWorld(m)
 	cs := w.cyber
 
-	if len(cs.order) != 8 || len(cs.cables) != 7 || len(cs.doors) != 2 {
-		t.Fatalf("m1 M2 props: want 8 devices / 5 cables + 2 radio uplinks / 2 doors, got %d/%d/%d",
+	if len(cs.order) != 10 || len(cs.cables) != 9 || len(cs.doors) != 2 {
+		t.Fatalf("m1 M2+M3 props: want 10 devices / 7 cables + 2 radio uplinks / 2 doors, got %d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors))
 	}
 	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
 	reach := cs.reachable("t1")
-	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "r1", "r2"} {
+	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "r1", "r2", "cam1", "cam2"} {
 		if !reach[id] {
 			t.Fatalf("%s must be reachable from t1 on m1 (радио — через аплинк)", id)
 		}
@@ -1252,6 +1252,231 @@ func foePrepTrojan(t *testing.T, w *world, foe *player) []outMsg {
 	}
 	runAndWaitM2(w, foe, message{"t": "run", "prog": "vulnscan", "dev": "t2"})
 	w.handleMessage(foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	for i := 0; i < 400 && len(foe.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	if len(foe.progs) > 0 {
+		t.Fatalf("setup: trojan must finish")
+	}
+	return w.takeOut()
+}
+
+// --- M3, объект 4: камера (§13.7) -------------------------------------------
+
+// cameraTestWorld — мини-карта с камерой: t1—c1—s1—c2—cam1. Стена x∈[14,15]
+// между камерой (20,2.6,20) и зоной z≈20 слева: игрок за ней в радиусе, но
+// без LOS.
+func cameraTestWorld(t *testing.T) (*world, *time.Time) {
+	t.Helper()
+	const j = `{
+	 "name":"camtest","bounds":[40,8,40],
+	 "colliders":[
+	  {"min":[0,0,0],"max":[40,1,40],"kind":"floor"},
+	  {"min":[14,1,19.5],"max":[15,4,20.5],"kind":"wall"},
+	  {"min":[0,1,37],"max":[0.7,1.5,39],"kind":"stair"}
+	 ],
+	 "spawns":{"0":[[5,1,5]],"1":[[35,1,35]]},
+	 "props":[
+	  {"kind":"terminal","id":"t1","pos":[5,1,8]},
+	  {"kind":"switch","id":"s1","pos":[5,1,15]},
+	  {"kind":"camera","id":"cam1","pos":[20,2.6,20]},
+	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
+	  {"kind":"cable","id":"c2","from":"cam1","to":"s1"}
+	 ]}`
+	m, err := parseGameMap([]byte(j))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	w := newWorld(m)
+	clock := time.UnixMilli(1_700_000_000_000)
+	w.now = func() time.Time { return clock }
+	return w, &clock
+}
+
+// camFrames — все cam-кадры для игрока по устройству из пачки исходящих.
+func camFrames(out []outMsg, to uint64, dev string) [][]camSeen {
+	var frames [][]camSeen
+	for _, om := range out {
+		if om.msg["t"] != "cam" || om.to != to || om.msg["dev"] != dev {
+			continue
+		}
+		seen, _ := om.msg["seen"].([]camSeen)
+		frames = append(frames, seen)
+	}
+	return frames
+}
+
+func seenIDs(frame []camSeen) map[uint64]bool {
+	ids := make(map[uint64]bool, len(frame))
+	for _, s := range frame {
+		ids[s.ID] = true
+	}
+	return ids
+}
+
+// Камера (§13.7): в сети после portscan, trojan-захват требует vulnscan,
+// владелец получает ленту (радиус 12 м + LOS), чужой не получает, мёртвые и
+// за стеной в ленту не попадают, firewall — bad_target, antivirus отбивает
+// чужой trojan.
+func TestCamera(t *testing.T) {
+	w, clock := cameraTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)
+	foe := w.addPlayer(2, "f", "hacker", -1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+
+	// Камера — устройство сети: BFS от t1, portscan открывает её со 2-го хопа.
+	if !w.cyber.reachable("t1")["cam1"] {
+		t.Fatalf("cam1 must be reachable from t1")
+	}
+	w.handleMessage(h, message{"t": "run", "prog": "trojan", "dev": "cam1"})
+	assertDenied(t, w, h, "too_far") // ещё не открыта portscan'ом
+	for i := 0; i < 2; i++ {
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	if !h.scanned["cam1"] {
+		t.Fatalf("two portscans must discover cam1, scanned=%v", h.scanned)
+	}
+	// scan сообщает kind=camera (кибер-карта рисует сенсор).
+	w.sendScan(h)
+	var kindSeen string
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "scan" {
+			continue
+		}
+		for _, d := range om.msg["devices"].([]scanDevice) {
+			if d.ID == "cam1" {
+				kindSeen = d.Kind
+			}
+		}
+	}
+	if kindSeen != "camera" {
+		t.Fatalf("scan must report cam1 kind=camera, got %q", kindSeen)
+	}
+
+	// Захват: vulnscan обязателен, потом trojan → владелец.
+	w.handleMessage(h, message{"t": "run", "prog": "trojan", "dev": "cam1"})
+	assertDenied(t, w, h, "not_vulned")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "cam1"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "cam1"})
+	if w.cyber.devices["cam1"].owner != h.id {
+		t.Fatalf("trojan must capture cam1, owner=%v", w.cyber.devices["cam1"].owner)
+	}
+
+	// Зона видимости: near в радиусе с LOS; wallMan — в радиусе за стеной
+	// (не виден); far — вне радиуса; мёртвый — не виден.
+	near := w.addPlayer(3, "near", "assault", 1)
+	wallMan := w.addPlayer(4, "wall", "assault", 1)
+	far := w.addPlayer(5, "far", "sniper", 1)
+	w.takeOut()
+	near.pos = vec3{26, 1, 20}    // ~6 м от камеры, LOS чист
+	wallMan.pos = vec3{10, 1, 20} // ~10 м, но стена x14..15 режет LOS
+	far.pos = vec3{35, 1, 35}     // ~15 м — вне радиуса 12
+
+	// Владелец получает кадры 2 Гц; до первого camFeedEvery-тика их нет.
+	for i := 0; i < 45; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	out := w.takeOut()
+	frames := camFrames(out, h.id, "cam1")
+	if len(frames) == 0 {
+		t.Fatalf("owner must receive cam frames at 2 Hz")
+	}
+	last := frames[len(frames)-1]
+	ids := seenIDs(last)
+	if !ids[near.id] {
+		t.Fatalf("player within radius+LOS must be seen: %v", last)
+	}
+	if ids[wallMan.id] {
+		t.Fatalf("player behind a wall must not be seen (LOS, §13.7)")
+	}
+	if ids[far.id] {
+		t.Fatalf("player beyond 12 m must not be seen")
+	}
+	// Чужой НЕ получает ленту (в т.ч. пустую).
+	if frames := camFrames(out, foe.id, "cam1"); len(frames) != 0 {
+		t.Fatalf("non-owner must not receive cam frames, got %d", len(frames))
+	}
+
+	// Мёртвый выпадает из ленты; пустая зона = пустой кадр (UI чистится).
+	killer := w.addPlayer(6, "k", "sniper", 0)
+	w.takeOut()
+	w.damage(killer, near, 150)
+	if near.alive {
+		t.Fatalf("setup: near must die")
+	}
+	for i := 0; i < 16; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	frames = camFrames(w.takeOut(), h.id, "cam1")
+	if len(frames) == 0 {
+		t.Fatalf("frames must keep flowing (2 Hz)")
+	}
+	if ids := seenIDs(frames[len(frames)-1]); ids[near.id] {
+		t.Fatalf("dead player must not be seen")
+	}
+
+	// snap.props: камера всем, owner — для LED-индикатора.
+	w.broadcastSnap()
+	var camProp message
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "snap" {
+			continue
+		}
+		for _, p := range om.msg["props"].([]any) {
+			if m := p.(message); m["id"] == "cam1" {
+				camProp = m
+			}
+		}
+	}
+	if camProp == nil || camProp["kind"] != "camera" || camProp["owner"] != h.id {
+		t.Fatalf("snap.props must carry cam1 with kind/owner: %+v", camProp)
+	}
+
+	// firewall на камеру — bad_target (фильтр только точек входа, §13.5).
+	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "cam1"})
+	assertDenied(t, w, h, "bad_target")
+
+	// antivirus на камере работает: чужой trojan отбит (гонка версий §13.6).
+	runCollect := func(pl *player, msg message) []outMsg {
+		w.handleMessage(pl, msg)
+		for i := 0; i < 400 && len(pl.progs) > 0; i++ {
+			w.simulateTick()
+		}
+		if len(pl.progs) > 0 {
+			t.Fatalf("program did not finish: %v", msg)
+		}
+		return w.takeOut()
+	}
+	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "cam1"})
+	if w.cyber.devices["cam1"].antivirused != h.id {
+		t.Fatalf("setup: antivirus must sit on cam1")
+	}
+	foeOut := foePrepTrojanCam(t, w, foe)
+	assertDeniedOut(t, foeOut, foe, "antivirus")
+	if w.cyber.devices["cam1"].antivirused != 0 {
+		t.Fatalf("antivirus must be worn out after repelling one trojan")
+	}
+	if w.cyber.devices["cam1"].owner != h.id {
+		t.Fatalf("repelled trojan must not change camera owner")
+	}
+}
+
+// foePrepTrojanCam — атакующий входит с нейтральной точки, открывает камеру,
+// vulnscan'ит и троянит; возвращает исходящие trojan'а.
+func foePrepTrojanCam(t *testing.T, w *world, foe *player) []outMsg {
+	t.Helper()
+	out := jackAt(w, foe, "t1")
+	if !foe.jacked {
+		t.Fatalf("setup: foe must jack into t1, out=%v", out)
+	}
+	for i := 0; i < 2; i++ {
+		runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	}
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "vulnscan", "dev": "cam1"})
+	w.handleMessage(foe, message{"t": "run", "prog": "trojan", "dev": "cam1"})
 	for i := 0; i < 400 && len(foe.progs) > 0; i++ {
 		w.simulateTick()
 	}

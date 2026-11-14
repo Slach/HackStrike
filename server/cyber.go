@@ -26,6 +26,10 @@ const (
 	firewallWork  = 1.5 // §13.5: активный фильтр — дороже watcher'а, дешевле trojan'а
 	antivirusWork = 1.5 // §13.6: активная защита — тот же ярус, что firewall
 
+	camVisionRadius = 12.0 // §13.7: зона видимости камеры, м (радиус + LOS)
+	camFeedEvery    = tickRate / 2 // лента камеры 2 Гц (§13.7: 0.5–1 с достаточно)
+	camBodyHeight   = 0.9          // центр корпуса игрока от ног (цель LOS-луча)
+
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
 
 	// progNetMbps — «поток» одной активной программы для графика netLoad
@@ -42,13 +46,14 @@ var deviceStats = map[string]struct {
 	"radio":    {cpu: 0.1, npu: 0, net: 20, ram: 1},
 	"switch":   {cpu: 0.2, npu: 0, net: 100, ram: 1},
 	"door":     {cpu: 0.2, npu: 0, net: 100, ram: 1},
+	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §13.7: сенсор, как switch
 }
 
 // device — кибер-устройство (§12.2). Железо неизменно; динамика — owner
 // (последний trojan), vulnedBy и open у дверей.
 type device struct {
 	id      string
-	kind    string // terminal|radio|switch|door
+	kind    string // terminal|radio|switch|door|camera
 	pos     vec3
 	radius  float64 // радио
 	cpu     float64
@@ -81,6 +86,7 @@ type cyberState struct {
 	order   []string // порядок карты: стабильные снапшоты/сканы
 	cables  []*cable
 	doors   []*device
+	cameras []*device // §13.7: сенсоры наблюдения (лента владельцу)
 }
 
 // buildCyber — устройства и кабели из пропсов карты. Радио-точка — точка
@@ -110,6 +116,9 @@ func buildCyber(m *gameMap) *cyberState {
 				max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1], p.Pos[2] + p.Size[2]/2},
 			}
 			cs.doors = append(cs.doors, d)
+		}
+		if d.kind == "camera" {
+			cs.cameras = append(cs.cameras, d)
 		}
 		cs.devices[d.id] = d
 		cs.order = append(cs.order, d.id)
@@ -608,6 +617,52 @@ func (w *world) deckStatusTick() {
 	}
 }
 
+// camSeen — один «кадр» ленты камеры (§13.7): живой игрок в зоне видимости.
+type camSeen struct {
+	ID   uint64  `json:"id"`
+	Name string  `json:"name"`
+	Team int     `json:"team"`
+	Cls  string  `json:"cls"`
+	X    float64 `json:"x"`
+	Y    float64 `json:"y"`
+	Z    float64 `json:"z"`
+}
+
+// camFeedTick — лента камер 2 Гц (§13.7): каждой камерой с владельцем —
+// «кто в зоне видимости» (радиус 12 м + LOS: статика и закрытые двери, как
+// у пуль). Получает только живой владелец trojan (джекнут или нет — как
+// alert'ы, §5.5); пустой кадр тоже шлётся, чтобы UI чистил ленту.
+func (w *world) camFeedTick() {
+	if w.tick%camFeedEvery != 0 {
+		return
+	}
+	for _, cam := range w.cyber.cameras {
+		owner, ok := w.players[cam.owner]
+		if cam.owner == 0 || !ok || !owner.alive {
+			continue
+		}
+		seen := make([]camSeen, 0, 4)
+		for _, pl := range w.players {
+			if !pl.alive {
+				continue
+			}
+			center := pl.pos.add(vec3{0, camBodyHeight, 0})
+			if cam.pos.sub(center).length() > camVisionRadius {
+				continue
+			}
+			if w.segmentBlockedAll(cam.pos, center) {
+				continue // камера за стеной/дверью не «рентгенит» (§13.7)
+			}
+			p := pl.pos.round2()
+			seen = append(seen, camSeen{
+				ID: pl.id, Name: pl.name, Team: pl.team, Cls: pl.cls,
+				X: p[0], Y: p[1], Z: p[2],
+			})
+		}
+		w.sendTo(owner.id, message{"t": "cam", "dev": cam.id, "seen": seen})
+	}
+}
+
 // snapProps — динамическое состояние пропсов для снапа (§12.5), всем.
 func (cs *cyberState) snapProps() []any {
 	props := make([]any, 0, len(cs.order)+len(cs.cables))
@@ -622,6 +677,11 @@ func (cs *cyberState) snapProps() []any {
 			m["open"] = d.open
 		case "radio":
 			m["radius"] = d.radius
+		case "camera":
+			// §13.7: LED-индикатор владения в 3D (нейтральная/своя/чужая).
+			if d.owner != 0 {
+				m["owner"] = d.owner
+			}
 		}
 		props = append(props, m)
 	}

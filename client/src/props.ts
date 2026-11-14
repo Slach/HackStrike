@@ -30,7 +30,7 @@ export interface MapProp {
   points: [number, number, number][]
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'cable']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -94,14 +94,28 @@ interface CableView {
   meshes: Mesh[]
 }
 
+/** Камера (M3 §13.7): сенсор наблюдения. LED-индикатор владения перекрашивается
+ *  из snap.props.owner — нейтральная/своя/чужая видна издалека. */
+interface CameraView {
+  id: string
+  x: number
+  z: number
+  led: StandardMaterial
+  owner: number | null
+}
+
 export class PropsView {
   private readonly terminals = new Map<string, SimpleProp>()
   private readonly radios = new Map<string, SimpleProp>()
   private readonly switches = new Map<string, SimpleProp>()
   private readonly doors = new Map<string, DoorView>()
   private readonly cables = new Map<string, CableView>()
+  private readonly cameras = new Map<string, CameraView>()
   private readonly mats: Record<string, StandardMaterial>
   private miniCache: MiniProp[] = []
+  /** Владелец камеры — своя команда или чужая (ставит main.ts: знает myId и
+   *  ростер; null = неизвестно, LED остаётся нейтральным). */
+  private ownerState: ((owner: number) => 'own' | 'foe') | null = null
 
   private constructor(private scene: Scene) {
     const mk = (name: string, diffuse: [number, number, number], emissive: [number, number, number]): StandardMaterial => {
@@ -150,10 +164,19 @@ export class PropsView {
         case 'cable':
           view.buildCable(prop.id, prop.points)
           break
+        case 'camera':
+          view.buildCamera(prop.id, prop.pos)
+          break
       }
     }
     view.rebuildMini()
     return view
+  }
+
+  /** Контекст владения для LED камер (main.ts знает myId и ростер). */
+  setOwnerState(state: ((owner: number) => 'own' | 'foe') | null): void {
+    this.ownerState = state
+    for (const c of this.cameras.values()) this.tintCamera(c)
   }
 
   private buildTerminal(id: string, pos: readonly [number, number, number]): void {
@@ -226,6 +249,39 @@ export class PropsView {
     this.doors.set(id, { id, pivot, x: pos[0], z: pos[2], axis, len: w, h, baseY: pos[1], open: false, angle: 0 })
   }
 
+  /** Камера наблюдения (§13.7): кронштейн + корпус + линза + LED владения. */
+  private buildCamera(id: string, pos: readonly [number, number, number]): void {
+    const body = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.34, height: 0.24, depth: 0.42 }, this.scene)
+    body.position.set(pos[0], pos[1], pos[2])
+    body.material = this.mats.body
+    body.isPickable = false
+    const lens = MeshBuilder.CreateCylinder(`prop.${id}.lens`, { diameter: 0.14, height: 0.06 }, this.scene)
+    lens.rotation.x = Math.PI / 2
+    lens.position.set(pos[0], pos[1], pos[2] + 0.24)
+    lens.material = this.mats.antenna
+    lens.isPickable = false
+    // LED — свой материал на камеру: цвет динамический (владение из снапа).
+    const led = new StandardMaterial(`mat.prop.${id}.led`, this.scene)
+    led.emissiveColor = new Color3(0.3, 0.38, 0.34)
+    led.disableLighting = true
+    const ledMesh = MeshBuilder.CreateBox(`prop.${id}.led`, { width: 0.1, height: 0.05, depth: 0.1 }, this.scene)
+    ledMesh.position.set(pos[0], pos[1] + 0.16, pos[2])
+    ledMesh.material = led
+    ledMesh.isPickable = false
+    const cam: CameraView = { id, x: pos[0], z: pos[2], led, owner: null }
+    this.cameras.set(id, cam)
+    this.tintCamera(cam)
+  }
+
+  private tintCamera(cam: CameraView): void {
+    if (cam.owner === null || this.ownerState === null) {
+      cam.led.emissiveColor = new Color3(0.3, 0.38, 0.34) // нейтральная: тускло-серый
+      return
+    }
+    cam.led.emissiveColor =
+      this.ownerState(cam.owner) === 'own' ? new Color3(0.22, 1.0, 0.61) : new Color3(1.0, 0.3, 0.82)
+  }
+
   private buildCable(id: string, points: readonly [number, number, number][]): void {
     if (points.length < 2) return
     const cable: CableView = { id, path: points.map((p) => new Vector3(...p)), meshes: [] }
@@ -275,6 +331,21 @@ export class PropsView {
           dirty = true
           break
         }
+        case 'camera': {
+          if (p.x === undefined || p.y === undefined || p.z === undefined) break
+          const cam = this.cameras.get(p.id)
+          if (cam === undefined) {
+            this.buildCamera(p.id, [p.x, p.y, p.z])
+            dirty = true
+          }
+          const owner = p.owner ?? null
+          const known = this.cameras.get(p.id)
+          if (known !== undefined && known.owner !== owner) {
+            known.owner = owner
+            this.tintCamera(known)
+          }
+          break
+        }
       }
     }
     if (dirty) this.rebuildMini()
@@ -299,6 +370,17 @@ export class PropsView {
     }
     for (const s of this.switches.values()) {
       boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, 1, s.z - 0.5], max: [s.x + 0.5, 1.9, s.z + 0.5] })
+    }
+    for (const c of this.cameras.values()) {
+      const state =
+        c.owner === null
+          ? 'НЕЙТРАЛЬНАЯ'
+          : this.ownerState !== null
+            ? this.ownerState(c.owner) === 'own'
+              ? 'СВОЯ'
+              : 'ЧУЖАЯ'
+            : 'ЗАХВАЧЕНА'
+      boxes.push({ label: `КАМЕРА ${c.id.toUpperCase()} — ${state}`, min: [c.x - 0.5, 1.8, c.z - 0.5], max: [c.x + 0.5, 3.4, c.z + 0.5] })
     }
     // Кабели: подсказка дистанции ножа (плейтест M2-2 — «навожусь, ничего
     // не происходит»: режет только вплотную, ≤1.8 м от глаз).
@@ -413,7 +495,8 @@ export class PropsView {
   }
 
   private known(id: string): boolean {
-    return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id)
+    return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id) ||
+      this.cameras.has(id)
   }
 
   private rebuildMini(): void {
@@ -421,6 +504,7 @@ export class PropsView {
     for (const t of this.terminals.values()) out.push({ x: t.x, z: t.z, kind: 'terminal' })
     for (const r of this.radios.values()) out.push({ x: r.x, z: r.z, kind: 'radio' })
     for (const s of this.switches.values()) out.push({ x: s.x, z: s.z, kind: 'switch' })
+    for (const c of this.cameras.values()) out.push({ x: c.x, z: c.z, kind: 'camera' })
     for (const d of this.doors.values()) {
       out.push({ x: d.x, z: d.z, kind: 'door', open: d.open, axis: d.axis, len: d.len })
     }

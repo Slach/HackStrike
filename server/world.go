@@ -326,6 +326,7 @@ func (w *world) simulateTick() {
 	w.matchCheck()
 	w.rebalanceTeams()
 	w.deckStatusTick()
+	w.camFeedTick() // §13.7: лента камер владельцам
 	w.broadcastSnap()
 }
 

@@ -17,7 +17,7 @@ export interface MiniSelf {
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera'
 
 export interface MiniProp {
   x: number
@@ -135,6 +135,17 @@ export class Minimap {
         ctx.fillStyle = 'rgba(255,77,210,0.9)'
         ctx.beginPath()
         ctx.arc(x, y, 1.2, 0, Math.PI * 2)
+        ctx.fill()
+      } else if (p.kind === 'camera') {
+        // камера (M3 §13.7): «глаз» — кольцо с точкой; зона видимости на
+        // миникарте — объект M6, сейчас только маркер устройства.
+        ctx.strokeStyle = 'rgba(120,230,255,0.9)'
+        ctx.beginPath()
+        ctx.arc(x, y, 4, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(120,230,255,0.9)'
+        ctx.beginPath()
+        ctx.arc(x, y, 1.4, 0, Math.PI * 2)
         ctx.fill()
       } else {
         // switch: ромб

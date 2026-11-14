@@ -125,6 +125,12 @@ function handleSnap(snap: SnapMsg): void {
     propsView?.updateFromSnap(snap.props)
     hackview.updateProps(snap.props)
   }
+  // §13.7: LED камерам нужен контекст «свой/чужой» — он живёт в ростере.
+  propsView?.setOwnerState(
+    myId !== null
+      ? (owner) => (owner === myId || latestMeta.get(owner)?.team === myTeam ? 'own' : 'foe')
+      : null,
+  )
   hud.setRoster(snap.players, myId)
   const me = myId !== null ? latestMeta.get(myId) : undefined
   // Самоисцеление десинка (плейтест M2-2): сервер считает нас джекнутыми, а
@@ -243,6 +249,11 @@ const sock = new GameSocket({
         else hud.alert(text)
         break
       }
+      case 'cam':
+        // Лента камеры (M3 §13.7): только моей — сервер фильтрует; храним и
+        // вне hackview (открыв таб, увиим последний кадр).
+        hackview.onCam(msg)
+        break
       case 'pong':
         break // RTT is tracked inside the socket
       default:

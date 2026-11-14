@@ -10,6 +10,7 @@
 // place, so a pending button click is never swallowed by a re-render.
 
 import type {
+  CamSeen,
   ClientMessage,
   DeckProg,
   PropKind,
@@ -23,6 +24,7 @@ type JackinMsg = Extract<ServerMessage, { t: 'jackin' }>
 type DeckMsg = Extract<ServerMessage, { t: 'deck' }>
 type ScanMsg = Extract<ServerMessage, { t: 'scan' }>
 type DeniedMsg = Extract<ServerMessage, { t: 'denied' }>
+type CamMsg = Extract<ServerMessage, { t: 'cam' }>
 
 export interface HackViewDeps {
   send: (msg: ClientMessage) => void
@@ -46,6 +48,7 @@ const KIND_LABEL: Readonly<Record<PropKind, string>> = {
   radio: 'РАДИО-ТОЧКА',
   switch: 'SWITCH',
   door: 'ДВЕРЬ',
+  camera: 'КАМЕРА',
   cable: 'КАБЕЛЬ',
 }
 
@@ -179,6 +182,9 @@ export class HackView {
   private firewalled = new Map<string, true>()
   /** Устройства с чьим-то antivirus (M3 §13.6) — ореол + тост об установке. */
   private antivirused = new Map<string, true>()
+  /** Ленты камер (M3 §13.7): последний «кадр» по каждой МОЕЙ камере; живёт
+   *  между перестройками DOM и обновляется на месте (клики не срываются). */
+  private readonly camFeeds = new Map<string, readonly CamSeen[]>()
   private tabs: Tab[] = [{ key: 'deck', dev: null }]
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
@@ -190,6 +196,7 @@ export class HackView {
   private progLists: HTMLElement[] = []
   private netmapBoxes: HTMLElement[] = []
   private doorRefs: { dev: string; status: HTMLElement; btn: HTMLButtonElement }[] = []
+  private camRefs: { dev: string; list: HTMLElement }[] = []
 
   constructor(private deps: HackViewDeps) {
     this.root = byId('hackview')
@@ -243,6 +250,7 @@ export class HackView {
     this.progLists = []
     this.netmapBoxes = []
     this.doorRefs = []
+    this.camRefs = []
   }
 
   onDeck(msg: DeckMsg): void {
@@ -296,6 +304,10 @@ export class HackView {
         }
       }
     }
+    // §13.7: камеру у меня отобрали — лента гаснет (иначе висел бы старый кадр).
+    for (const [id, d] of next) {
+      if (d.kind === 'camera' && d.owner !== this.myId) this.camFeeds.delete(id)
+    }
     this.tabs = this.tabs.filter((t) => t.dev === null || next.has(t.dev))
     for (const p of this.panes) {
       if (!this.tabs.some((t) => t.key === p.tabKey)) p.tabKey = 'deck'
@@ -314,6 +326,13 @@ export class HackView {
   onAlert(text: string): void {
     if (!this._active) return
     this.toast(text)
+  }
+
+  /** Лента камеры (M3 §13.7): «кадр» 2 Гц по моей камере. Храним даже вне
+   *  hackview — открыв таб, хакер видит последний кадр сразу. */
+  onCam(msg: CamMsg): void {
+    this.camFeeds.set(msg.dev, msg.seen)
+    this.schedule(() => this.updateCamFeeds())
   }
 
   /** Состояние дверей из snap.props (без перестройки DOM). */
@@ -572,6 +591,7 @@ export class HackView {
     this.updateDeckData()
     this.updateDoorStates()
     this.updateNetmaps()
+    this.updateCamFeeds()
   }
 
   private buildPane(pane: Pane, index: number): HTMLElement {
@@ -677,6 +697,21 @@ export class HackView {
       this.doorRefs.push({ dev, status, btn })
       return
     }
+    if (d.kind === 'camera') {
+      // §13.7: сенсор — «картинка в UI» это лента наблюдения (видео — M7+).
+      const wrap = el('div', 'cam-ui')
+      wrap.append(txt('div', 'cam-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)} · РАДИУС 12 М + LOS`))
+      if (d.owner === this.myId) {
+        wrap.append(txt('div', 'cam-title', 'ЛЕНТА НАБЛЮДЕНИЯ'))
+        const list = el('div', 'cam-feed')
+        wrap.append(list)
+        this.camRefs.push({ dev, list })
+      } else {
+        wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] ТРОЯН'))
+      }
+      body.append(wrap)
+      return
+    }
     const info = el('div', 'dev-info')
     const row = (k: string, v: string): void => {
       const r = el('div', 'dev-row')
@@ -767,6 +802,31 @@ export class HackView {
         ref.btn.title = severed ? 'сеть устройства отсечена' : ''
       }
       ref.status.classList.toggle('severed', severed)
+    }
+  }
+
+  /** Точечное обновление лент камер (§13.7): без перестройки DOM. */
+  private updateCamFeeds(): void {
+    for (const ref of this.camRefs) {
+      const seen = this.camFeeds.get(ref.dev)
+      ref.list.replaceChildren()
+      if (seen === undefined) {
+        ref.list.append(txt('div', 'hv-dim', 'ОЖИДАНИЕ КАДРА…'))
+        continue
+      }
+      if (seen.length === 0) {
+        ref.list.append(txt('div', 'cam-empty', 'НИКОГО В ЗОНЕ ВИДИМОСТИ'))
+        continue
+      }
+      for (const s of seen) {
+        const row = el('div', 'cam-row')
+        const name = txt('span', 'cam-name', s.name)
+        name.style.color = s.team === 1 ? '#ff4dd2' : '#37ff9b'
+        row.append(name)
+        row.append(txt('span', 'cam-cls', s.cls.toUpperCase()))
+        row.append(txt('span', 'cam-pos', `${Math.round(s.x)}·${Math.round(s.z)}`))
+        ref.list.append(row)
+      }
     }
   }
 

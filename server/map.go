@@ -76,7 +76,7 @@ func (m *gameMap) parseProps() error {
 			return fmt.Errorf("map: prop %d: %w", i, err)
 		}
 		switch p.Kind {
-		case "terminal", "radio", "switch", "door", "cable":
+		case "terminal", "radio", "switch", "door", "camera", "cable":
 		default:
 			return fmt.Errorf("map: prop %d: unknown kind %q", i, p.Kind)
 		}
@@ -144,7 +144,7 @@ func (m *gameMap) validateProps() error {
 	}
 	for _, p := range m.props {
 		switch p.Kind {
-		case "terminal", "radio", "switch":
+		case "terminal", "radio", "switch", "camera": // §13.7: камера — точечное устройство в bounds
 			for ax := 0; ax < 3; ax++ {
 				if math.IsNaN(p.Pos[ax]) || p.Pos[ax] < 0 || p.Pos[ax] > m.Bounds[ax] {
 					return fmt.Errorf("map: prop %s pos out of bounds: %v", p.ID, p.Pos)
