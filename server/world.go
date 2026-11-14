@@ -14,6 +14,7 @@ const (
 	fragLimit     = 50
 	maxInputRate  = 60 // input-сообщений в секунду; сверх — отбрасываем
 	tickDT        = 1.0 / float64(tickRate)
+	posHistoryLen = 8 // тиков позиции для lag compensation (~267 мс)
 )
 
 // outMsg — исходящее сообщение; to == 0 значит broadcast.
@@ -76,6 +77,7 @@ func (w *world) spawnPlayer(pl *player, cls string) {
 		pos = vec3{s[0], s[1], s[2]}
 	}
 	pl.pos = pos
+	pl.posHist = pl.posHist[:0] // rewind не должен смотреть на позицию до спавна
 	pl.vy = 0
 	pl.grounded = true
 	pl.hp = st.hp
@@ -153,12 +155,17 @@ func (w *world) handleRespawn(pl *player, cls string) {
 }
 
 // simulateTick — порядок симуляции: номер тика → движение из последнего
-// инпута → проверка конца матча → снапшот всем.
+// инпута (с записью истории позиций для lag compensation) → проверка конца
+// матча → снапшот всем.
 func (w *world) simulateTick() {
 	w.tick++
 	for _, pl := range w.players {
 		if pl.alive {
 			w.m.movePlayer(pl, tickDT)
+			pl.posHist = append(pl.posHist, pl.pos)
+			if len(pl.posHist) > posHistoryLen {
+				pl.posHist = pl.posHist[len(pl.posHist)-posHistoryLen:]
+			}
 		}
 	}
 	w.matchCheck()

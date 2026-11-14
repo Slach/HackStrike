@@ -8,6 +8,7 @@ import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture'
 import { Color3 } from '@babylonjs/core/Maths/math.color'
 import type { Scene } from '@babylonjs/core/scene'
+import { CLASS_BY_KEY } from './classes'
 import type { SnapPlayer, Snapshot } from './net'
 
 export const EYE_HEIGHT = 1.6
@@ -117,6 +118,7 @@ interface PlayerView {
   plateTex: DynamicTexture
   lastName: string
   lastTeam: number
+  lastHp: number
 }
 
 export class PlayerViews {
@@ -151,21 +153,35 @@ export class PlayerViews {
       v.body.setEnabled(p.meta.alive)
       v.plate.setEnabled(p.meta.alive)
       v.body.material = this.bodyMats[p.meta.team === 1 ? 1 : 0]
-      if (v.lastName !== p.meta.name || v.lastTeam !== p.meta.team) {
-        v.lastName = p.meta.name
-        v.lastTeam = p.meta.team
-        v.plateTex.drawText(
-          p.meta.name,
-          null,
-          42,
-          'bold 36px monospace',
-          teamCss(p.meta.team),
-          'rgba(2,12,7,0.72)',
-          true,
-          true,
-        )
+      if (v.lastName !== p.meta.name || v.lastTeam !== p.meta.team || v.lastHp !== p.meta.hp) {
+        this.drawPlate(v, p.meta)
       }
     }
+  }
+
+  // Name plate: name + HP bar, redrawn only when something changed — hits on
+  // a remote player are visible as the bar draining.
+  private drawPlate(v: PlayerView, meta: SnapPlayer): void {
+    v.lastName = meta.name
+    v.lastTeam = meta.team
+    v.lastHp = meta.hp
+    const maxHp = CLASS_BY_KEY[meta.cls].hp
+    const ctx = v.plateTex.getContext() as unknown as CanvasRenderingContext2D
+    ctx.clearRect(0, 0, 256, 64)
+    ctx.fillStyle = 'rgba(2,12,7,0.72)'
+    ctx.fillRect(0, 0, 256, 64)
+    ctx.font = 'bold 30px monospace'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = teamCss(meta.team)
+    ctx.fillText(meta.name, 128, 32)
+    const frac = Math.max(0, Math.min(1, meta.hp / maxHp))
+    ctx.fillStyle = 'rgba(0,0,0,0.6)'
+    ctx.fillRect(38, 44, 180, 12)
+    ctx.fillStyle = frac > 0.5 ? '#37ff9b' : frac > 0.25 ? '#ffd237' : '#ff4d5e'
+    ctx.fillRect(38, 44, 180 * frac, 12)
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)'
+    ctx.strokeRect(38.5, 44.5, 179, 11)
+    v.plateTex.update()
   }
 
   private create(id: number, meta: SnapPlayer): PlayerView {
@@ -191,7 +207,7 @@ export class PlayerViews {
     plateMat.useAlphaFromDiffuseTexture = true
     plate.material = plateMat
 
-    const view: PlayerView = { body, plate, plateMat, plateTex, lastName: '', lastTeam: -1 }
+    const view: PlayerView = { body, plate, plateMat, plateTex, lastName: '', lastTeam: -1, lastHp: -1 }
     this.views.set(id, view)
     return view
   }

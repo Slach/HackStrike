@@ -57,7 +57,7 @@ func TestFireCone(t *testing.T) {
 	if len(s) != 1 || s[0]["hit"] != victim.id {
 		t.Fatalf("target 1.4° off-axis must be hit, got %+v", s)
 	}
-	if want := 125 - 80; victim.hp != want {
+	if want := 125 - 60; victim.hp != want {
 		t.Fatalf("sniper damage: victim hp = %d, want %d", victim.hp, want)
 	}
 	// Точка попадания — на луче, близко к цели.
@@ -66,14 +66,14 @@ func TestFireCone(t *testing.T) {
 		t.Fatalf("hit point %v should be near the target", to)
 	}
 
-	// Вне конуса.
+	// Вне конуса и мимо AABB.
 	victim.pos = vec3{0.6, aimLevelY, 10}
 	w.fire(shooter, 0, 0)
 	s = shots(w)
 	if len(s) != 1 || s[0]["hit"] != nil {
 		t.Fatalf("target 3.4° off-axis must be missed, got %+v", s)
 	}
-	if victim.hp != 45 {
+	if victim.hp != 65 {
 		t.Fatalf("miss must not deal damage, hp=%d", victim.hp)
 	}
 }
@@ -95,6 +95,68 @@ func TestFireLOSBlocked(t *testing.T) {
 	}
 }
 
+// Реалистичный бой: оба на одном полу, цель в 8 м. Прицел в голову/грудь/ноги
+// геометрически пересекает AABB тела, но угол к ЦЕНТРУ больше 2° — раньше
+// такие выстрелы отклонялись (симптом «стреляю в упор — не умирает»).
+// Теперь луч∩AABB засчитывается безусловно.
+func TestFireBodyParts(t *testing.T) {
+	w, shooter, victim, _ := combatWorld(t)
+	victim.pos = vec3{0, 1, 8} // стоит на том же полу, ноги y=1
+
+	cases := []struct {
+		name  string
+		aimY  float64
+		want  bool
+	}{
+		{"ноги (y+0.3)", 1 + 0.3, true},
+		{"центр (y+0.9)", 1 + 0.9, true},
+		{"грудь (y+1.3)", 1 + 1.3, true},
+		{"голова (y+1.6)", 1 + 1.6, true},
+		{"над головой (y+2.0)", 1 + 2.0, false},
+	}
+	for _, c := range cases {
+		victim.hp = 125
+		victim.alive = true
+		pitch := math.Atan2(c.aimY-(1+eyeHeight), 8)
+		w.fire(shooter, 0, pitch)
+		s := shots(w)
+		hit := len(s) == 1 && s[0]["hit"] == victim.id
+		if hit != c.want {
+			t.Fatalf("%s: want hit=%v, got %+v", c.name, c.want, s)
+		}
+	}
+}
+
+// Магнитизм (ГДД §3.2 «доворачиваются пули»): промах 0.45 м на 15 м — AABB
+// (±0.3) не задет, но конус 2° (0.52 м на 15 м) доворачивает попадание.
+func TestFireMagnetism(t *testing.T) {
+	w, shooter, victim, _ := combatWorld(t)
+	victim.pos = vec3{0, aimLevelY, 15}
+	w.fire(shooter, math.Atan2(0.45, 15), 0)
+	s := shots(w)
+	if len(s) != 1 || s[0]["hit"] != victim.id {
+		t.Fatalf("near-miss inside the magnetism cone must be hit, got %+v", s)
+	}
+}
+
+// Lag compensation: клиент целится по интерполированной позиции ~100 мс в
+// прошлом. Стрейф-рывок цели на 0.65 м между тиками — выстрел по старой
+// позиции должен попадать через отмотку AABB.
+func TestFireRewindMovingTarget(t *testing.T) {
+	w, shooter, victim, _ := combatWorld(t)
+	victim.pos = vec3{0, aimLevelY, 10}
+	for i := 0; i < 6; i++ { // набираем историю позиций
+		w.simulateTick()
+	}
+	victim.pos = vec3{0.65, aimLevelY, 10} // рывок вбок; текущий AABB луч x=0 не задевает
+	w.takeOut()
+	w.fire(shooter, 0, 0) // стрелок целился в старую (интерполированную) позицию
+	s := shots(w)
+	if len(s) != 1 || s[0]["hit"] != victim.id {
+		t.Fatalf("shot at the interpolated (old) position must hit via rewind, got %+v", s)
+	}
+}
+
 // Friendly fire ON: союзник получает урон и может быть убит.
 func TestFriendlyFire(t *testing.T) {
 	w, shooter, victim, clock := combatWorld(t)
@@ -103,9 +165,14 @@ func TestFriendlyFire(t *testing.T) {
 	}
 	victim.pos = vec3{0, aimLevelY, 10}
 
-	w.fire(shooter, 0, 0) // 80 урона
-	if victim.hp != 45 || !victim.alive {
+	w.fire(shooter, 0, 0) // 60 урона
+	if victim.hp != 65 || !victim.alive {
 		t.Fatalf("after first shot: hp=%d alive=%v", victim.hp, victim.alive)
+	}
+	*clock = clock.Add(2 * time.Second)
+	w.fire(shooter, 0, 0) // 125-60-60=5: ещё жив
+	if !victim.alive || victim.hp != 5 {
+		t.Fatalf("after second shot: hp=%d alive=%v", victim.hp, victim.alive)
 	}
 	*clock = clock.Add(2 * time.Second)
 	w.fire(shooter, 0, 0) // добил
@@ -139,22 +206,27 @@ func TestFireRateLimit(t *testing.T) {
 
 	// Первый выстрел — принят.
 	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
-	if hp := victim.hp; hp != 45 {
+	if hp := victim.hp; hp != 65 {
 		t.Fatalf("first shot must land, hp=%d", hp)
 	}
 
 	// Слишком рано (интервал 1.2 с, допуск 15 мс) — отброшен.
 	*clock = clock.Add(1100 * time.Millisecond)
 	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
-	if victim.hp != 45 {
+	if victim.hp != 65 {
 		t.Fatalf("shot inside weapon cooldown must be rejected, hp=%d", victim.hp)
 	}
 
-	// По истечении интервала — принят.
+	// По истечении интервала — принят; 125-60-60=5, цель ещё жива.
 	*clock = clock.Add(120 * time.Millisecond) // итого 1.22 с
 	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
+	if !victim.alive || victim.hp != 5 {
+		t.Fatalf("second sniper shot must leave the target alive, hp=%d", victim.hp)
+	}
+	*clock = clock.Add(2 * time.Second)
+	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
 	if victim.alive {
-		t.Fatalf("second sniper shot must kill (125-80-80<0), hp=%d", victim.hp)
+		t.Fatalf("third sniper shot must kill (125-3*60<0), hp=%d", victim.hp)
 	}
 	w.takeOut()
 

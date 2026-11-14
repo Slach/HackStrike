@@ -120,7 +120,7 @@ func TestMatchEndByFrags(t *testing.T) {
 	killer := w.addPlayer(1, "k", "sniper")
 	victim := w.addPlayer(2, "v", "assault")
 	victim.team = 1
-	victim.hp = 1 // одно попадание снайпера (80) убивает — это и есть фраг
+	victim.hp = 1 // одно попадание снайпера (60) убивает — это и есть фраг
 	w.takeOut()
 
 	w.damage(killer, victim)

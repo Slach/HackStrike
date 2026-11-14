@@ -84,6 +84,8 @@ export class Hud {
     timer: byId('timer'),
     killfeed: byId('killfeed'),
     crosshair: byId('crosshair'),
+    hitmarker: byId('hitmarker'),
+    dmg: byId('dmg'),
     status: byId('status'),
     tick: byId('tick'),
     players: byId('players'),
@@ -108,10 +110,20 @@ export class Hud {
       if (e.key === 'Enter') this.deploy()
     })
     this.el.deploy.addEventListener('click', () => this.deploy())
-    this.el.respawn.addEventListener('click', () => {
-      this.el.respawn.disabled = true // wait for the server to confirm
-      this.onRespawn(this.deathCls)
+    this.el.respawn.addEventListener('click', () => this.respawnNow())
+    // SPACE = respawn hotkey, but only once the countdown is over (and only
+    // while the death overlay is up — in-game Space stays the interact key).
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && this.deathActive && this.deathReady && !this.el.respawn.disabled) {
+        e.preventDefault()
+        this.respawnNow()
+      }
     })
+  }
+
+  private respawnNow(): void {
+    this.el.respawn.disabled = true // wait for the server to confirm
+    this.onRespawn(this.deathCls)
   }
 
   private deploy(): void {
@@ -159,6 +171,20 @@ export class Hud {
 
   crosshairLocked(on: boolean): void {
     this.el.crosshair.classList.toggle('locked', on)
+  }
+
+  /** White X burst around the crosshair: my shot landed (from shot events). */
+  hitmarker(): void {
+    this.el.hitmarker.classList.remove('on')
+    void this.el.hitmarker.offsetWidth // restart the CSS animation
+    this.el.hitmarker.classList.add('on')
+  }
+
+  /** Red vignette: the local player just lost HP (hp dropped in a snapshot). */
+  damageFlash(): void {
+    this.el.dmg.classList.remove('on')
+    void this.el.dmg.offsetWidth
+    this.el.dmg.classList.add('on')
   }
 
   killfeed(killer: string, killerTeam: number, victim: string, victimTeam: number): void {

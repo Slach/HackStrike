@@ -59,10 +59,12 @@ let latestMeta = new Map<number, SnapPlayer>()
 const prevAlive = new Map<number, boolean>()
 const lastHits = new Map<number, { by: number; at: number }>()
 const debugShots: ShotMsg[] = [] // ring buffer behind window.__hs for e2e probes
+let lastMyHp = -1
 
 function resetSession(): void {
   playing = false
   myId = null
+  lastMyHp = -1
   buffer.clear()
   views.clear()
   latestMeta = new Map()
@@ -93,6 +95,7 @@ function handleShot(msg: ShotMsg): void {
   if (msg.hit > 0) {
     const victim = latestMeta.get(msg.hit)
     effects.flash(to, victim?.team ?? 0)
+    if (msg.by === myId) hud.hitmarker()
     lastHits.set(msg.hit, { by: msg.by, at: performance.now() })
     if (lastHits.size > 64) {
       const oldest = lastHits.keys().next().value
@@ -105,6 +108,10 @@ function handleSnap(snap: SnapMsg): void {
   buffer.push(snap)
   latestMeta = new Map(snap.players.map((p): [number, SnapPlayer] => [p.id, p]))
   const me = myId !== null ? latestMeta.get(myId) : undefined
+  if (me !== undefined) {
+    if (lastMyHp > me.hp) hud.damageFlash()
+    lastMyHp = me.hp
+  }
   if (me !== undefined) myCls = me.cls // server may have adjusted the class
   hud.setVitals(me !== undefined ? me.hp : 0, CLASS_BY_KEY[myCls].hp, CLASS_BY_KEY[myCls].label)
   hud.setScores(snap.scores, snap.timeLeft / 1000) // hud expects seconds, wire has ms

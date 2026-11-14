@@ -6,12 +6,18 @@ import (
 	"time"
 )
 
-// Стрельба (ГДД §9.4): hitscan из глаз, попадание принято если цель в конусе
-// ~2° от направления выстрела (мягкий bullet magnetism — «доворачиваются
-// пули, а не прицел») и LOS до неё чист от геометрии. Friendly fire ON.
+// Стрельба (ГДД §9.4): hitscan из глаз. Попадание засчитано, если луч
+// пересекает AABB цели — текущий ИЛИ отмотанный на rewindTicks назад
+// (клиент целится по интерполированной позиции ~100 мс в прошлом), либо
+// цель в конусе ~2° (мягкий bullet magnetism — «доворачиваются пули, а не
+// прицел»). LOS до центра цели должен быть чист от геометрии. Friendly fire ON.
 const magnetismHalfAngle = 2.0 * math.Pi / 180
 
 var magnetismCos = math.Cos(magnetismHalfAngle)
+
+// rewindTicks — на сколько тиков отматывать AABB цели: ~133 мс при 30 Гц
+// (интерполяция клиента ~100 мс + джиттер).
+const rewindTicks = 4
 
 // rateEpsilon — допуск к темпу оружия на сетевой джиттер (полтика 30 Гц).
 const rateEpsilon = 15 * time.Millisecond
@@ -53,7 +59,7 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 	type candidate struct {
 		pl     *player
 		center vec3
-		tAlong float64 // проекция центра цели на луч
+		tAlong float64 // точка входа луча в AABB (или проекция центра)
 	}
 	var cands []candidate
 	for _, p := range w.players {
@@ -67,10 +73,21 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 			cands = append(cands, candidate{p, center, 0})
 			continue
 		}
-		if rel.dot(dir)/dist < magnetismCos {
-			continue // вне конуса 2°
+		// Геометрия: вход луча в текущий AABB и в AABB rewindTicks назад.
+		tNow := rayBoxT(origin, dir, playerBoxAt(p.pos))
+		tRew := rayBoxT(origin, dir, playerBoxAt(p.histPosAt(rewindTicks)))
+		inCone := rel.dot(dir)/dist >= magnetismCos
+		if tNow < 0 && tRew < 0 && !inCone {
+			continue // мимо тела (и сейчас, и 133 мс назад) и вне конуса доворота
 		}
-		cands = append(cands, candidate{p, center, rel.dot(dir)})
+		tAlong := rel.dot(dir)
+		if tNow >= 0 && (tAlong < 0 || tNow < tAlong) {
+			tAlong = tNow
+		}
+		if tRew >= 0 && tRew < tAlong {
+			tAlong = tRew
+		}
+		cands = append(cands, candidate{p, center, tAlong})
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].tAlong < cands[j].tAlong })
 

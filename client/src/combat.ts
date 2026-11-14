@@ -73,8 +73,8 @@ export class AutoFire {
   }
 }
 
-const TRACER_TTL = 0.09
-const FLASH_TTL = 0.14
+const TRACER_TTL = 0.12
+const FLASH_TTL = 0.26
 
 interface TracerFx {
   mesh: LinesMesh
@@ -116,7 +116,7 @@ export class Effects {
   }
 
   flash(at: Vector3, team: number): void {
-    const mesh = MeshBuilder.CreateSphere('flash', { diameter: 0.22, segments: 4 }, this.scene)
+    const mesh = MeshBuilder.CreateSphere('flash', { diameter: 0.5, segments: 6 }, this.scene)
     mesh.position.copyFrom(at)
     mesh.material = this.flashMats[team === 1 ? 1 : 0]
     mesh.isPickable = false
@@ -143,8 +143,8 @@ export class Effects {
         continue
       }
       const k = 1 - left / FLASH_TTL
-      fx.mesh.visibility = 1 - k
-      fx.mesh.scaling.setAll(0.8 + k * 1.6)
+      fx.mesh.visibility = 1 - k * 0.7
+      fx.mesh.scaling.setAll(1 + k * 2.4)
     }
   }
 }
