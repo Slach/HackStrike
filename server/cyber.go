@@ -25,7 +25,6 @@ const (
 
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
 
-	cableThickness = 0.15 // сечение кабель-коллайдера (§12.3)
 
 	// progNetMbps — «поток» одной активной программы для графика netLoad
 	// (чисто отображение: 10 Мбит/с × N / канал точки входа).
@@ -61,16 +60,14 @@ type device struct {
 	vulnedBy map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
 }
 
-// cable — ребро сети (§12.3): полилиния + тонкие коллайдеры для ножа/пуль.
-// Коллайдеры живут отдельно от геометрии карты и движению не мешают.
+// cable — ребро сети (§12.3): полилиния. M2-2: перерубание удалено —
+// кабель только визуализирует топологию и всегда цел.
 type cable struct {
 	id       string
 	fromDev  string
 	toDev    string
 	points   []vec3
-	boxes    []aabb
-	severed  bool // перерублен: ребро исчезает из графа (§6)
-	wireless bool // радио-аплинк: не режется, на карте рисуется пунктиром
+	wireless bool // радио-аплинк: на карте рисуется пунктиром
 }
 
 // cyberState — граф сети; часть world.
@@ -111,7 +108,6 @@ func buildCyber(m *gameMap) *cyberState {
 		cs.devices[d.id] = d
 		cs.order = append(cs.order, d.id)
 	}
-	half := cableThickness / 2
 	for _, p := range m.props {
 		if p.Kind != "cable" {
 			continue
@@ -122,19 +118,6 @@ func buildCyber(m *gameMap) *cyberState {
 		}
 		if len(c.points) < 2 { // без точек — прямой сегмент (мини-карты тестов)
 			c.points = []vec3{cs.devices[p.From].pos, cs.devices[p.To].pos}
-		}
-		for i := 0; i+1 < len(c.points); i++ {
-			a, b := c.points[i], c.points[i+1]
-			var box aabb
-			for ax := 0; ax < 3; ax++ {
-				lo, hi := math.Min(a[ax], b[ax]), math.Max(a[ax], b[ax])
-				if hi-lo < 1e-9 { // поперечные оси — толщина 0.15
-					lo -= half
-					hi += half
-				}
-				box.min[ax], box.max[ax] = lo, hi
-			}
-			c.boxes = append(c.boxes, box)
 		}
 		cs.cables = append(cs.cables, c)
 	}
@@ -169,13 +152,10 @@ func buildCyber(m *gameMap) *cyberState {
 	return cs
 }
 
-// neighbors — соседи устройства по неперерубленным кабелям.
+// neighbors — соседи устройства по кабелям (M2-2: всегда целым).
 func (cs *cyberState) neighbors(id string) []string {
 	out := make([]string, 0, 2)
 	for _, c := range cs.cables {
-		if c.severed && !c.wireless {
-			continue
-		}
 		switch {
 		case c.fromDev == id:
 			out = append(out, c.toDev)
@@ -538,9 +518,6 @@ func (cs *cyberState) snapProps() []any {
 		}
 		props = append(props, m)
 	}
-	for _, c := range cs.cables {
-		props = append(props, message{"id": c.id, "kind": "cable", "severed": c.severed})
-	}
 	return props
 }
 
@@ -621,24 +598,3 @@ func (w *world) raycastAll(origin, dir vec3) (vec3, bool) {
 }
 
 // --- нож и кабели ---------------------------------------------------------
-
-// cutCableAlong — перерубить кабель (нож/пули, §6): ближайший сегмент на
-// луче в пределах maxDist. severed=true уходит всем через snap.props.
-func (w *world) cutCableAlong(origin, dir vec3, maxDist float64) *cable {
-	var best *cable
-	bestT := maxDist
-	for _, c := range w.cyber.cables {
-		if c.severed {
-			continue
-		}
-		for _, box := range c.boxes {
-			if t := rayBoxT(origin, dir, box); t >= 0 && t < bestT {
-				best, bestT = c, t
-			}
-		}
-	}
-	if best != nil {
-		best.severed = true // ребро исчезает из графа (восстановление — потом)
-	}
-	return best
-}

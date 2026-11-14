@@ -114,10 +114,6 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 		}
 	}
 
-	// Пули тоже перерубают кабели (§6, §12.3): до точки попадания (закрытая
-	// дверь защищает кабели за ней).
-	w.cutCableAlong(origin, dir, to.sub(origin).length())
-
 	killed := false
 	if hit != nil {
 		killed = w.damage(pl, hit, classStatsOf(pl.cls).weapon.damage)
