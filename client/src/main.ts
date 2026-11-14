@@ -30,7 +30,7 @@ const RENDER_DELAY_MS = 100
 const INPUT_INTERVAL_MS = 1000 / 30
 const KILLFEED_ATTRIBUTION_MS = 3000
 const SNIPER_FOV_COS = Math.cos((25 * Math.PI) / 180) // конус «в поле зрения» для авто-зума
-const SNIPER_ZOOM_RANGE = 20 // дальше — зум не включается (м)
+const SNIPER_ZOOM_RANGE = 30 // дальше — зум не включается (м)
 
 type SnapMsg = Extract<ServerMessage, { t: 'snap' }>
 type ShotMsg = Extract<ServerMessage, { t: 'shot' }>
