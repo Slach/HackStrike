@@ -106,7 +106,7 @@ function handleSnap(snap: SnapMsg): void {
   const me = myId !== null ? latestMeta.get(myId) : undefined
   if (me !== undefined) myCls = me.cls // server may have adjusted the class
   hud.setVitals(me !== undefined ? me.hp : 0, CLASS_BY_KEY[myCls].hp, CLASS_BY_KEY[myCls].label)
-  hud.setScores(snap.scores, snap.timeLeft)
+  hud.setScores(snap.scores, snap.timeLeft / 1000) // hud expects seconds, wire has ms
 
   // Killfeed from observed alive→dead transitions, attributed to the most
   // recent shot with a hit (raw shot spam at 8-12 shots/s would flood it).
@@ -181,6 +181,7 @@ const sock = new GameSocket({
   },
   onClose: resetSession,
 })
+sock.start() // connect + stats window; without this join has no socket to ride on
 
 hud.onJoin = (name, cls) => {
   myCls = cls
