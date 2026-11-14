@@ -349,10 +349,17 @@ engine.runRenderLoop(() => {
 
   // Подсказка джек-ина: хакер в 2 м от терминала / 8 м от радио (ГДД §12.1).
   let hint: string | null = null
-  if (playing && alive && myCls === 'hacker' && !hackview.active && propsView !== null && me !== undefined) {
-    const near = propsView.nearestJackIn(me.x, me.z)
+  if (playing && alive && !matchOver && !hackview.active && propsView !== null && me !== undefined) {
+    const near = propsView.nearestJackPoint(me.x, me.z)
     if (near !== null) {
-      hint = `SPACE — ДЖЕК-ИН // ${near.kind === 'radio' ? 'РАДИО-ТОЧКА' : 'ТЕРМИНАЛ'} ${near.id.toUpperCase()}`
+      const label = `${near.kind === 'radio' ? 'РАДИО-ТОЧКА' : 'ТЕРМИНАЛ'} ${near.id.toUpperCase()}`
+      if (myCls !== 'hacker') {
+        hint = `ДЖЕК-ИН // ${label} — ТОЛЬКО ХАКЕР`
+      } else if (near.dist <= near.range) {
+        hint = `SPACE — ДЖЕК-ИН // ${label}`
+      } else {
+        hint = `${label} — ${Math.round(near.dist)} м (РАДИУС ${Math.round(near.range)} М)`
+      }
     }
   }
   hud.jackinHint(hint)

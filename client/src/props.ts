@@ -81,8 +81,10 @@ interface DoorView {
   z: number
   axis: 'x' | 'z'
   len: number
+  h: number // высота полотна = ход выезда вверх
+  baseY: number // базовый Y центра полотна (закрыто)
   open: boolean
-  angle: number // текущий угол поворота (рад)
+  angle: number // прогресс выезда 0..1
 }
 
 interface CableView {
@@ -221,23 +223,22 @@ export class PropsView {
   private buildDoor(id: string, pos: readonly [number, number, number], axis: 'x' | 'z', size: readonly [number, number, number]): void {
     const [w, h, depth] = size
     const pivot = new TransformNode(`prop.${id}.pivot`, this.scene)
-    // Петля — край полотна вдоль оси ширины; pos считаем центром двери.
-    if (axis === 'x') pivot.position.set(pos[0] - w / 2, pos[1], pos[2])
-    else pivot.position.set(pos[0], pos[1], pos[2] - w / 2)
+    // Вертикальный выезд (решение владельца): полотно уезжает вверх на свою
+    // высоту, как вратарская/шлюз. pivot держит базовую позицию центра.
+    pivot.position.set(pos[0], pos[1], pos[2])
     const panel = MeshBuilder.CreateBox(
       `prop.${id}`,
       axis === 'x' ? { width: w, height: h, depth } : { width: depth, height: h, depth: w },
       this.scene,
     )
     panel.parent = pivot
-    if (axis === 'x') panel.position.set(w / 2, h / 2, 0)
-    else panel.position.set(0, h / 2, w / 2)
+    panel.position.set(0, h / 2, 0)
     panel.material = this.mats.door
     panel.isPickable = false
     panel.enableEdgesRendering(0.95)
     panel.edgesWidth = 2.2
     panel.edgesColor = new Color4(0.22, 1.0, 0.6, 0.7)
-    this.doors.set(id, { id, pivot, x: pos[0], z: pos[2], axis, len: w, open: false, angle: 0 })
+    this.doors.set(id, { id, pivot, x: pos[0], z: pos[2], axis, len: w, h, baseY: pos[1], open: false, angle: 0 })
   }
 
   private buildCable(id: string, points: readonly [number, number, number][]): void {
@@ -306,17 +307,40 @@ export class PropsView {
 
   tick(dtSec: number): void {
     if (this.doors.size === 0) return
-    const step = (Math.PI / 2) * Math.min(1, dtSec / DOOR_SWING_S)
+    const step = Math.min(1, dtSec / DOOR_SWING_S)
     for (const d of this.doors.values()) {
-      const target = d.open ? Math.PI / 2 : 0
+      const target = d.open ? 1 : 0
       const delta = target - d.angle
       if (Math.abs(delta) <= 1e-4) continue
       d.angle += Math.sign(delta) * Math.min(step, Math.abs(delta))
-      d.pivot.rotation.y = d.angle
+      // выезд вверх: центр полотна поднимается на высоту двери
+      d.pivot.position.y = d.baseY + d.h * d.angle
     }
   }
 
   /** Ближайшая точка джек-ина для хакера (терминал 2 м / радио 8 м, GDD §12.1). */
+  /** Ближайшая точка входа вообще (для подсказки «подойди ближе»). */
+  nearestJackPoint(x: number, z: number): { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null {
+    let best: { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null = null
+    let bestScore = Number.POSITIVE_INFINITY
+    for (const t of this.terminals.values()) {
+      const d = Math.hypot(t.x - x, t.z - z)
+      if (d / TERMINAL_RANGE < bestScore) {
+        bestScore = d / TERMINAL_RANGE
+        best = { id: t.id, kind: 'terminal', dist: d, range: TERMINAL_RANGE }
+      }
+    }
+    for (const r of this.radios.values()) {
+      const d = Math.hypot(r.x - x, r.z - z)
+      const range = r.radius ?? DEFAULT_RADIO_RANGE
+      if (d / range < bestScore) {
+        bestScore = d / range
+        best = { id: r.id, kind: 'radio', dist: d, range }
+      }
+    }
+    return best
+  }
+
   nearestJackIn(x: number, z: number): { id: string; kind: 'terminal' | 'radio' } | null {
     let best: { id: string; kind: 'terminal' | 'radio' } | null = null
     let bestScore = Number.POSITIVE_INFINITY
