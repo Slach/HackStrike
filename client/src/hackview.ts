@@ -730,7 +730,10 @@ export class HackView {
       l.setAttribute('y1', String(y1))
       l.setAttribute('x2', String(x2))
       l.setAttribute('y2', String(y2))
-      l.classList.add(cls)
+      // setAttribute, не classList.add: у SVG-элементов classList.add с
+      // multi-token строкой ('a b') бросает InvalidCharacterError и рендер
+      // карты умирает целиком.
+      l.setAttribute('class', cls)
       svg.append(l)
     }
 
