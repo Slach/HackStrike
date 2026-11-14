@@ -167,7 +167,12 @@ const sock = new GameSocket({
         playing = true
         buffer.clear()
         views.clear()
+        hud.setTeam(msg.team)
         hud.hideJoin()
+        break
+      case 'team':
+        myTeam = msg.team
+        hud.setTeam(msg.team)
         break
       case 'snap':
         handleSnap(msg)

@@ -106,6 +106,40 @@ func (w *world) removePlayer(id uint64) {
 	delete(w.players, id)
 }
 
+// rebalanceTeams — если команды перекошены на 2+ (ушёл игрок, призрак
+// отключился), последнего пришедшего из большой команды перекидываем в
+// меньшую: респаун на новой базе + уведомление {"t":"team"}. Вызывается
+// каждый тик — состояние самоизлечивается из любой ситуации.
+func (w *world) rebalanceTeams() {
+	for {
+		counts := [2]int{}
+		for _, p := range w.players {
+			counts[p.team]++
+		}
+		from, to := 0, 1
+		if counts[1]-counts[0] >= 2 {
+			from, to = 1, 0
+		} else if counts[0]-counts[1] < 2 {
+			return
+		}
+		// Последний пришедший — максимальный id (id монотонны).
+		var mover *player
+		for _, p := range w.players {
+			if p.team == from && (mover == nil || p.id > mover.id) {
+				mover = p
+			}
+		}
+		if mover == nil {
+			return
+		}
+		mover.team = to
+		if mover.alive {
+			w.spawnPlayer(mover, mover.cls)
+		}
+		w.sendTo(mover.id, message{"t": "team", "team": to})
+	}
+}
+
 // handleMessage — C→S игровые сообщения (кроме join/ping, это комната).
 func (w *world) handleMessage(pl *player, msg message) {
 	switch msg["t"] {
@@ -169,6 +203,7 @@ func (w *world) simulateTick() {
 		}
 	}
 	w.matchCheck()
+	w.rebalanceTeams()
 	w.broadcastSnap()
 }
 

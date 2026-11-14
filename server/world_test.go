@@ -41,6 +41,57 @@ func TestJoinBalanceAndWelcome(t *testing.T) {
 	}
 }
 
+// Ребаланс: после ухода игроков перекос 2+ самолечится на следующем тике —
+// последнего пришедшего из большой команды перекидывают в меньшую
+// (сообщение "team" + респаун на новой базе). Сценарий из плейтеста:
+// призрак-наблюдатель занял слот, двое живых оказались в одной команде.
+func TestRebalanceTeams(t *testing.T) {
+	w, _ := testWorldWithEmbeddedMap(t)
+
+	a := w.addPlayer(1, "a", "assault") // t0
+	b := w.addPlayer(2, "b", "assault") // t1
+	c := w.addPlayer(3, "c", "assault") // t0
+	d := w.addPlayer(4, "d", "assault") // t1
+	w.takeOut()
+	if a.team != 0 || b.team != 1 || c.team != 0 || d.team != 1 {
+		t.Fatalf("setup: want 2v2, got %d %d %d %d", a.team, b.team, c.team, d.team)
+	}
+
+	// Уходят оба из team1 → 2v0 → ребаланс должен сделать 1v1.
+	w.removePlayer(b.id)
+	w.removePlayer(d.id)
+	w.simulateTick()
+	var gotTeamMsg bool
+	for _, om := range w.takeOut() { // сброс snap
+		if om.msg["t"] == "team" && om.to == c.id && om.msg["team"] == 1 {
+			gotTeamMsg = true
+		}
+	}
+	if !gotTeamMsg {
+		t.Fatalf("moved player must receive {t:team}")
+	}
+
+	if a.team == c.team {
+		t.Fatalf("imbalance 2v0 must self-heal to 1v1, teams %d %d", a.team, c.team)
+	}
+	// Перекинут последний пришедший (c, максимальный id) — с респауном на новой базе.
+	if c.team != 1 {
+		t.Fatalf("last-joined player must be moved, c.team=%d", c.team)
+	}
+	if spawns := w.m.teamSpawns(1); len(spawns) > 0 && c.pos[0] < 30 {
+		t.Fatalf("moved player must respawn at team1 base, pos=%v", c.pos)
+	}
+
+	// Малый перекос (2v1) не лечим — никого не дёргаем.
+	e := w.addPlayer(5, "e", "assault") // t0 → 2v1
+	w.takeOut()
+	w.simulateTick()
+	w.takeOut()
+	if e.team != 0 || a.team != 0 || c.team != 1 {
+		t.Fatalf("diff<2 must not rebalance: %d %d %d", a.team, c.team, e.team)
+	}
+}
+
 // Input: лимит 60/с — всё сверх отбрасывается (не применяется).
 func TestInputRateLimit(t *testing.T) {
 	w, _ := testWorldWithEmbeddedMap(t)

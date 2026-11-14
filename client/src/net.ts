@@ -47,6 +47,7 @@ export interface Snapshot {
 
 export type ServerMessage =
   | { t: 'welcome'; id: number; team: number; tick: number }
+  | { t: 'team'; team: number } // server rebalanced me to the other team
   | ({ t: 'snap' } & Snapshot)
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
   | { t: 'death'; by: number; respawnAt: number }
@@ -121,6 +122,8 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         team: num(m.team, 0) === 1 ? 1 : 0,
         tick: num(m.tick, 0),
       }
+    case 'team':
+      return { t: 'team', team: num(m.team, 0) === 1 ? 1 : 0 }
     case 'snap': {
       // The skeleton server sends "players" as a number — that frame is not
       // an M1 snapshot; ignore it and wait for the real server.

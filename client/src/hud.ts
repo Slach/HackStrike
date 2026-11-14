@@ -173,6 +173,12 @@ export class Hud {
     this.el.crosshair.classList.toggle('locked', on)
   }
 
+  /** Own team's frags get a solid team-color chip: white on green/magenta. */
+  setTeam(team: number): void {
+    this.el.score0.classList.toggle('mine', team === 0)
+    this.el.score1.classList.toggle('mine', team === 1)
+  }
+
   /** White X burst around the crosshair: my shot landed (from shot events). */
   hitmarker(): void {
     this.el.hitmarker.classList.remove('on')
