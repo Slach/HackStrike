@@ -36,8 +36,10 @@ func aimDir(yaw, pitch float64) vec3 {
 }
 
 // handleFire — intent автоогня: валидация темпа по оружию, затем hitscan.
+// У хакера оружие M2 — нож: fire = удар melee (§12.1). Джекнутое тело стоит
+// у терминала беззащитным (§5.4) — не стреляет.
 func (w *world) handleFire(pl *player, msg message) {
-	if !pl.alive {
+	if !pl.alive || pl.jacked {
 		return
 	}
 	_, st := classOr(pl.cls)
@@ -46,6 +48,10 @@ func (w *world) handleFire(pl *player, msg message) {
 		return // быстрее темпа оружия
 	}
 	pl.lastShot = now
+	if st.weapon.name == "knife" {
+		w.knife(pl, num(msg, "yaw"), num(msg, "pitch"))
+		return
+	}
 	w.fire(pl, num(msg, "yaw"), num(msg, "pitch"))
 }
 
@@ -111,6 +117,9 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 		}
 	}
 
+	// Пули тоже перерубают кабели (§6, §12.3): до точки попадания.
+	w.cutCableAlong(origin, dir, to.sub(origin).length())
+
 	killed := false
 	if hit != nil {
 		killed = w.damage(pl, hit)
@@ -145,6 +154,7 @@ func (w *world) damage(shooter, victim *player) bool {
 	victim.hp = 0
 	victim.alive = false
 	victim.respawnAt = w.now().Add(respawnDelay)
+	w.jackout(victim) // смерть хакера = авто-джек-аут (§12.1)
 	w.scores[shooter.team]++
 	return true
 }

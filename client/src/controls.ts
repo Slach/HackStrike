@@ -12,6 +12,8 @@ export class Controls {
   yaw = 0
   pitch = 0
   locked = false
+  /** While the hacker view is up the body must not look around (GDD §12.1). */
+  frozen = false
   /** Optional inverted vertical look (settings checkbox, GDD §3.2). */
   invertY = false
   readonly keys: KeysState = { w: 0, a: 0, s: 0, d: 0, interact: 0 }
@@ -40,7 +42,7 @@ export class Controls {
   }
 
   private readonly onMouseMove = (e: MouseEvent): void => {
-    if (!this.locked) return
+    if (!this.locked || this.frozen) return
     this.yaw += e.movementX * SENS_RAD_PER_PX
     if (this.yaw > Math.PI) this.yaw -= TAU
     else if (this.yaw < -Math.PI) this.yaw += TAU
@@ -65,7 +67,8 @@ export class Controls {
     this.setKey(e.code, 0)
   }
 
-  private readonly resetKeys = (): void => {
+  /** Public: main.ts clears stale keys when entering/leaving the hacker view. */
+  readonly resetKeys = (): void => {
     this.keys.w = 0
     this.keys.a = 0
     this.keys.s = 0
@@ -73,8 +76,7 @@ export class Controls {
     this.keys.interact = 0
   }
 
-  private setKey(code: string, v: 0 | 1): boolean {
-    switch (code) {
+  private setKey(code: string, v: 0 | 1): boolean {    switch (code) {
       case 'KeyW':
         this.keys.w = v
         return true

@@ -182,11 +182,15 @@ func indexOf(vals []float64, v float64) int {
 }
 
 // TestAPIMapServesEmbedded — /api/map отдаёт ровно встроенные байты
-// (единый источник геометрии для клиента и сервера).
+// (единый источник геометрии для клиента и сервера). M2: пропсы типизируются
+// при парсинге (§12.3).
 func TestAPIMapServesEmbedded(t *testing.T) {
 	m := mustParseEmbeddedMap(t)
-	if m.Name != "m1" || len(m.Colliders) == 0 || len(m.Props) != 0 {
+	if m.Name != "m1" || len(m.Colliders) == 0 {
 		t.Fatalf("unexpected embedded map: %+v", m)
+	}
+	if len(m.Props) == 0 || len(m.props) != len(m.Props) {
+		t.Fatalf("M2 props must parse: raw=%d typed=%d", len(m.Props), len(m.props))
 	}
 	if len(map1JSON) == 0 {
 		t.Fatalf("embedded map bytes are empty")

@@ -31,6 +31,7 @@ type world struct {
 	players map[uint64]*player
 	scores  [2]int
 	tick    uint64
+	cyber   *cyberState
 
 	matchActive bool
 	matchEndsAt time.Time
@@ -46,6 +47,7 @@ func newWorld(m *gameMap) *world {
 	return &world{
 		m:         m,
 		players:   make(map[uint64]*player),
+		cyber:     buildCyber(m),
 		fragLimit: fragLimit,
 		matchLen:  matchDuration,
 		now:       time.Now,
@@ -70,6 +72,7 @@ func (w *world) pickTeam() int {
 
 // spawnPlayer — (пере)спавн на своей базе: полный HP класса, точка из пула.
 func (w *world) spawnPlayer(pl *player, cls string) {
+	w.jackout(pl) // телепорт (респаун/ребаланс) выкидывает из деки
 	cls, st := classOr(cls)
 	pl.cls = cls
 	pos := vec3{0, 1, 0} // fallback для карт без спавнов (тестовые мини-арены)
@@ -184,6 +187,12 @@ func (w *world) handleMessage(pl *player, msg message) {
 		w.handleFire(pl, msg)
 	case "respawn":
 		w.handleRespawn(pl, str(msg, "cls"))
+	case "jackout": // CTRL/CMD+ALT+DEL, мгновенно (§12.1)
+		w.jackout(pl)
+	case "run": // программа деки (§12.5)
+		w.handleRun(pl, msg)
+	case "ctrl": // контроллер устройства (§12.5)
+		w.handleCtrl(pl, msg)
 	}
 }
 
@@ -224,21 +233,25 @@ func (w *world) handleRespawn(pl *player, cls string) {
 }
 
 // simulateTick — порядок симуляции: номер тика → движение из последнего
-// инпута (с записью истории позиций для lag compensation) → проверка конца
-// матча → снапшот всем.
+// инпута (джекнутый стоит) с историей позиций для lag compensation →
+// кибер-слой (очереди программ, edge-джек-ин) → проверка конца матча →
+// снапшот всем.
 func (w *world) simulateTick() {
 	w.tick++
 	for _, pl := range w.players {
 		if pl.alive {
-			w.m.movePlayer(pl, tickDT)
+			w.movePlayer(pl, tickDT)
 			pl.posHist = append(pl.posHist, pl.pos)
 			if len(pl.posHist) > posHistoryLen {
 				pl.posHist = pl.posHist[len(pl.posHist)-posHistoryLen:]
 			}
 		}
+		w.cyberTick(pl, tickDT)
+		w.interactTick(pl)
 	}
 	w.matchCheck()
 	w.rebalanceTeams()
+	w.deckStatusTick()
 	w.broadcastSnap()
 }
 
@@ -324,5 +337,6 @@ func (w *world) broadcastSnap() {
 		"scores":     w.scores,
 		"timeLeft":   w.timeLeftMs(),
 		"timeLeftMs": w.timeLeftMs(),
+		"props":      w.cyber.snapProps(), // M2: двери/кабели/точки входа (§12.5)
 	})
 }

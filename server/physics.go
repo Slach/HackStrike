@@ -59,15 +59,23 @@ func wishDir(yaw float64, k keysState) vec3 {
 	return v.norm()
 }
 
+// blockFn — занят ли AABB: статическая геометрия + динамика (закрытые двери
+// M2). Двери подаются отдельной функцией, а не списком коллайдеров, чтобы
+// не мутировать карту при toggle.
+type blockFn func(aabb) bool
+
+// staticBlocked — только геометрия карты (мини-арены тестов, рейкасты).
+func (m *gameMap) staticBlocked(b aabb) bool { return m.overlapsAny(b) }
+
 // moveAxis — сдвиг по одной горизонтальной оси. При блоке: если игрок на
 // земле и препятствие не выше autostep (лестницы) — подняться на его верх.
-func (m *gameMap) moveAxis(pl *player, axis int, delta float64) {
+func (m *gameMap) moveAxis(pl *player, axis int, delta float64, blocked blockFn) {
 	if delta == 0 {
 		return
 	}
 	target := pl.pos
 	target[axis] += delta
-	if !m.overlapsAny(playerBoxAt(target)) {
+	if !blocked(playerBoxAt(target)) {
 		pl.pos = target
 		return
 	}
@@ -75,6 +83,7 @@ func (m *gameMap) moveAxis(pl *player, axis int, delta float64) {
 		return // в воздухе autostep не работает (прыжка нет)
 	}
 	// Верх самого высокого препятствия, которое дорастаем до autostep.
+	// Двери сюда не смотрим: они 3 м высотой, autostep на них не сработает.
 	newBox := playerBoxAt(target)
 	step := 0.0
 	for i := range m.Colliders {
@@ -90,18 +99,18 @@ func (m *gameMap) moveAxis(pl *player, axis int, delta float64) {
 		return
 	}
 	target[1] = step
-	if !m.overlapsAny(playerBoxAt(target)) {
+	if !blocked(playerBoxAt(target)) {
 		pl.pos = target
 	}
 }
 
 // applyPhysics — один шаг вертикали: гравитация, приземление, потолок.
-func (m *gameMap) applyPhysics(pl *player, dt float64) {
+func (m *gameMap) applyPhysics(pl *player, dt float64, blocked blockFn) {
 	pl.vy -= gravity * dt
 	target := pl.pos
 	target[1] += pl.vy * dt
 	box := playerBoxAt(target)
-	if !m.overlapsAny(box) {
+	if !blocked(box) {
 		pl.pos = target
 		pl.grounded = false
 		return
@@ -125,15 +134,20 @@ func (m *gameMap) applyPhysics(pl *player, dt float64) {
 	}
 }
 
-// movePlayer — полное перемещение игрока за тик по последнему инпуту.
+// movePlayer — перемещение по статической геометрии (тестовые мини-арены).
+// Игровой мир ходит через world.movePlayer: он учитывает двери и джек-ин.
 func (m *gameMap) movePlayer(pl *player, dt float64) {
+	m.movePlayerBlocked(pl, dt, m.staticBlocked)
+}
+
+func (m *gameMap) movePlayerBlocked(pl *player, dt float64, blocked blockFn) {
 	wish := wishDir(pl.yaw, pl.keys)
 	if wish != (vec3{}) {
 		speed := classes[pl.cls].speed
-		m.moveAxis(pl, 0, wish[0]*speed*dt)
-		m.moveAxis(pl, 2, wish[2]*speed*dt)
+		m.moveAxis(pl, 0, wish[0]*speed*dt, blocked)
+		m.moveAxis(pl, 2, wish[2]*speed*dt, blocked)
 	}
-	m.applyPhysics(pl, dt)
+	m.applyPhysics(pl, dt, blocked)
 }
 
 // rayBoxT — параметр t входа луча в бокс (slab); -1 если не пересекает.

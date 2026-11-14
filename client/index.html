@@ -574,6 +574,470 @@
         color: rgba(55, 255, 155, 0.85);
         margin-bottom: 4px;
       }
+
+      /* jack-in hint (hacker near terminal/radio, M2) */
+      #jackinHint {
+        position: absolute;
+        top: 42%;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 20px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        color: var(--ink);
+        font-size: 14px;
+        letter-spacing: 3px;
+        text-shadow: 0 0 10px rgba(55, 255, 155, 0.6);
+        box-shadow: 0 0 22px rgba(55, 255, 155, 0.18);
+        pointer-events: none;
+        z-index: 6;
+        white-space: nowrap;
+      }
+
+      /* FPS-элементы прячутся, пока хакер в деке (тело стоит, прицел не нужен) */
+      body.hackmode #crosshair,
+      body.hackmode #scope,
+      body.hackmode #hitmarker,
+      body.hackmode #dmg,
+      body.hackmode #vitals,
+      body.hackmode #minimap {
+        display: none !important;
+      }
+
+      /* hacker view: CRT-терминал, зелёный на чёрном (ГДД §5.4/§12.6) */
+      #hackview {
+        position: absolute;
+        inset: 0;
+        z-index: 10; /* ниже death (11) и end (12) — смерть поверх деки */
+        display: flex;
+        flex-direction: column;
+        background:
+          radial-gradient(ellipse at 50% 42%, rgba(4, 26, 14, 0.985), rgba(1, 8, 4, 0.995)),
+          #020a05;
+        color: #56ffa8;
+        font-size: 13px;
+        padding: 10px 14px 6px;
+        gap: 8px;
+        cursor: default;
+      }
+      #hackview::after {
+        /* скан-линии CRT */
+        content: '';
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: repeating-linear-gradient(
+          0deg,
+          rgba(0, 0, 0, 0.15) 0 1px,
+          transparent 1px 3px
+        );
+      }
+      #hackview .hv-main {
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        gap: 8px;
+      }
+      .hv-head {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        border-bottom: 1px solid rgba(55, 255, 155, 0.3);
+        padding-bottom: 6px;
+        flex: none;
+      }
+      .hv-title {
+        font-size: 16px;
+        letter-spacing: 6px;
+        color: #eafff3;
+        text-shadow: 0 0 12px rgba(55, 255, 155, 0.7);
+        font-weight: 700;
+      }
+      .hv-host {
+        color: #baffdd;
+        letter-spacing: 1px;
+      }
+      .hv-net {
+        color: #56ffa8;
+        letter-spacing: 1px;
+      }
+      .hv-exit {
+        margin-left: auto;
+        color: rgba(255, 77, 210, 0.85);
+        font-size: 11px;
+        letter-spacing: 2px;
+      }
+      .hv-tabs {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        flex: none;
+      }
+      .hv-chip {
+        background: rgba(55, 255, 155, 0.05);
+        border: 1px solid rgba(55, 255, 155, 0.3);
+        color: rgba(170, 255, 210, 0.8);
+        font: inherit;
+        font-size: 11px;
+        letter-spacing: 1px;
+        padding: 4px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .hv-chip:hover {
+        border-color: rgba(55, 255, 155, 0.8);
+      }
+      .hv-chip.on {
+        border-color: #37ff9b;
+        color: #eafff3;
+        background: rgba(55, 255, 155, 0.12);
+        box-shadow: 0 0 8px rgba(55, 255, 155, 0.25);
+      }
+      .hv-chip.hv-plus {
+        border-style: dashed;
+      }
+      .hv-grid {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        gap: 8px;
+      }
+      .hv-grid.g1 {
+        grid-template: 1fr / 1fr;
+      }
+      .hv-grid.g2h {
+        grid-template: 1fr / 1fr 1fr;
+      }
+      .hv-grid.g2v {
+        grid-template: 1fr 1fr / 1fr;
+      }
+      .hv-grid.g4 {
+        grid-template: 1fr 1fr / 1fr 1fr;
+      }
+      .hv-pane {
+        border: 1px solid rgba(55, 255, 155, 0.22);
+        border-radius: 6px;
+        background: rgba(2, 16, 9, 0.72);
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .hv-pane.active {
+        border-color: rgba(55, 255, 155, 0.85);
+        box-shadow: 0 0 14px rgba(55, 255, 155, 0.22), inset 0 0 40px rgba(55, 255, 155, 0.04);
+      }
+      .pane-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 5px 10px;
+        border-bottom: 1px solid rgba(55, 255, 155, 0.18);
+        background: rgba(55, 255, 155, 0.05);
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #baffdd;
+        flex: none;
+      }
+      .pane-x {
+        background: none;
+        border: 1px solid rgba(255, 77, 210, 0.4);
+        color: #ff4dd2;
+        font: inherit;
+        border-radius: 3px;
+        cursor: pointer;
+        padding: 0 6px;
+        line-height: 1.5;
+      }
+      .pane-body {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        padding: 10px;
+        gap: 12px;
+        overflow: auto;
+      }
+      .deck-left {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        width: 240px;
+        flex: none;
+      }
+      .deck-right {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .hv-sparks {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .spark {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .spark-top {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        letter-spacing: 2px;
+      }
+      .spark-label {
+        color: rgba(170, 255, 210, 0.7);
+      }
+      .spark-value {
+        color: #eafff3;
+      }
+      .spark-cv {
+        display: block;
+      }
+      .hv-progs {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        font-size: 12px;
+        min-height: 44px;
+      }
+      .hv-prog {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        border-bottom: 1px dashed rgba(55, 255, 155, 0.15);
+        padding-bottom: 2px;
+      }
+      .prog-eta {
+        color: #ffd237;
+      }
+      .hv-dim {
+        color: rgba(170, 255, 210, 0.5);
+        font-size: 11px;
+        letter-spacing: 1px;
+      }
+      .hv-run {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .hv-btn {
+        background: rgba(55, 255, 155, 0.08);
+        border: 1px solid rgba(55, 255, 155, 0.55);
+        color: #baffdd;
+        font: inherit;
+        font-size: 12px;
+        letter-spacing: 2px;
+        padding: 7px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+        text-align: left;
+      }
+      .hv-btn:hover:not(:disabled) {
+        background: rgba(55, 255, 155, 0.2);
+        color: #eafff3;
+      }
+      .hv-btn:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      .door-ui {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        flex: 1;
+      }
+      .door-status {
+        font-size: 34px;
+        letter-spacing: 8px;
+        font-weight: 700;
+      }
+      .door-status.open {
+        color: #37ff9b;
+        text-shadow: 0 0 18px rgba(55, 255, 155, 0.6);
+      }
+      .door-status.closed {
+        color: #ff4d5e;
+        text-shadow: 0 0 18px rgba(255, 77, 94, 0.5);
+      }
+      .door-owner {
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: #baffdd;
+      }
+      .door-toggle {
+        min-width: 220px;
+        text-align: center;
+        font-size: 15px;
+        padding: 12px;
+      }
+      .dev-info {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        flex: 1;
+        justify-content: center;
+      }
+      .dev-row {
+        display: flex;
+        justify-content: space-between;
+        border-bottom: 1px dashed rgba(55, 255, 155, 0.15);
+        padding-bottom: 4px;
+      }
+      .dev-k {
+        color: rgba(170, 255, 210, 0.6);
+        letter-spacing: 2px;
+        font-size: 11px;
+      }
+      .dev-v {
+        color: #eafff3;
+      }
+      .hv-netmap {
+        flex: 1;
+        min-height: 0;
+        border: 1px solid rgba(55, 255, 155, 0.2);
+        border-radius: 4px;
+        background: rgba(1, 10, 5, 0.6);
+        position: relative;
+      }
+      .netmap-svg {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      .netmap-hint {
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: rgba(170, 255, 210, 0.55);
+        text-align: center;
+        flex: none;
+      }
+      .svg-link {
+        stroke: rgba(55, 255, 155, 0.35);
+        stroke-width: 1;
+      }
+      .svg-link-deck {
+        stroke-dasharray: 4 3;
+      }
+      .svg-node {
+        cursor: pointer;
+        stroke: #02120a;
+        stroke-width: 2;
+      }
+      .svg-node:hover {
+        stroke: #eafff3;
+      }
+      .svg-deck {
+        fill: #eafff3;
+      }
+      .svg-sel {
+        fill: none;
+        stroke: #eafff3;
+        stroke-width: 1.5;
+        stroke-dasharray: 3 2;
+      }
+      .svg-label {
+        fill: rgba(170, 255, 210, 0.8);
+        font-size: 9px;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+      .svg-dim {
+        fill: rgba(170, 255, 210, 0.55);
+        font-size: 12px;
+        letter-spacing: 2px;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+      .hv-foot {
+        flex: none;
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: rgba(170, 255, 210, 0.45);
+        text-align: center;
+      }
+      .hv-menu-wrap {
+        position: absolute;
+        inset: 0;
+        background: rgba(1, 8, 4, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 3;
+      }
+      .hv-menu {
+        background: rgba(2, 18, 10, 0.97);
+        border: 1px solid rgba(55, 255, 155, 0.5);
+        border-radius: 8px;
+        padding: 16px 18px;
+        min-width: 320px;
+        max-height: 70%;
+        overflow: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        box-shadow: 0 0 30px rgba(55, 255, 155, 0.2);
+      }
+      .menu-title {
+        font-size: 11px;
+        letter-spacing: 3px;
+        color: #baffdd;
+        margin-bottom: 6px;
+      }
+      .menu-dev {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        background: rgba(55, 255, 155, 0.05);
+        border: 1px solid rgba(55, 255, 155, 0.25);
+        color: #baffdd;
+        font: inherit;
+        font-size: 12px;
+        letter-spacing: 1px;
+        padding: 6px 10px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .menu-dev:hover {
+        border-color: #37ff9b;
+        color: #eafff3;
+      }
+      .dev-own {
+        font-size: 10px;
+        opacity: 0.85;
+      }
+      .hv-toasts {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: flex-end;
+        z-index: 4;
+        pointer-events: none;
+      }
+      .hv-toast {
+        background: rgba(46, 3, 22, 0.92);
+        border: 1px solid rgba(255, 77, 210, 0.6);
+        color: #ffb3dd;
+        border-radius: 4px;
+        padding: 7px 14px;
+        font-size: 12px;
+        letter-spacing: 1px;
+        box-shadow: 0 0 16px rgba(255, 77, 210, 0.25);
+        opacity: 1;
+        transition: opacity 0.5s;
+      }
+      .hv-toast.fade {
+        opacity: 0;
+      }
     </style>
   </head>
   <body>
@@ -607,9 +1071,12 @@
 
     <div id="killfeed"></div>
     <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="jackinHint" class="hidden"></div>
+
+    <div id="hackview" class="hidden"></div>
 
     <div id="debug">
-      <h1>HACKSTRIKE // M1</h1>
+      <h1>HACKSTRIKE // M2</h1>
       <div class="row"><span class="dim">link</span><span id="status" class="status-connecting">CONNECTING…</span></div>
       <div class="row"><span class="dim">tick</span><span id="tick">—</span></div>
       <div class="row"><span class="dim">players</span><span id="players">—</span></div>
@@ -620,7 +1087,7 @@
     <div id="joinScreen" class="overlay">
       <div class="panel">
         <h1 class="logo">HACKSTRIKE</h1>
-        <div class="tag">M1 // FPS CORE</div>
+        <div class="tag">M2 // КИБЕР-БАЗИС</div>
         <div class="joinRow">
           <label for="nameInput">НИК</label>
           <input id="nameInput" maxlength="16" spellcheck="false" autocomplete="off" />

@@ -24,7 +24,27 @@ type gameMap struct {
 	Bounds    [3]float64              `json:"bounds"`
 	Colliders []collider              `json:"colliders"`
 	Spawns    map[string][][3]float64 `json:"spawns"` // "0"/"1" → точки спавна (у ног)
-	Props     []any                   `json:"props"`
+	Props     []any                   `json:"props"`  // сырые M2-пропсы (§12.3)
+
+	// props — типизированные пропсы (заполняет parseProps до validate,
+	// чтобы validate проверял связи door.to / cable.from-to).
+	props []mapProp
+}
+
+// mapProp — один проп карты (§12.3). Поля используются по kind: кабель —
+// ребро сети from→to с полилинией points (без точек — прямой сегмент между
+// устройствами, удобно для мини-карт в тестах); дверь — size [w,h,depth] и
+// axis (ось панели, для рендера клиента), to — switch «коротким кабелем».
+type mapProp struct {
+	Kind   string       `json:"kind"`
+	ID     string       `json:"id"`
+	Pos    [3]float64   `json:"pos"`
+	Radius float64      `json:"radius"` // radio
+	Size   [3]float64   `json:"size"`   // door
+	Axis   string       `json:"axis"`   // door
+	To     string       `json:"to"`     // door → switch
+	From   string       `json:"from"`   // cable
+	Points [][3]float64 `json:"points"` // cable
 }
 
 // parseGameMap — парсинг + валидация: карта встроенная, ошибка означает
@@ -34,10 +54,39 @@ func parseGameMap(data []byte) (*gameMap, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, err
 	}
+	if err := m.parseProps(); err != nil {
+		return nil, err
+	}
 	if err := m.validate(); err != nil {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// parseProps — типизация сырых пропсов: kind известен, id непуст и уникален.
+func (m *gameMap) parseProps() error {
+	ids := map[string]bool{}
+	for i, raw := range m.Props {
+		b, err := json.Marshal(raw)
+		if err != nil {
+			return fmt.Errorf("map: prop %d: %w", i, err)
+		}
+		var p mapProp
+		if err := json.Unmarshal(b, &p); err != nil {
+			return fmt.Errorf("map: prop %d: %w", i, err)
+		}
+		switch p.Kind {
+		case "terminal", "radio", "switch", "door", "cable":
+		default:
+			return fmt.Errorf("map: prop %d: unknown kind %q", i, p.Kind)
+		}
+		if p.ID == "" || ids[p.ID] {
+			return fmt.Errorf("map: prop %d: empty or duplicate id %q", i, p.ID)
+		}
+		ids[p.ID] = true
+		m.props = append(m.props, p)
+	}
+	return nil
 }
 
 func (m *gameMap) validate() error {
@@ -82,6 +131,43 @@ func (m *gameMap) validate() error {
 	}
 	if stairs == 0 {
 		return fmt.Errorf("map: no stairs — second floor unreachable")
+	}
+	return m.validateProps()
+}
+
+// validateProps — связи M2-пропсов (§12.3): дверь ссылается на switch,
+// кабель — на устройства (не на другие кабели), размеры двери осмысленны.
+func (m *gameMap) validateProps() error {
+	kinds := map[string]string{} // id → kind
+	for _, p := range m.props {
+		kinds[p.ID] = p.Kind
+	}
+	for _, p := range m.props {
+		switch p.Kind {
+		case "terminal", "radio", "switch":
+			for ax := 0; ax < 3; ax++ {
+				if math.IsNaN(p.Pos[ax]) || p.Pos[ax] < 0 || p.Pos[ax] > m.Bounds[ax] {
+					return fmt.Errorf("map: prop %s pos out of bounds: %v", p.ID, p.Pos)
+				}
+			}
+		case "door":
+			for ax := 0; ax < 3; ax++ {
+				if !(p.Size[ax] > 0) || math.IsNaN(p.Size[ax]) {
+					return fmt.Errorf("map: door %s bad size %v", p.ID, p.Size)
+				}
+			}
+			if p.Axis != "x" && p.Axis != "z" {
+				return fmt.Errorf("map: door %s axis must be \"x\"|\"z\", got %q", p.ID, p.Axis)
+			}
+			if kinds[p.To] != "switch" {
+				return fmt.Errorf("map: door %s must reference a switch via \"to\", got %q", p.ID, p.To)
+			}
+		case "cable":
+			if p.From == p.To || kinds[p.From] == "" || kinds[p.To] == "" ||
+				kinds[p.From] == "cable" || kinds[p.To] == "cable" {
+				return fmt.Errorf("map: cable %s bad endpoints %q..%q", p.ID, p.From, p.To)
+			}
+		}
 	}
 	return nil
 }

@@ -17,11 +17,15 @@ type classStats struct {
 
 var classes = map[string]classStats{
 	// sniper: ваншот всех, кроме heavy (2 выстрела) — ГДД §3.3; гейт
-	// «сначала зум» — клиентский (авто-зум ×2 через 0.1 с в поле зрения).
+	// «сначала зум» — клиентский (авто-зум ×1.5 через 0.1 с в поле зрения).
 	"sniper":  {hp: 100, speed: 5.5, weapon: weapon{name: "bolt", damage: 150, interval: 1200 * time.Millisecond}},
 	"assault": {hp: 125, speed: 6.5, weapon: weapon{name: "ar", damage: 10, interval: time.Second / 8}},
 	"heavy":   {hp: 200, speed: 4.5, weapon: weapon{name: "minigun", damage: 7, interval: time.Second / 12}},
-	"hacker":  {hp: 100, speed: 6.0, weapon: weapon{name: "pistol", damage: 18, interval: time.Second / 3}},
+	// hacker M2 (§12.1): fire = удар ножом — melee 1.8 м, 60 урона, 1.2
+	// удара/с (интервал 1/1.2 с), перерубает кабель с одного удара. Пистолет
+	// вернётся с переключением оружия (§3.2, M7+): «доступен только offline
+	// от деки».
+	"hacker": {hp: 100, speed: 6.0, weapon: weapon{name: "knife", damage: 60, interval: time.Second / 12 * 10}},
 }
 
 const defaultClass = "assault"
@@ -46,8 +50,8 @@ func (pl *player) histPosAt(ago int) vec3 {
 	return pl.posHist[i]
 }
 
-// keysState — клавиши из последнего input-сообщения (interact в M1
-// принимается, но ни на что не влияет).
+// keysState — клавиши из последнего input-сообщения. M2: interact (space) —
+// edge-джек-ин у терминала/радио (§12.5).
 type keysState struct {
 	w, a, s, d, interact bool
 }
@@ -81,4 +85,14 @@ type player struct {
 	lastShot         time.Time
 	inputCount       int // анти-спам: не более maxInputRate в секунду
 	inputWindowStart time.Time
+
+	// Кибер-слой M2 (§12): состояние деки. Джекнутый стоит на месте и не
+	// стреляет; progs — процессы на деке (честные очереди); scanned —
+	// устройства, открытые своим portscan'ом (кибер-карта, туман войны).
+	jacked       bool
+	jackHost     *device
+	progs        []*program
+	nextProgID   int
+	scanned      map[string]bool
+	prevInteract bool // edge-детект space между тиками
 }

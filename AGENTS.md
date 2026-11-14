@@ -33,6 +33,10 @@ cd server && go vet ./... && go test ./... && go build -o /tmp/game-server-check
 # клиент: typecheck + сборка (обязательно)
 cd client && npm run build
 
+# e2e: полный конвейер против выделенного чистого сервера
+# (или BASE_URL=http://127.0.0.1:9999 против docker-стенда — комната должна быть пустой)
+node scripts/e2e_smoke.mjs
+
 # полная интеграция (запускает владелец или по его просьбе):
 docker compose up -d --build game-client game-server
 

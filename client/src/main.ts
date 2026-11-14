@@ -24,6 +24,8 @@ import { Controls } from './controls'
 import { AutoFire, Effects, Scope, type TargetBox } from './combat'
 import { Hud } from './hud'
 import { Minimap } from './minimap'
+import { PropsView } from './props'
+import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
 
 const RENDER_DELAY_MS = 100
@@ -36,6 +38,7 @@ type SnapMsg = Extract<ServerMessage, { t: 'snap' }>
 type ShotMsg = Extract<ServerMessage, { t: 'shot' }>
 type DeathMsg = Extract<ServerMessage, { t: 'death' }>
 type EndMsg = Extract<ServerMessage, { t: 'matchend' }>
+type JackinMsg = Extract<ServerMessage, { t: 'jackin' }>
 
 const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement
 const engine = new Engine(canvas, true)
@@ -51,6 +54,7 @@ const effects = new Effects(scene)
 
 let world: MapWorld | null = null
 let minimap: Minimap | null = null
+let propsView: PropsView | null = null
 let myId: number | null = null
 let myTeam = -1
 let myCls: Cls = 'assault'
@@ -76,10 +80,13 @@ function resetSession(): void {
   matchOver = false
   autofire.reset()
   scope.reset()
+  hackviewOff(false)
+  hackview.setMyId(null)
   hud.hideEnd()
   hud.hideDeath()
   hud.crosshairLocked(false)
   hud.scope(false)
+  hud.jackinHint(null)
 }
 
 function handleShot(msg: ShotMsg): void {
@@ -112,6 +119,11 @@ function handleShot(msg: ShotMsg): void {
 function handleSnap(snap: SnapMsg): void {
   buffer.push(snap)
   latestMeta = new Map(snap.players.map((p): [number, SnapPlayer] => [p.id, p]))
+  // M2: живое состояние пропсов (двери/кабели) — всем, толерантно к пустому списку
+  if (snap.props.length > 0) {
+    propsView?.updateFromSnap(snap.props)
+    hackview.updateProps(snap.props)
+  }
   hud.setRoster(snap.players, myId)
   const me = myId !== null ? latestMeta.get(myId) : undefined
   if (me !== undefined) {
@@ -154,10 +166,12 @@ function handleDeath(msg: DeathMsg): void {
     msg.by >= 0 ? latestMeta.get(msg.by)?.name ?? `#${msg.by}` : '???'
   hud.showDeath(killer, msg.respawnAt)
   autofire.reset()
+  hackviewOff(false) // сервер джек-аутит сам; оверлей гасим сразу (ГДД §12.1)
 }
 
 function handleEnd(msg: EndMsg): void {
   matchOver = true
+  hackviewOff(false)
   hud.showEnd(msg.winner, msg.scores, () => {
     matchOver = false
   })
@@ -173,6 +187,7 @@ const sock = new GameSocket({
         playing = true
         buffer.clear()
         views.clear()
+        hackview.setMyId(msg.id)
         hud.setTeam(msg.team)
         hud.hideJoin()
         break
@@ -194,6 +209,18 @@ const sock = new GameSocket({
       case 'matchend':
         handleEnd(msg)
         break
+      case 'jackin':
+        hackviewOn(msg)
+        break
+      case 'deck':
+        hackview.onDeck(msg)
+        break
+      case 'scan':
+        hackview.onScan(msg)
+        break
+      case 'denied':
+        hackview.onDenied(msg)
+        break
       case 'pong':
         break // RTT is tracked inside the socket
       default:
@@ -203,6 +230,47 @@ const sock = new GameSocket({
   onClose: resetSession,
 })
 sock.start() // connect + stats window; without this join has no socket to ride on
+
+// Hacker view (M2, ГДД §12.6). Джек-ин делает сервер по interact-клавишу;
+// выход — CTRL/CMD+ALT+DEL (перехват ниже) или смерть (сервер сам джек-аутит).
+const hackview = new HackView({
+  send: (m) => sock.send(m),
+  teamOf: (playerId) => latestMeta.get(playerId)?.team ?? null,
+})
+
+function hackviewOn(msg: JackinMsg): void {
+  hackview.activate(msg, propsView?.hostKind(msg.host) ?? null)
+  document.body.classList.add('hackmode') // прячет FPS-HUD (CSS)
+  controls.frozen = true // взгляд и клавиши не меняют состояние тела
+  controls.resetKeys()
+  // Курсор нужен для кликов по WM (карта сети, кнопки); upon jackout
+  // pointer lock запрашивается снова из keydown-жеста.
+  if (document.pointerLockElement !== null) document.exitPointerLock()
+}
+
+function hackviewOff(relock: boolean): void {
+  if (!hackview.active) return
+  hackview.deactivate()
+  document.body.classList.remove('hackmode')
+  controls.frozen = false
+  controls.resetKeys()
+  if (relock && playing) controls.requestLock()
+}
+
+// CTRL+ALT+DEL (win/linux) / CMD+ALT+DEL (mac) — джек-аут, capture чтобы
+// комбинация не ушла браузеру/ОС раньше нас.
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (!hackview.active) return
+    if (e.code === 'Delete' && e.altKey && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault()
+      sock.sendJackout()
+      hackviewOff(true)
+    }
+  },
+  { capture: true },
+)
 
 hud.onJoin = (name, cls, team) => {
   myCls = cls
@@ -228,7 +296,8 @@ const isUiTarget = (e: Event): boolean =>
   e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null
 const tryRelock = (e: Event) => {
   if (isUiTarget(e)) return
-  if (playing && !controls.locked) controls.requestLock()
+  // В hacker view курсор нужен для кликов по WM — не захватываем его обратно.
+  if (playing && !hackview.active && !controls.locked) controls.requestLock()
 }
 document.addEventListener('mousedown', tryRelock)
 document.addEventListener('keydown', tryRelock)
@@ -239,6 +308,7 @@ hud.setMapStatus('ЗАГРУЗКА КАРТЫ…')
 void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (ПОПЫТКА ${attempt})…`)).then(
   (map) => {
     world = MapWorld.build(scene, map)
+    propsView = PropsView.build(scene, map) // M2: терминалы/радио/switch/двери/кабели
     minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, world)
     hud.setMapStatus(null)
   },
@@ -247,9 +317,10 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
 // Pointer lock comes from the join/respawn clicks plus the relock listeners
 // above; no dedicated canvas-click path is needed.
 
-// Input stream to the server: ~30/s, latest keys + view angles.
+// Input stream to the server: ~30/s, latest keys + view angles. Пока хакер
+// в деке — тело стоит: ни input, ни fire не отправляем (ГДД §12.1).
 window.setInterval(() => {
-  if (playing) sock.sendInput(controls.keys, controls.yaw, controls.pitch)
+  if (playing && !hackview.active) sock.sendInput(controls.keys, controls.yaw, controls.pitch)
 }, INPUT_INTERVAL_MS)
 
 engine.runRenderLoop(() => {
@@ -267,7 +338,20 @@ engine.runRenderLoop(() => {
 
   views.sync(states, myId)
 
+  // Анимация дверей пропсов: шаг по реальному кадру (клэмп от табов в фоне).
+  propsView?.tick(Math.min(0.1, engine.getDeltaTime() / 1000))
+
   const alive = me?.meta.alive === true
+
+  // Подсказка джек-ина: хакер в 2 м от терминала / 8 м от радио (ГДД §12.1).
+  let hint: string | null = null
+  if (playing && alive && myCls === 'hacker' && !hackview.active && propsView !== null && me !== undefined) {
+    const near = propsView.nearestJackIn(me.x, me.z)
+    if (near !== null) {
+      hint = `SPACE — ДЖЕК-ИН // ${near.kind === 'radio' ? 'РАДИО-ТОЧКА' : 'ТЕРМИНАЛ'} ${near.id.toUpperCase()}`
+    }
+  }
+  hud.jackinHint(hint)
 
   let fired = false
   // Авто-зум снайпера: враг в конусе ~25°, ближе 20 м и в прямой видимости
@@ -294,8 +378,17 @@ engine.runRenderLoop(() => {
   hud.scope(scope.engaged)
 
   // Снайпер стреляет только в зуме, зум — сразу при появлении врага в прямой
-  // видимости; выстрел — после 0.1 с удержания (ГДД §3.3).
-  if (playing && alive && !matchOver && controls.locked && world !== null && (myCls !== 'sniper' || scope.armed)) {
+  // видимости; выстрел — после 0.1 с удержания (ГДД §3.3). В hacker view
+  // автоогонь отключён (тело беззащитно стоит у терминала).
+  if (
+    playing &&
+    alive &&
+    !matchOver &&
+    !hackview.active &&
+    controls.locked &&
+    world !== null &&
+    (myCls !== 'sniper' || scope.armed)
+  ) {
     const enemies: TargetBox[] = []
     for (const p of states.values()) {
       if (p.id === myId || !p.meta.alive || p.meta.team === myTeam) continue
@@ -320,7 +413,12 @@ engine.runRenderLoop(() => {
       if (p.id === myId || !p.meta.alive || p.meta.team !== myTeam) continue
       allies.push({ x: p.x, z: p.z })
     }
-    minimap.draw(me !== undefined ? { x: me.x, z: me.z, yaw: controls.yaw } : null, allies, myTeam)
+    minimap.draw(
+      me !== undefined ? { x: me.x, z: me.z, yaw: controls.yaw } : null,
+      allies,
+      myTeam,
+      propsView?.miniProps() ?? [],
+    )
   }
 
   hud.tick(serverNow)
@@ -341,6 +439,7 @@ declare global {
       camera: FreeCamera
       players: () => Map<number, SnapPlayer>
       shots: () => ShotMsg[]
+      hackview: HackView
     }
   }
 }
@@ -350,4 +449,5 @@ window.__hs = {
   camera,
   players: () => latestMeta,
   shots: () => [...debugShots],
+  hackview,
 }

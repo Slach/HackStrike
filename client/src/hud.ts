@@ -96,6 +96,7 @@ export class Hud {
     players: byId('players'),
     rtt: byId('rtt'),
     snaps: byId('snaps'),
+    jackinHint: byId('jackinHint'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -192,6 +193,20 @@ export class Hud {
 
   crosshairLocked(on: boolean): void {
     this.el.crosshair.classList.toggle('locked', on)
+  }
+
+  private hintText: string | null = null
+
+  /** «SPACE — ДЖЕК-ИН» над прицелом, когда хакер у терминала/радио (M2). */
+  jackinHint(text: string | null): void {
+    if (this.hintText === text) return // called every frame — dedupe
+    this.hintText = text
+    if (text === null) {
+      this.el.jackinHint.classList.add('hidden')
+    } else {
+      this.el.jackinHint.textContent = text
+      this.el.jackinHint.classList.remove('hidden')
+    }
   }
 
   /** Sniper scope overlay (auto-zoom engaged). */

@@ -1,7 +1,8 @@
-// Wire protocol per GDD §9.2 (M1) plus the skeleton ping/pong probe.
-// All incoming frames are parsed defensively: the socket may briefly talk to
-// an older skeleton server (whose "snap" has a different shape) and must not
-// crash — unknown/different frames are dropped by the parser.
+// Wire protocol per GDD §9.2 (M1) + §12.5 (M2 cyber layer), plus the skeleton
+// ping/pong probe. All incoming frames are parsed defensively: the socket may
+// briefly talk to an older server (whose "snap" has a different shape, e.g.
+// without M2 props) and must not crash — unknown/different frames are dropped
+// by the parser.
 
 export type Cls = 'sniper' | 'assault' | 'heavy' | 'hacker'
 
@@ -13,12 +14,59 @@ export interface KeysState {
   interact: number
 }
 
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' // GDD §12.4
+
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
   | { t: 'input'; seq: number; keys: KeysState; yaw: number; pitch: number }
   | { t: 'fire'; yaw: number; pitch: number }
   | { t: 'respawn'; cls: Cls }
   | { t: 'ping'; c: number }
+  // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
+  | { t: 'jackout' }
+  | { t: 'run'; prog: RunProg; dev?: string }
+  | { t: 'ctrl'; dev: string; action: 'toggle' }
+
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'cable'
+
+/** Live prop state from snap.props (GDD §12.5); fields are only present when
+ *  the server sent them, so an absent "open"/"severed" means "keep the last
+ *  known value" on the consumer side. */
+export interface SnapProp {
+  id: string
+  kind: PropKind
+  x?: number
+  y?: number
+  z?: number
+  open?: boolean // door
+  severed?: boolean // cable
+  radius?: number // radio
+}
+
+/** Device discovered by portscan (GDD §12.5 "scan"). */
+export interface ScanDevice {
+  id: string
+  kind: PropKind
+  x: number
+  y: number
+  z: number
+  owner: number | null // playerId of the last hacker to trojan it
+  links: string[] // ids of adjacent devices
+}
+
+export interface DeckProg {
+  id: number
+  prog: string
+  dev: string | null
+  etaMs: number
+}
+
+export interface DeckInfo {
+  cpu: number
+  npu: number
+  ram: number // slots
+  net: number // Mbps of the jack-in point
+}
 
 export type Vec3 = [number, number, number]
 
@@ -43,6 +91,7 @@ export interface Snapshot {
   players: SnapPlayer[]
   scores: [number, number]
   timeLeft: number
+  props: readonly SnapProp[] // M2; empty for pre-M2 servers
 }
 
 export type ServerMessage =
@@ -53,6 +102,11 @@ export type ServerMessage =
   | { t: 'death'; by: number; respawnAt: number }
   | { t: 'matchend'; winner: number; scores: [number, number] }
   | { t: 'pong'; c: number; s: number; tick: number }
+  // M2 (GDD §12.5)
+  | { t: 'jackin'; host: string; deck: DeckInfo }
+  | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
+  | { t: 'scan'; devices: ScanDevice[] }
+  | { t: 'denied'; reason: string }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -70,9 +124,14 @@ export interface GameSocketHandlers {
 }
 
 const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'cable']
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
+}
+
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null
 }
 
 function vec3(v: unknown): Vec3 | null {
@@ -111,6 +170,58 @@ function parsePlayer(v: unknown): SnapPlayer | null {
   }
 }
 
+function parseProp(v: unknown): SnapProp | null {
+  if (typeof v !== 'object' || v === null) return null
+  const p = v as Record<string, unknown>
+  const id = str(p.id)
+  const kind = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
+  if (id === null || kind === null) return null
+  const prop: SnapProp = { id, kind }
+  const x = num(p.x, Number.NaN)
+  const y = num(p.y, Number.NaN)
+  const z = num(p.z, Number.NaN)
+  if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+    prop.x = x
+    prop.y = y
+    prop.z = z
+  }
+  if (typeof p.open === 'boolean') prop.open = p.open
+  if (typeof p.severed === 'boolean') prop.severed = p.severed
+  const radius = num(p.radius, Number.NaN)
+  if (Number.isFinite(radius) && radius > 0) prop.radius = radius
+  return prop
+}
+
+function parseDevice(v: unknown): ScanDevice | null {
+  if (typeof v !== 'object' || v === null) return null
+  const p = v as Record<string, unknown>
+  const id = str(p.id)
+  const kind = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
+  if (id === null || kind === null) return null
+  return {
+    id,
+    kind,
+    x: num(p.x, 0),
+    y: num(p.y, 0),
+    z: num(p.z, 0),
+    owner: typeof p.owner === 'number' && Number.isFinite(p.owner) ? p.owner : null,
+    links: Array.isArray(p.links) ? p.links.filter((l): l is string => typeof l === 'string') : [],
+  }
+}
+
+function parseDeckProg(v: unknown): DeckProg | null {
+  if (typeof v !== 'object' || v === null) return null
+  const p = v as Record<string, unknown>
+  const prog = str(p.prog)
+  if (prog === null) return null
+  return {
+    id: num(p.id, 0),
+    prog,
+    dev: str(p.dev),
+    etaMs: Math.max(0, num(p.etaMs, 0)),
+  }
+}
+
 export function parseServerMessage(raw: unknown): ServerMessage | null {
   if (typeof raw !== 'object' || raw === null) return null
   const m = raw as Record<string, unknown>
@@ -135,6 +246,14 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       }
       const scores = scorePair(m.scores)
       if (scores === null) return null
+      // M2 props are optional: pre-M2 snapshots without them stay valid.
+      const props: SnapProp[] = []
+      if (Array.isArray(m.props)) {
+        for (const p of m.props) {
+          const parsed = parseProp(p)
+          if (parsed !== null) props.push(parsed)
+        }
+      }
       return {
         t: 'snap',
         tick: num(m.tick, 0),
@@ -142,6 +261,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         players,
         scores,
         timeLeft: Math.max(0, num(m.timeLeft, 0)),
+        props,
       }
     }
     case 'shot': {
@@ -161,6 +281,43 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       }
     case 'pong':
       return { t: 'pong', c: num(m.c, 0), s: num(m.s, 0), tick: num(m.tick, 0) }
+    case 'jackin': {
+      const host = str(m.host)
+      const d = typeof m.deck === 'object' && m.deck !== null ? (m.deck as Record<string, unknown>) : {}
+      return {
+        t: 'jackin',
+        host: host ?? '',
+        deck: { cpu: num(d.cpu, 0), npu: num(d.npu, 0), ram: num(d.ram, 0), net: num(d.net, 0) },
+      }
+    }
+    case 'deck': {
+      const progs: DeckProg[] = []
+      if (Array.isArray(m.progs)) {
+        for (const p of m.progs) {
+          const parsed = parseDeckProg(p)
+          if (parsed !== null) progs.push(parsed)
+        }
+      }
+      return {
+        t: 'deck',
+        cpuLoad: num(m.cpuLoad, 0),
+        npuLoad: num(m.npuLoad, 0),
+        ramUsed: num(m.ramUsed, 0),
+        netLoad: num(m.netLoad, 0),
+        progs,
+      }
+    }
+    case 'scan': {
+      if (!Array.isArray(m.devices)) return null
+      const devices: ScanDevice[] = []
+      for (const d of m.devices) {
+        const parsed = parseDevice(d)
+        if (parsed !== null) devices.push(parsed)
+      }
+      return { t: 'scan', devices }
+    }
+    case 'denied':
+      return { t: 'denied', reason: str(m.reason) ?? 'unknown' }
     default:
       return null
   }
@@ -257,6 +414,19 @@ export class GameSocket {
     this.send({ t: 'respawn', cls })
   }
 
+  // M2 cyber-layer intents (GDD §12.5); the server re-validates everything.
+  sendJackout(): void {
+    this.send({ t: 'jackout' })
+  }
+
+  sendRun(prog: RunProg, dev?: string): void {
+    this.send(dev !== undefined ? { t: 'run', prog, dev } : { t: 'run', prog })
+  }
+
+  sendCtrl(dev: string, action: 'toggle'): void {
+    this.send({ t: 'ctrl', dev, action })
+  }
+
   private trackStats(msg: ServerMessage): void {
     switch (msg.t) {
       case 'welcome':
@@ -280,7 +450,8 @@ export class GameSocket {
     this.send({ t: 'ping', c: performance.now() })
   }
 
-  private send(msg: ClientMessage): void {
+  /** Outgoing frame (public: the hacker view sends run/ctrl intents). */
+  send(msg: ClientMessage): void {
     if (this.ws !== null && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg))
     }
