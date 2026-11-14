@@ -136,6 +136,27 @@ func TestClimbEmbeddedStaircase(t *testing.T) {
 	}
 }
 
+// Зеркальный (180°) подъём по SE-лестнице: до фикса карты её верхняя ступень
+// лежала в NE-углу, и лестница обрывалась на y=7.5.
+func TestClimbSEStaircase(t *testing.T) {
+	m, err := parseGameMap(map1JSON)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pl := &player{cls: "assault", pos: vec3{59.5, 1, 61}, grounded: true}
+	pl.yaw = -math.Pi / 2 // вперёд = -X, к лестнице
+	pl.keys.w = true
+
+	runTicks(m, pl, 150)
+
+	if got := pl.pos[1]; math.Abs(got-8) > 0.01 {
+		t.Fatalf("should reach the 2nd floor (y=8) via SE stairs, y=%v pos=%v", got, pl.pos)
+	}
+	if got := pl.pos[0]; got > 48 {
+		t.Fatalf("should have left the stairwell onto the terrace, x=%v", got)
+	}
+}
+
 // wishDir: WASD относительно yaw (LH: yaw 0 = +Z, yaw pi/2 = +X).
 func TestWishDir(t *testing.T) {
 	cases := []struct {

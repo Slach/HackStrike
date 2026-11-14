@@ -49,6 +49,52 @@ func TestMapStairsAutostepable(t *testing.T) {
 	}
 }
 
+// TestStaircasesComplete — обе лестницы (NW и SE, зеркальные 180°) собраны
+// целиком в своих шахтах и с непрерывной лестницей высот. Регрессия: генератор
+// карты однажды расщепил SE-лестницу, отправив половину ступеней зеркальной
+// копией не в тот угол — лестница обрывалась на 7.5 и была непроходима.
+func TestStaircasesComplete(t *testing.T) {
+	m := mustParseEmbeddedMap(t)
+	type shaft struct{ x0, x1, z0, z1 float64 }
+	shafts := map[string]shaft{
+		"NW": {6.0, 15.8, 2.0, 4.0},
+		"SE": {48.2, 58.0, 60.0, 62.0},
+	}
+	byShaft := map[string]map[float64]int{} // top height -> count
+	for _, c := range m.Colliders {
+		if c.Kind != "stair" {
+			continue
+		}
+		matched := ""
+		for name, s := range shafts {
+			if c.Min[0] >= s.x0-1e-6 && c.Max[0] <= s.x1+1e-6 &&
+				c.Min[2] >= s.z0-1e-6 && c.Max[2] <= s.z1+1e-6 {
+				matched = name
+				break
+			}
+		}
+		if matched == "" {
+			t.Fatalf("stair outside both shafts: %v..%v", c.Min, c.Max)
+		}
+		if byShaft[matched] == nil {
+			byShaft[matched] = map[float64]int{}
+		}
+		byShaft[matched][math.Round(c.Max[1]*1000)/1000]++
+	}
+	for name := range shafts {
+		tops := byShaft[name]
+		if len(tops) != 14 {
+			t.Fatalf("%s staircase: want 14 steps, got %d (%v)", name, len(tops), tops)
+		}
+		for i := 0; i < 14; i++ {
+			h := 1.5 + 0.5*float64(i)
+			if tops[math.Round(h*1000)/1000] != 1 {
+				t.Fatalf("%s staircase: missing/duplicate step at height %v", name, h)
+			}
+		}
+	}
+}
+
 // TestMapConnectivity — грубая BFS по колонкам 1×1: переход между соседними
 // колонками разрешён при перепаде высот опоры <= autostep. Проверяем, что
 // с базы команды 0 достижимы база команды 1 и второй этаж (опора >= 8).
