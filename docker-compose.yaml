@@ -1,0 +1,71 @@
+services:
+  zrok-init:
+    image: busybox
+    user: root
+    command: chown -Rc 2171:2171 /mnt/
+    volumes:
+      - zrok_env:/mnt
+
+  zrok-share:
+    image: docker.io/openziti/zrok2:latest
+    container_name: zrok-share
+    restart: unless-stopped
+    depends_on:
+      zrok-init:
+        condition: service_completed_successfully
+      game-client:
+        condition: service_healthy
+    user: "2171:2171"
+    environment:
+      HOME: /mnt
+      ZROK2_ENABLE_TOKEN: ${ZROK2_ENABLE_TOKEN}
+      ZROK_TARGET: ${ZROK_TARGET:-http://game-client:9999}
+      ZROK_SHARE_NAME: ${ZROK_SHARE_NAME:-hackstrike}
+    entrypoint:
+      - bash
+      - -c
+      - |
+        set -xe
+        # NB: `zrok2 status` exits 0 even without an enabled environment,
+        # so probe the env file zrok2 enable creates instead.
+        test -s "$$HOME/.zrok/environment.json" || zrok2 enable "$$ZROK2_ENABLE_TOKEN"
+        zrok2 create name -n public "$$ZROK_SHARE_NAME" >/dev/null 2>&1 || true
+        exec zrok2 share public "$$ZROK_TARGET" -n "public:$$ZROK_SHARE_NAME" --headless
+    volumes:
+      - zrok_env:/mnt
+
+  game-client:
+    build:
+      context: client
+      dockerfile: Dockerfile
+    depends_on:
+      game-server:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      # Local check without zrok: same URL path the zrok share exposes.
+      - "127.0.0.1:9999:9999"
+    healthcheck:
+      # nginx serving its own static page (busybox wget from alpine).
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:9999/"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  game-server:
+    build:
+      context: server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      # The image is FROM scratch, so the server binary probes its own
+      # /healthz endpoint (see runHealthcheck in main.go).
+      test: ["CMD", "/game-server", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  zrok_env:
