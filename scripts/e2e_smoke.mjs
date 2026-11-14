@@ -86,7 +86,8 @@ for (let i = 0; i < 4; i++) {
   const c = await connect()
   c.name = `E2E_${i + 1}`
   clients.push(c)
-  send(c, { t: 'join', name: c.name, cls: 'assault' })
+  // 4-й (shooter FF-пары) — снайпер: ваншот-тест §3.3
+  send(c, { t: 'join', name: c.name, cls: i === 3 ? 'sniper' : 'assault' })
 }
 await sleep(600)
 const teams = clients.map((c) => welcome(c)?.team)
@@ -94,6 +95,7 @@ check('join: 4 welcome, ровно 2v2', teams.every((t) => t !== undefined) && 
 const sameTeamPair = clients.filter((c) => welcome(c).team === 1) // жертва и стрелок в одной команде (FF ON)
 const [victim, shooter] = sameTeamPair
 check('одна команда у пары FF-теста', welcome(victim).team === welcome(shooter).team)
+// стрелок — снайпер: 150 урона, ваншот всех кроме heavy (ГДД §3.3)
 
 // --- 3. движение ---
 const mover = clients.find((c) => c !== victim && c !== shooter)
@@ -130,8 +132,8 @@ const dist = Math.hypot(v0.x - s0.x, v0.z - s0.z)
 console.log(`  дистанция пары: ${dist.toFixed(1)} м`)
 let shotsFired = 0
 let death = null
-// AR: 10 урона, 125 HP → 13 попаданий; стреляем в грудь до смерти (макс 25 выстрелов)
-for (let i = 0; i < 25 && !death; i++) {
+// Снайпер: 1 прицельный выстрел в грудь = смерть (150 ≥ 125)
+for (let i = 0; i < 3 && !death; i++) {
   const s = me(shooter), v = me(victim)
   if (!v.alive) break
   const { yaw, pitch } = aimAt(s, v, v.y + 1.3)
@@ -141,16 +143,16 @@ for (let i = 0; i < 25 && !death; i++) {
   death = victim.msgs.find((m) => m.t === 'death')
 }
 const hits = shooter.msgs.filter((m) => m.t === 'shot' && m.hit === welcome(victim).id).length
-check('убийство Friendly-Fire-пары (AR ~13 попаданий)', !!death, `выстрелов=${shotsFired}, попаданий=${hits}`)
+check('ваншот снайпера по автоматчику', !!death && shotsFired === 1, `выстрелов=${shotsFired}, попаданий=${hits}`)
 check('снапшоты: жертва alive=false', me(shooter).alive === false || lastSnap(shooter).players.find((p) => p.id === welcome(victim).id).alive === false)
 check('очки команде стрелка', lastSnap(shooter).scores[welcome(shooter).team] >= 1, lastSnap(shooter).scores.join(':'))
 
 // --- 5. респаун + смена класса ---
 await sleep(5500) // respawn-таймер 5 c + запас на детект смерти
-send(victim, { t: 'respawn', cls: 'sniper' })
+send(victim, { t: 'respawn', cls: 'heavy' })
 await sleep(400)
 const vNew = me(victim)
-check('респаун со сменой класса на sniper', vNew.alive === true && vNew.cls === 'sniper', `hp=${vNew.hp}`)
+check('респаун со сменой класса на heavy', vNew.alive === true && vNew.cls === 'heavy', `hp=${vNew.hp}`)
 
 // --- 6. авто-ребаланс: уходит одна команда → оставшаяся пара делится ---
 const team0 = clients.filter((c) => welcome(c).team === 0)

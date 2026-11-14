@@ -26,6 +26,46 @@ export interface TargetBox {
 const MINIGUN_SPINUP = 0.5 // GDD §3.1: first 0.5s of aiming, no shots
 const MINIGUN_HOLD = 1.0 // spin-up holds for 1s after losing the target
 
+// Sniper auto-scope (GDD §3.3): zoom x2 engages 0.1s after an enemy enters
+// the field of view; the sniper only auto-fires while scoped; zoom drops
+// 1s after the last enemy leaves the view.
+const SNIPER_ACQUIRE_MS = 100
+const SNIPER_HOLD_MS = 1000
+const SNIPER_ZOOM = 2
+
+export class Scope {
+  engaged = false
+  private firstSeenMs = 0
+  private lastSeenMs = 0
+
+  constructor(private baseFov: number, private camera: { fov: number }) {}
+
+  reset(): void {
+    this.engaged = false
+    this.firstSeenMs = 0
+    this.lastSeenMs = 0
+    this.camera.fov = this.baseFov
+  }
+
+  update(nowMs: number, cls: Cls, enemyInFov: boolean): void {
+    if (cls !== 'sniper') {
+      if (this.engaged || this.camera.fov !== this.baseFov) this.reset()
+      return
+    }
+    if (enemyInFov) {
+      if (this.firstSeenMs === 0) this.firstSeenMs = nowMs
+      this.lastSeenMs = nowMs
+    } else {
+      this.firstSeenMs = 0
+    }
+    this.engaged =
+      this.firstSeenMs !== 0 &&
+      nowMs - this.firstSeenMs >= SNIPER_ACQUIRE_MS &&
+      nowMs - this.lastSeenMs <= SNIPER_HOLD_MS
+    this.camera.fov = this.engaged ? this.baseFov / SNIPER_ZOOM : this.baseFov
+  }
+}
+
 export class AutoFire {
   lockedOn = false
   private lastShotAt = Number.NEGATIVE_INFINITY

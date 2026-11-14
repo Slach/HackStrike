@@ -27,11 +27,11 @@ func combatWorld(t *testing.T) (*world, *player, *player, *time.Time) {
 	w.now = func() time.Time { return clock }
 
 	shooter := w.addPlayer(1, "shooter", "sniper", -1)
-	victim := w.addPlayer(2, "victim", "assault", -1)
+	victim := w.addPlayer(2, "victim", "heavy", -1)
 	shooter.team, victim.team = 0, 0 // союзники: friendly fire ON
 	shooter.pos = vec3{0, 1, 0}
 	victim.pos = vec3{0, aimLevelY, 10} // центр AABB на высоте глаз
-	victim.hp = 125
+	victim.hp = 200
 	w.takeOut() // сбросить welcome
 	return w, shooter, victim, &clock
 }
@@ -57,7 +57,7 @@ func TestFireCone(t *testing.T) {
 	if len(s) != 1 || s[0]["hit"] != victim.id {
 		t.Fatalf("target 1.4° off-axis must be hit, got %+v", s)
 	}
-	if want := 125 - 60; victim.hp != want {
+	if want := 200 - 150; victim.hp != want {
 		t.Fatalf("sniper damage: victim hp = %d, want %d", victim.hp, want)
 	}
 	// Точка попадания — на луче, близко к цели.
@@ -73,7 +73,7 @@ func TestFireCone(t *testing.T) {
 	if len(s) != 1 || s[0]["hit"] != nil {
 		t.Fatalf("target 3.4° off-axis must be missed, got %+v", s)
 	}
-	if victim.hp != 65 {
+	if victim.hp != 50 {
 		t.Fatalf("miss must not deal damage, hp=%d", victim.hp)
 	}
 }
@@ -90,7 +90,7 @@ func TestFireLOSBlocked(t *testing.T) {
 	if len(s) != 1 || s[0]["hit"] != nil {
 		t.Fatalf("target behind a wall must not be hit, got %+v", s)
 	}
-	if victim.hp != 125 {
+	if victim.hp != 200 {
 		t.Fatalf("no damage through a wall, hp=%d", victim.hp)
 	}
 }
@@ -115,7 +115,7 @@ func TestFireBodyParts(t *testing.T) {
 		{"над головой (y+2.0)", 1 + 2.0, false},
 	}
 	for _, c := range cases {
-		victim.hp = 125
+		victim.hp = 200
 		victim.alive = true
 		pitch := math.Atan2(c.aimY-(1+eyeHeight), 8)
 		w.fire(shooter, 0, pitch)
@@ -165,17 +165,12 @@ func TestFriendlyFire(t *testing.T) {
 	}
 	victim.pos = vec3{0, aimLevelY, 10}
 
-	w.fire(shooter, 0, 0) // 60 урона
-	if victim.hp != 65 || !victim.alive {
+	w.fire(shooter, 0, 0) // 150 урона
+	if victim.hp != 50 || !victim.alive {
 		t.Fatalf("after first shot: hp=%d alive=%v", victim.hp, victim.alive)
 	}
 	*clock = clock.Add(2 * time.Second)
-	w.fire(shooter, 0, 0) // 125-60-60=5: ещё жив
-	if !victim.alive || victim.hp != 5 {
-		t.Fatalf("after second shot: hp=%d alive=%v", victim.hp, victim.alive)
-	}
-	*clock = clock.Add(2 * time.Second)
-	w.fire(shooter, 0, 0) // добил
+	w.fire(shooter, 0, 0) // добил (200-150-150<0)
 	if victim.alive || victim.hp != 0 {
 		t.Fatalf("teammate must die: hp=%d alive=%v", victim.hp, victim.alive)
 	}
@@ -206,27 +201,22 @@ func TestFireRateLimit(t *testing.T) {
 
 	// Первый выстрел — принят.
 	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
-	if hp := victim.hp; hp != 65 {
+	if hp := victim.hp; hp != 50 {
 		t.Fatalf("first shot must land, hp=%d", hp)
 	}
 
 	// Слишком рано (интервал 1.2 с, допуск 15 мс) — отброшен.
 	*clock = clock.Add(1100 * time.Millisecond)
 	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
-	if victim.hp != 65 {
+	if victim.hp != 50 {
 		t.Fatalf("shot inside weapon cooldown must be rejected, hp=%d", victim.hp)
 	}
 
-	// По истечении интервала — принят; 125-60-60=5, цель ещё жива.
+	// По истечении интервала — принят и добивает (200-2*150<0).
 	*clock = clock.Add(120 * time.Millisecond) // итого 1.22 с
 	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
-	if !victim.alive || victim.hp != 5 {
-		t.Fatalf("second sniper shot must leave the target alive, hp=%d", victim.hp)
-	}
-	*clock = clock.Add(2 * time.Second)
-	w.handleFire(shooter, message{"t": "fire", "yaw": 0.0, "pitch": 0.0})
 	if victim.alive {
-		t.Fatalf("third sniper shot must kill (125-3*60<0), hp=%d", victim.hp)
+		t.Fatalf("second sniper shot must kill, hp=%d", victim.hp)
 	}
 	w.takeOut()
 
@@ -268,7 +258,7 @@ func TestNearestTargetAlongRay(t *testing.T) {
 	if len(s) != 1 || s[0]["hit"] != near.id {
 		t.Fatalf("nearest target must be hit, got %+v", s)
 	}
-	if far.hp != 125 {
+	if far.hp != 125 { // (локальные жертвы этого теста — assault, 1 выстрел = смерть
 		t.Fatalf("far target must be untouched, hp=%d", far.hp)
 	}
 }

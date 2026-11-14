@@ -21,7 +21,7 @@ import {
   SnapshotBuffer,
 } from './players'
 import { Controls } from './controls'
-import { AutoFire, Effects, type TargetBox } from './combat'
+import { AutoFire, Effects, Scope, type TargetBox } from './combat'
 import { Hud } from './hud'
 import { Minimap } from './minimap'
 import { CLASS_BY_KEY } from './classes'
@@ -29,6 +29,7 @@ import { CLASS_BY_KEY } from './classes'
 const RENDER_DELAY_MS = 100
 const INPUT_INTERVAL_MS = 1000 / 30
 const KILLFEED_ATTRIBUTION_MS = 3000
+const SNIPER_FOV_COS = Math.cos((25 * Math.PI) / 180) // конус «в поле зрения» для авто-зума
 
 type SnapMsg = Extract<ServerMessage, { t: 'snap' }>
 type ShotMsg = Extract<ServerMessage, { t: 'shot' }>
@@ -44,6 +45,7 @@ const controls = new Controls(canvas)
 const views = new PlayerViews(scene)
 const buffer = new SnapshotBuffer()
 const autofire = new AutoFire()
+const scope = new Scope(camera.fov, camera)
 const effects = new Effects(scene)
 
 let world: MapWorld | null = null
@@ -72,9 +74,11 @@ function resetSession(): void {
   lastHits.clear()
   matchOver = false
   autofire.reset()
+  scope.reset()
   hud.hideEnd()
   hud.hideDeath()
   hud.crosshairLocked(false)
+  hud.scope(false)
 }
 
 function handleShot(msg: ShotMsg): void {
@@ -265,7 +269,28 @@ engine.runRenderLoop(() => {
   const alive = me?.meta.alive === true
 
   let fired = false
-  if (playing && alive && !matchOver && controls.locked && world !== null) {
+  // Авто-зум снайпера: враг в конусе ~25° от направления взгляда.
+  let enemyInFov = false
+  if (playing && alive && myCls === 'sniper') {
+    const fwd = camera.getDirection(Vector3.Forward())
+    for (const p of states.values()) {
+      if (p.id === myId || !p.meta.alive || p.meta.team === myTeam) continue
+      const dx = p.x - camera.position.x
+      const dy = p.y + 0.9 - camera.position.y
+      const dz = p.z - camera.position.z
+      const d = Math.hypot(dx, dy, dz)
+      if (d < 1e-6 || (dx * fwd.x + dy * fwd.y + dz * fwd.z) / d > SNIPER_FOV_COS) {
+        enemyInFov = true
+        break
+      }
+    }
+  }
+  scope.update(performance.now(), myCls, enemyInFov)
+  hud.scope(scope.engaged)
+
+  // Снайпер стреляет только в зуме (зум сам включается через 0.1 с
+  // после появления врага в поле зрения — ГДД §3.3).
+  if (playing && alive && !matchOver && controls.locked && world !== null && (myCls !== 'sniper' || scope.engaged)) {
     const enemies: TargetBox[] = []
     for (const p of states.values()) {
       if (p.id === myId || !p.meta.alive || p.meta.team === myTeam) continue

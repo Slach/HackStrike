@@ -223,6 +223,35 @@
         box-shadow: 0 0 11px rgba(255, 77, 210, 0.95);
       }
 
+      /* sniper scope overlay (auto-zoom) */
+      #scope {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 3;
+      }
+      #scope .ring {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at 50% 50%, transparent 30%, rgba(1, 9, 5, 0.9) 32%);
+      }
+      #scope .h {
+        position: absolute;
+        top: 50%;
+        left: 0;
+        right: 0;
+        height: 1px;
+        background: rgba(55, 255, 155, 0.45);
+      }
+      #scope .v {
+        position: absolute;
+        left: 50%;
+        top: 0;
+        bottom: 0;
+        width: 1px;
+        background: rgba(55, 255, 155, 0.45);
+      }
+
       /* hitmarker: white X burst when my shot lands */
       #hitmarker {
         position: absolute;
@@ -553,6 +582,11 @@
     <div id="crosshair"></div>
     <div id="hitmarker"></div>
     <div id="dmg"></div>
+    <div id="scope" class="hidden">
+      <div class="ring"></div>
+      <div class="h"></div>
+      <div class="v"></div>
+    </div>
 
     <div id="topbar">
       <div class="tcol">

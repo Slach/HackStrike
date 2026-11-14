@@ -22,10 +22,10 @@ export const CLASSES: readonly ClassDef[] = [
     weapon: 'BOLT-ВИНТОВКА',
     hp: 100,
     speed: 5.5,
-    damage: 60,
+    damage: 150,
     rate: '1 / 1.2с',
     fireInterval: 1.2,
-    note: 'без зума слаб',
+    note: 'авто-зум ×2, ваншот кроме heavy',
   },
   {
     key: 'assault',

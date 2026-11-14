@@ -88,6 +88,7 @@ export class Hud {
     teamSeg: byId('teamSeg'),
     killfeed: byId('killfeed'),
     crosshair: byId('crosshair'),
+    scope: byId('scope'),
     hitmarker: byId('hitmarker'),
     dmg: byId('dmg'),
     status: byId('status'),
@@ -191,6 +192,11 @@ export class Hud {
 
   crosshairLocked(on: boolean): void {
     this.el.crosshair.classList.toggle('locked', on)
+  }
+
+  /** Sniper scope overlay (auto-zoom engaged). */
+  scope(on: boolean): void {
+    this.el.scope.classList.toggle('hidden', !on)
   }
 
   /** Own team's frags get a solid team-color chip: white on green/magenta. */

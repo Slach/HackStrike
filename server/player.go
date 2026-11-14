@@ -16,7 +16,9 @@ type classStats struct {
 }
 
 var classes = map[string]classStats{
-	"sniper":  {hp: 100, speed: 5.5, weapon: weapon{name: "bolt", damage: 60, interval: 1200 * time.Millisecond}},
+	// sniper: ваншот всех, кроме heavy (2 выстрела) — ГДД §3.3; гейт
+	// «сначала зум» — клиентский (авто-зум ×2 через 0.1 с в поле зрения).
+	"sniper":  {hp: 100, speed: 5.5, weapon: weapon{name: "bolt", damage: 150, interval: 1200 * time.Millisecond}},
 	"assault": {hp: 125, speed: 6.5, weapon: weapon{name: "ar", damage: 10, interval: time.Second / 8}},
 	"heavy":   {hp: 200, speed: 4.5, weapon: weapon{name: "minigun", damage: 7, interval: time.Second / 12}},
 	"hacker":  {hp: 100, speed: 6.0, weapon: weapon{name: "pistol", damage: 18, interval: time.Second / 3}},
