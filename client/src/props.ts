@@ -382,8 +382,7 @@ export class PropsView {
             : 'ЗАХВАЧЕНА'
       boxes.push({ label: `КАМЕРА ${c.id.toUpperCase()} — ${state}`, min: [c.x - 0.5, 1.8, c.z - 0.5], max: [c.x + 0.5, 3.4, c.z + 0.5] })
     }
-    // Кабели: подсказка дистанции ножа (плейтест M2-2 — «навожусь, ничего
-    // не происходит»: режет только вплотную, ≤1.8 м от глаз).
+    // Кабели: наводка показывает id (топология — визуализация, §6).
     for (const c of this.cables.values()) {
       if (c.path.length < 2) continue
       for (let i = 0; i + 1 < c.path.length; i++) {

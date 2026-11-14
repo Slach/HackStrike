@@ -211,7 +211,7 @@ export class Hud {
     }
   }
 
-  /** Текущее оружие (хакер: пистолет/нож) — рядом с HP. */
+  /** Текущее оружие (хакер: пистолет) — рядом с HP. */
   setWeapon(text: string | null): void {
     const el = this.el.weaponTag
     if (el === null) return
