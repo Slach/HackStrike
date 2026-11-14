@@ -133,6 +133,33 @@
       #score1.mine {
         background: var(--mg);
       }
+      .tcol {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+      }
+      .roster {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        font-size: 11px;
+        letter-spacing: 1px;
+        line-height: 1.25;
+      }
+      .roster.t0 {
+        color: var(--cy);
+      }
+      .roster.t1 {
+        color: var(--mg);
+      }
+      .roster .dead {
+        opacity: 0.45;
+      }
+      .roster .me {
+        font-weight: 700;
+      }
 
       /* HP + class */
       #vitals {
@@ -356,6 +383,31 @@
         height: 14px;
         cursor: pointer;
       }
+      .seg {
+        gap: 8px;
+      }
+      .segBtn {
+        background: transparent;
+        border: 1px solid var(--line);
+        color: rgba(55, 255, 155, 0.7);
+        font: inherit;
+        font-size: 11px;
+        letter-spacing: 2px;
+        padding: 6px 14px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .segBtn.t0 {
+        color: var(--cy);
+      }
+      .segBtn.t1 {
+        color: var(--mg);
+      }
+      .segBtn.on {
+        border-color: currentColor;
+        box-shadow: 0 0 8px rgba(55, 255, 155, 0.25);
+        background: rgba(55, 255, 155, 0.08);
+      }
       #nameInput {
         background: #02120a;
         border: 1px solid var(--line);
@@ -503,9 +555,15 @@
     <div id="dmg"></div>
 
     <div id="topbar">
-      <span id="score0" class="t0">0</span>
+      <div class="tcol">
+        <span id="score0" class="t0">0</span>
+        <div id="roster0" class="roster t0"></div>
+      </div>
       <span id="timer">--:--</span>
-      <span id="score1" class="t1">0</span>
+      <div class="tcol">
+        <span id="score1" class="t1">0</span>
+        <div id="roster1" class="roster t1"></div>
+      </div>
     </div>
 
     <div id="vitals">
@@ -534,6 +592,11 @@
           <input id="nameInput" maxlength="16" spellcheck="false" autocomplete="off" />
         </div>
         <div id="joinCards" class="cards"></div>
+        <div class="joinRow seg" id="teamSeg">
+          <button type="button" data-team="-1" class="segBtn on">АВТО</button>
+          <button type="button" data-team="0" class="segBtn t0">ЗЕЛЁНЫЕ</button>
+          <button type="button" data-team="1" class="segBtn t1">РОЗОВЫЕ</button>
+        </div>
         <label class="chk"><input id="invertY" type="checkbox" /><span>ИНВЕРСИЯ МЫШИ (Y)</span></label>
         <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
         <div id="joinStatus" class="dim">ЗАГРУЗКА КАРТЫ…</div>

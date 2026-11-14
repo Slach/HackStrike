@@ -107,6 +107,7 @@ function handleShot(msg: ShotMsg): void {
 function handleSnap(snap: SnapMsg): void {
   buffer.push(snap)
   latestMeta = new Map(snap.players.map((p): [number, SnapPlayer] => [p.id, p]))
+  hud.setRoster(snap.players, myId)
   const me = myId !== null ? latestMeta.get(myId) : undefined
   if (me !== undefined) {
     if (lastMyHp > me.hp) hud.damageFlash()
@@ -198,10 +199,10 @@ const sock = new GameSocket({
 })
 sock.start() // connect + stats window; without this join has no socket to ride on
 
-hud.onJoin = (name, cls) => {
+hud.onJoin = (name, cls, team) => {
   myCls = cls
   controls.invertY = hud.invertYOn // settings checkbox on the join screen
-  sock.join(name, cls)
+  sock.join(name, cls, team)
   // The deploy click is a user gesture: grab the mouse right away, no extra
   // "click to lock" step.
   controls.requestLock()

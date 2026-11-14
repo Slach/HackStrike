@@ -3,7 +3,7 @@
 // Cyberpunk terminal look: monospace, dark panels, cyan/magenta accents.
 
 import { CLASSES } from './classes'
-import type { Cls, NetStats } from './net'
+import type { Cls, NetStats, SnapPlayer } from './net'
 
 const TEAM_LABEL = ['ЦИАНОВЫЕ', 'МАДЖЕНТОВЫЕ'] as const
 const KILLFEED_ROWS = 5
@@ -47,10 +47,11 @@ function buildCards(container: HTMLElement, initial: Cls, onPick: (cls: Cls) => 
 }
 
 export class Hud {
-  onJoin: (name: string, cls: Cls) => void = () => {}
+  onJoin: (name: string, cls: Cls, team: number) => void = () => {}
   onRespawn: (cls: Cls) => void = () => {}
 
   private joinCls: Cls = 'assault'
+  private joinTeam = -1 // -1 = авто-баланс; выбор хранится в localStorage
   private deathCls: Cls = 'assault'
   private mapReady = false
   private respawnAtMs = 0
@@ -82,6 +83,9 @@ export class Hud {
     score0: byId('score0'),
     score1: byId('score1'),
     timer: byId('timer'),
+    roster0: byId('roster0'),
+    roster1: byId('roster1'),
+    teamSeg: byId('teamSeg'),
     killfeed: byId('killfeed'),
     crosshair: byId('crosshair'),
     hitmarker: byId('hitmarker'),
@@ -102,6 +106,19 @@ export class Hud {
     buildCards(this.el.joinCards, this.joinCls, (c) => (this.joinCls = c))
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
     this.el.invertY.checked = localStorage.getItem('hs.invertY') === '1'
+    for (const btn of this.el.teamSeg.querySelectorAll<HTMLButtonElement>('.segBtn')) {
+      if (Number(btn.dataset.team) === Number(localStorage.getItem('hs.team'))) {
+        this.joinTeam = Number(btn.dataset.team)
+      }
+      btn.addEventListener('click', () => {
+        this.joinTeam = Number(btn.dataset.team)
+        localStorage.setItem('hs.team', String(this.joinTeam))
+        for (const b of this.el.teamSeg.querySelectorAll('.segBtn')) b.classList.toggle('on', b === btn)
+      })
+    }
+    this.el.teamSeg
+      .querySelectorAll('.segBtn')
+      .forEach((b) => b.classList.toggle('on', Number((b as HTMLButtonElement).dataset.team) === this.joinTeam))
     this.el.invertY.addEventListener('change', () => {
       localStorage.setItem('hs.invertY', this.el.invertY.checked ? '1' : '0')
     })
@@ -128,7 +145,7 @@ export class Hud {
 
   private deploy(): void {
     const name = this.el.name.value.trim() || 'hack'
-    this.onJoin(name, this.joinCls)
+    this.onJoin(name, this.joinCls, this.joinTeam)
   }
 
   private refreshDeploy(): void {
@@ -177,6 +194,31 @@ export class Hud {
   setTeam(team: number): void {
     this.el.score0.classList.toggle('mine', team === 0)
     this.el.score1.classList.toggle('mine', team === 1)
+  }
+
+  private rosterSig = ''
+
+  /** Team rosters under each score: names in team colors; own name bold. */
+  setRoster(players: readonly SnapPlayer[], myId: number | null): void {
+    const sig = players.map((p) => `${p.team}:${p.name}:${p.alive ? 1 : 0}`).join('|')
+    if (sig === this.rosterSig) return
+    this.rosterSig = sig
+    const cols = [this.el.roster0, this.el.roster1]
+    for (const col of cols) col.textContent = ''
+    for (const team of [0, 1] as const) {
+      for (const p of players) {
+        if (p.team !== team) continue
+        const s = document.createElement('span')
+        if (p.id === myId) {
+          s.className = 'me'
+          s.textContent = `▸ ${p.name}`
+        } else {
+          s.textContent = p.name
+          if (!p.alive) s.classList.add('dead')
+        }
+        cols[team].append(s)
+      }
+    }
   }
 
   /** White X burst around the crosshair: my shot landed (from shot events). */

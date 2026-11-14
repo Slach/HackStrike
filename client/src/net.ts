@@ -14,7 +14,7 @@ export interface KeysState {
 }
 
 export type ClientMessage =
-  | { t: 'join'; name: string; cls: Cls }
+  | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
   | { t: 'input'; seq: number; keys: KeysState; yaw: number; pitch: number }
   | { t: 'fire'; yaw: number; pitch: number }
   | { t: 'respawn'; cls: Cls }
@@ -173,7 +173,7 @@ export class GameSocket {
   private statsTimer: number | null = null
   private snapCount = 0
   private inputSeq = 0
-  private joinCreds: { name: string; cls: Cls } | null = null
+  private joinCreds: { name: string; cls: Cls; team: number } | null = null
   private stats: NetStats = {
     status: 'connecting',
     clientId: null,
@@ -238,10 +238,10 @@ export class GameSocket {
     }
   }
 
-  join(name: string, cls: Cls): void {
-    this.joinCreds = { name, cls }
+  join(name: string, cls: Cls, team: number): void {
+    this.joinCreds = { name, cls, team }
     this.inputSeq = 0
-    this.send({ t: 'join', name, cls })
+    this.send({ t: 'join', name, cls, team })
   }
 
   sendInput(keys: KeysState, yaw: number, pitch: number): void {

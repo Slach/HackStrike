@@ -26,8 +26,8 @@ func combatWorld(t *testing.T) (*world, *player, *player, *time.Time) {
 	clock := time.UnixMilli(1_700_000_000_000)
 	w.now = func() time.Time { return clock }
 
-	shooter := w.addPlayer(1, "shooter", "sniper")
-	victim := w.addPlayer(2, "victim", "assault")
+	shooter := w.addPlayer(1, "shooter", "sniper", -1)
+	victim := w.addPlayer(2, "victim", "assault", -1)
 	shooter.team, victim.team = 0, 0 // союзники: friendly fire ON
 	shooter.pos = vec3{0, 1, 0}
 	victim.pos = vec3{0, aimLevelY, 10} // центр AABB на высоте глаз
@@ -243,7 +243,7 @@ func TestFireRateLimit(t *testing.T) {
 	}
 
 	// Бёрст в один момент времени: принят только первый.
-	reviver := w.addPlayer(3, "r", "sniper")
+	reviver := w.addPlayer(3, "r", "sniper", -1)
 	reviver.pos = vec3{0, 1, 5}
 	w.takeOut()
 	for i := 0; i < 5; i++ {
@@ -257,8 +257,8 @@ func TestFireRateLimit(t *testing.T) {
 // Ближайшая цель вдоль луча: два врага в конусе, засчитывается ближний.
 func TestNearestTargetAlongRay(t *testing.T) {
 	w, shooter, _, _ := combatWorld(t)
-	near := w.addPlayer(3, "near", "assault")
-	far := w.addPlayer(4, "far", "assault")
+	near := w.addPlayer(3, "near", "assault", -1)
+	far := w.addPlayer(4, "far", "assault", -1)
 	w.takeOut()
 	near.pos = vec3{0, aimLevelY, 8}
 	far.pos = vec3{0, aimLevelY, 20}

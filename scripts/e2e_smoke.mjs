@@ -169,6 +169,19 @@ await sleep(300)
 const remaining = clients.filter((c) => c.ws.readyState === 1).map((c) => lastSnap(c).players.find((p) => p.id === welcome(c).id).team)
 check('после ухода 2v0 → 1v1', new Set(remaining).size === remaining.length, remaining.join(','))
 
+// --- 7. явный выбор команды: двое просят противоположные стороны ---
+{
+  const x = await connect()
+  const y = await connect()
+  x.ws.send(JSON.stringify({ t: 'join', name: 'E2E_X', cls: 'assault', team: 0 }))
+  y.ws.send(JSON.stringify({ t: 'join', name: 'E2E_Y', cls: 'assault', team: 1 }))
+  const wx = await waitFor(x, (m) => m.t === 'welcome')
+  const wy = await waitFor(y, (m) => m.t === 'welcome')
+  check('join с выбором команды уважается', wx.team === 0 && wy.team === 1, `${wx.team}/${wy.team}`)
+  x.ws.close()
+  y.ws.close()
+}
+
 clients.forEach((c) => c.ws.readyState === 1 && c.ws.close())
 console.log(failures === 0 ? '\nE2E: ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ ✓' : `\nE2E: ПРОВАЛОВ ${failures}`)
 process.exit(failures === 0 ? 0 : 1)

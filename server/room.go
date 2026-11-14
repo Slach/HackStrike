@@ -95,7 +95,14 @@ func (r *room) handleInput(in taggedMessage) {
 		if _, playing := r.world.players[in.from.id]; playing {
 			return // повторный join игнорируем
 		}
-		r.world.addPlayer(in.from.id, str(in.msg, "name"), str(in.msg, "cls"))
+		wantTeam := -1 // -1 = авто-баланс; 0|1 = просьба игрока
+		switch num(in.msg, "team") {
+		case 0:
+			wantTeam = 0
+		case 1:
+			wantTeam = 1
+		}
+		r.world.addPlayer(in.from.id, str(in.msg, "name"), str(in.msg, "cls"), wantTeam)
 		log.Printf("room: player %d joined team %d as %s", in.from.id,
 			r.world.players[in.from.id].team, r.world.players[in.from.id].cls)
 	default:

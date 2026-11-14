@@ -92,9 +92,22 @@ func (w *world) startMatchIfNeeded() {
 	}
 }
 
-// addPlayer — вход в игру по "join": баланс команд, спавн, welcome.
-func (w *world) addPlayer(id uint64, name, cls string) *player {
-	pl := &player{id: id, name: sanitizeName(name), team: w.pickTeam()}
+// addPlayer — вход в игру по "join": спавн, welcome. Команда: просьба
+// игрока (wantTeam 0|1) уважается, если не создаёт перекос ≥2 (друзья,
+// зашедшие вместе, больше не окажутся в одной команде из-за тай-брейка
+// балансира); -1 = обычный баланс по численности.
+func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
+	team := w.pickTeam()
+	if wantTeam == 0 || wantTeam == 1 {
+		counts := [2]int{}
+		for _, p := range w.players {
+			counts[p.team]++
+		}
+		if counts[wantTeam]+1-counts[1-wantTeam] < 2 {
+			team = wantTeam
+		}
+	}
+	pl := &player{id: id, name: sanitizeName(name), team: team}
 	w.spawnPlayer(pl, cls)
 	w.players[id] = pl
 	w.startMatchIfNeeded()
