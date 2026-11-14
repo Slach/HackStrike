@@ -268,6 +268,23 @@ function hackviewOff(relock: boolean): void {
   if (relock && playing) controls.requestLock()
 }
 
+// Джек-аут: ESC или Backspace (любая платформа, страницы их получают), плюс
+// прежний Ctrl/Cmd+Alt+Delete — NB: на Windows Ctrl+Alt+Del перехватывается
+// ОС и до страницы НЕ доходит, на mac «Delete» это code Backspace.
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (!hackview.active) return
+    const triple = e.code === 'Delete' && e.altKey && (e.ctrlKey || e.metaKey)
+    if (e.code === 'Escape' || e.code === 'Backspace' || triple) {
+      e.preventDefault()
+      sock.sendJackout()
+      hackviewOff(true)
+    }
+  },
+  { capture: true },
+)
+
 hud.onJoin = (name, cls, team) => {
   myCls = cls
   controls.invertY = hud.invertYOn // settings checkbox on the join screen
