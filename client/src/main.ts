@@ -7,6 +7,7 @@
 
 import { Engine } from '@babylonjs/core/Engines/engine'
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
+import type { FreeCamera } from '@babylonjs/core/Cameras/freeCamera'
 
 import { GameSocket } from './net'
 import type { Cls, ServerMessage, SnapPlayer } from './net'
@@ -57,6 +58,7 @@ let lastTimeLeft = Number.POSITIVE_INFINITY
 let latestMeta = new Map<number, SnapPlayer>()
 const prevAlive = new Map<number, boolean>()
 const lastHits = new Map<number, { by: number; at: number }>()
+const debugShots: ShotMsg[] = [] // ring buffer behind window.__hs for e2e probes
 
 function resetSession(): void {
   playing = false
@@ -71,7 +73,6 @@ function resetSession(): void {
   hud.hideEnd()
   hud.hideDeath()
   hud.crosshairLocked(false)
-  hud.setLockHint(false)
 }
 
 function handleShot(msg: ShotMsg): void {
@@ -165,6 +166,8 @@ const sock = new GameSocket({
         handleSnap(msg)
         break
       case 'shot':
+        debugShots.push(msg)
+        if (debugShots.length > 20) debugShots.shift()
         handleShot(msg)
         break
       case 'death':
@@ -186,11 +189,24 @@ sock.start() // connect + stats window; without this join has no socket to ride 
 hud.onJoin = (name, cls) => {
   myCls = cls
   sock.join(name, cls)
+  // The deploy click is a user gesture: grab the mouse right away, no extra
+  // "click to lock" step.
+  controls.requestLock()
 }
 hud.onRespawn = (cls) => {
   myCls = cls
   sock.sendRespawn(cls)
+  controls.requestLock()
 }
+
+// Relock on any input after the lock was lost (Esc, tab switch). Chrome
+// rejects immediate relock for ~1.2s after an Esc exit; the request is
+// silently dropped and the next mousedown/keydown picks it up.
+const tryRelock = () => {
+  if (playing && !controls.locked) controls.requestLock()
+}
+document.addEventListener('mousedown', tryRelock)
+document.addEventListener('keydown', tryRelock)
 
 // Map geometry comes only from the server (GDD invariant: карта — данные).
 hud.showJoin()
@@ -203,11 +219,8 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
   },
 )
 
-// Pointer lock only when actually in game; overlays sit above the canvas
-// and swallow clicks while visible.
-canvas.addEventListener('click', () => {
-  if (playing && !controls.locked) controls.requestLock()
-})
+// Pointer lock comes from the join/respawn clicks plus the relock listeners
+// above; no dedicated canvas-click path is needed.
 
 // Input stream to the server: ~30/s, latest keys + view angles.
 window.setInterval(() => {
@@ -222,13 +235,14 @@ engine.runRenderLoop(() => {
   // Own body is never rendered; the camera rides the interpolated snapshot.
   const me = myId !== null ? states.get(myId) : undefined
   if (me !== undefined) camera.position.set(me.x, me.y + EYE_HEIGHT, me.z)
-  camera.rotation.x = controls.pitch
+  // Babylon's rotation.x is positive-DOWN; the wire pitch is positive-UP
+  // (GDD §9.2) — negate or every shot sent to the server aims mirrored.
+  camera.rotation.x = -controls.pitch
   camera.rotation.y = controls.yaw
 
   views.sync(states, myId)
 
   const alive = me?.meta.alive === true
-  hud.setLockHint(playing && !controls.locked && !matchOver && alive)
 
   let fired = false
   if (playing && alive && !matchOver && controls.locked && world !== null) {
@@ -266,3 +280,24 @@ engine.runRenderLoop(() => {
 window.addEventListener('resize', () => {
   engine.resize()
 })
+
+// E2E/debug hook: browser automation can aim, fire and inspect state without
+// reaching into module internals.
+declare global {
+  interface Window {
+    __hs?: {
+      controls: Controls
+      sock: GameSocket
+      camera: FreeCamera
+      players: () => Map<number, SnapPlayer>
+      shots: () => ShotMsg[]
+    }
+  }
+}
+window.__hs = {
+  controls,
+  sock,
+  camera,
+  players: () => latestMeta,
+  shots: () => [...debugShots],
+}

@@ -83,7 +83,6 @@ export class Hud {
     timer: byId('timer'),
     killfeed: byId('killfeed'),
     crosshair: byId('crosshair'),
-    lockHint: byId('lockHint'),
     status: byId('status'),
     tick: byId('tick'),
     players: byId('players'),
@@ -150,10 +149,6 @@ export class Hud {
 
   crosshairLocked(on: boolean): void {
     this.el.crosshair.classList.toggle('locked', on)
-  }
-
-  setLockHint(on: boolean): void {
-    this.el.lockHint.classList.toggle('hidden', !on)
   }
 
   killfeed(killer: string, killerTeam: number, victim: string, victimTeam: number): void {

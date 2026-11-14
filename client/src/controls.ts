@@ -42,9 +42,12 @@ export class Controls {
     this.yaw += e.movementX * SENS_RAD_PER_PX
     if (this.yaw > Math.PI) this.yaw -= TAU
     else if (this.yaw < -Math.PI) this.yaw += TAU
+    // Wire pitch is positive-up (GDD §9.2) and movementY is positive when the
+    // mouse moves DOWN — subtract, or every shot sent to the server aims at a
+    // vertically mirrored direction while the local camera still feels fine.
     this.pitch = Math.max(
       -PITCH_LIMIT,
-      Math.min(PITCH_LIMIT, this.pitch + e.movementY * SENS_RAD_PER_PX),
+      Math.min(PITCH_LIMIT, this.pitch - e.movementY * SENS_RAD_PER_PX),
     )
   }
 
