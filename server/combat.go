@@ -100,24 +100,25 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 	var hit *player
 	to := vec3{}
 	for _, c := range cands {
-		if w.m.segmentBlocked(origin, c.center) {
-			continue // за укрытием
+		if w.segmentBlockedAll(origin, c.center) {
+			continue // за укрытием (стена или закрытая дверь)
 		}
 		hit = c.pl
 		to = origin.add(dir.scaled(c.tAlong))
 		break
 	}
 	if hit == nil {
-		// Трассер до геометрии; чистое небо невозможно (крыша), но на всякий
-		// случай — 100 м от стрелка.
-		if end, ok := w.m.raycast(origin, dir); ok {
+		// Трассер до геометрии или закрытой двери; чистое небо невозможно
+		// (крыша), но на всякий случай — 100 м от стрелка.
+		if end, ok := w.raycastAll(origin, dir); ok {
 			to = end
 		} else {
 			to = origin.add(dir.scaled(100))
 		}
 	}
 
-	// Пули тоже перерубают кабели (§6, §12.3): до точки попадания.
+	// Пули тоже перерубают кабели (§6, §12.3): до точки попадания (закрытая
+	// дверь защищает кабели за ней).
 	w.cutCableAlong(origin, dir, to.sub(origin).length())
 
 	killed := false

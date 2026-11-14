@@ -85,6 +85,7 @@ export class AutoFire {
     dir: Vector3,
     enemies: readonly TargetBox[],
     world: MapWorld,
+    blockers: readonly TargetBox[] = [],
   ): boolean {
     let bestT = Number.POSITIVE_INFINITY
     for (const e of enemies) {
@@ -94,6 +95,16 @@ export class AutoFire {
       if (world.rayHit(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, t - 0.02) !== null) {
         continue
       }
+      // Закрытая дверь перед целью — не стреляем (сервер тоже отклонит).
+      let doorBlocked = false
+      for (const b of blockers) {
+        const bt = rayAABB(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, b.min, b.max)
+        if (bt !== null && bt < t - 0.02) {
+          doorBlocked = true
+          break
+        }
+      }
+      if (doorBlocked) continue
       bestT = t
     }
     if (!Number.isFinite(bestT)) {

@@ -409,7 +409,9 @@ engine.runRenderLoop(() => {
       })
     }
     const dir = camera.getDirection(Vector3.Forward())
-    fired = autofire.update(nowSec, myCls, camera.position, dir, enemies, world)
+    // Закрытые двери — блокаторы автоогня: не цеплять врагов за ними.
+    const doorBlockers = propsView?.closedDoorBoxes().map((b) => ({ min: b.min, max: b.max })) ?? []
+    fired = autofire.update(nowSec, myCls, camera.position, dir, enemies, world, doorBlockers)
     if (fired) sock.sendFire(controls.yaw, controls.pitch)
   } else {
     autofire.lockedOn = false

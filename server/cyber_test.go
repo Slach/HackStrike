@@ -949,3 +949,39 @@ func runAndWaitM2(w *world, pl *player, msg message) {
 	}
 	pl.progs = nil
 }
+
+// Пули/нож не проходят сквозь ЗАКРЫТУЮ дверь (плейтест M2-2: «автоприцел
+// стреляет сквозь дверь»), открытая — прозрачна для огня.
+func TestFireBlockedByClosedDoor(t *testing.T) {
+	w, _, _, clock := combatWorld(t) // пол 40×40, shooter@0,1,0
+	// Дверь между стрелком и жертвой: тонкая панель в z=10.
+	w.cyber = buildCyber(&gameMap{Name: "d", Bounds: [3]float64{40, 8, 40},
+		Colliders: []collider{{Min: [3]float64{0, 0, 0}, Max: [3]float64{40, 1, 40}, Kind: "floor"}},
+		props: []mapProp{{Kind: "door", ID: "d1", Pos: [3]float64{0, 1, 10}, Size: [3]float64{8, 3, 0.3}, Axis: "x", To: ""}}})
+	victim := w.addPlayer(9, "v", "heavy", -1)
+	victim.pos = vec3{0, 1, 12} // за дверью
+	w.takeOut()
+
+	w.fire(w.players[1], 0, 0) // sniper
+	s := shots(w)
+	if len(s) != 1 || s[0]["hit"] != nil {
+		t.Fatalf("closed door must block the shot, got %+v", s)
+	}
+	if victim.hp != 200 {
+		t.Fatalf("no damage through a closed door, hp=%d", victim.hp)
+	}
+	// Трассер упёрся в дверь (z≈10), а не в жертву (z=12).
+	to := s[0]["to"].(vec3)
+	if to[2] > 10.5 {
+		t.Fatalf("tracer must stop at the door, to=%v", to)
+	}
+
+	// Открыли — попадание проходит.
+	w.cyber.devices["d1"].open = true
+	*clock = clock.Add(2 * time.Second)
+	w.fire(w.players[1], 0, 0)
+	s = shots(w)
+	if len(s) != 1 || s[0]["hit"] == nil {
+		t.Fatalf("open door must not block, got %+v", s)
+	}
+}

@@ -575,6 +575,51 @@ func (w *world) movePlayer(pl *player, dt float64) {
 	w.m.movePlayerBlocked(pl, dt, w.doorBlocker(pl))
 }
 
+// --- двери как препятствия для огня (плейтест M2-2) -----------------------
+
+// segmentBlockedAll — статика карты + ЗАКРЫТЫЕ двери: пули/нож/LOS не
+// проходят сквозь них. Открытая дверь — не препятствие.
+func (w *world) segmentBlockedAll(origin, target vec3) bool {
+	if w.m.segmentBlocked(origin, target) {
+		return true
+	}
+	d := target.sub(origin)
+	l := d.length()
+	if l < 1e-9 {
+		return false
+	}
+	dir := d.scaled(1 / l)
+	for _, door := range w.cyber.doors {
+		if door.open {
+			continue
+		}
+		if t := rayBoxT(origin, dir, door.box); t >= 0 && t <= l {
+			return true
+		}
+	}
+	return false
+}
+
+// raycastAll — ближайшая точка остановки луча: статика или закрытая дверь.
+func (w *world) raycastAll(origin, dir vec3) (vec3, bool) {
+	end, ok := w.m.raycast(origin, dir)
+	best := math.Inf(1)
+	if ok {
+		best = end.sub(origin).length()
+	}
+	for _, door := range w.cyber.doors {
+		if door.open {
+			continue
+		}
+		if t := rayBoxT(origin, dir, door.box); t >= 0 && t < best {
+			best = t
+			end = origin.add(dir.scaled(t))
+			ok = true
+		}
+	}
+	return end, ok
+}
+
 // --- нож и кабели ---------------------------------------------------------
 
 // cutCableAlong — перерубить кабель (нож/пули, §6): ближайший сегмент на
@@ -605,7 +650,14 @@ func (w *world) knife(pl *player, yaw, pitch float64) {
 	origin := pl.pos.add(vec3{0, eyeHeight, 0})
 	dir := aimDir(yaw, pitch)
 
-	w.cutCableAlong(origin, dir, knifeRange)
+	// Закрытая дверь останавливает и нож: резать кабели за ней нельзя.
+	doorStop := knifeRange
+	if end, ok := w.raycastAll(origin, dir); ok {
+		if dl := end.sub(origin).length(); dl < doorStop {
+			doorStop = dl
+		}
+	}
+	w.cutCableAlong(origin, dir, doorStop)
 
 	var victim *player
 	best := knifeRange
@@ -619,7 +671,7 @@ func (w *world) knife(pl *player, yaw, pitch float64) {
 		if dist > best || dist < 1e-6 || rel.dot(dir) <= 0 {
 			continue // далеко или за спиной — «луч из глаз»
 		}
-		if w.m.segmentBlocked(origin, center) {
+		if w.segmentBlockedAll(origin, center) {
 			continue
 		}
 		victim, best = p, dist

@@ -300,6 +300,22 @@ export class PropsView {
   }
 
   /** Анимация дверей: доворот к целевому углу, ~0.3 с на 90°. */
+  /** AABB закрытых дверей — автоогонь/LOS клиента не видят врагов за ними. */
+  closedDoorBoxes(): { min: [number, number, number]; max: [number, number, number] }[] {
+    const out: { min: [number, number, number]; max: [number, number, number] }[] = []
+    for (const d of this.doors.values()) {
+      if (d.open) continue
+      // дверь: центр (x, baseY, z), ось x — панель вдоль X; вдоль Z — вдоль Z
+      const halfW = d.axis === 'x' ? d.len / 2 : 0.15
+      const halfD = d.axis === 'z' ? d.len / 2 : 0.15
+      out.push({
+        min: [d.x - halfW, d.baseY, d.z - halfD],
+        max: [d.x + halfW, d.baseY + d.h, d.z + halfD],
+      })
+    }
+    return out
+  }
+
   /** Угол створки двери (для e2e-проверок анимации). */
   doorAngle(id: string): number | null {
     return this.doors.get(id)?.angle ?? null
