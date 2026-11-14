@@ -1,12 +1,20 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>HackStrike — skeleton</title>
+    <title>HACKSTRIKE</title>
     <style>
       :root {
         color-scheme: dark;
+        --cy: #37ff9b;
+        --mg: #ff4dd2;
+        --ink: #eafff3;
+        --panel: rgba(2, 14, 8, 0.88);
+        --line: rgba(55, 255, 155, 0.32);
+      }
+      * {
+        box-sizing: border-box;
       }
       html,
       body {
@@ -17,6 +25,7 @@
         overflow: hidden;
         background: #050a06;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        color: var(--cy);
       }
       #renderCanvas {
         width: 100%;
@@ -25,59 +34,461 @@
         touch-action: none;
         outline: none;
       }
-      #hud {
-        position: absolute;
-        top: 16px;
-        left: 16px;
-        padding: 12px 16px;
-        background: rgba(0, 12, 4, 0.82);
-        border: 1px solid rgba(0, 255, 128, 0.35);
-        border-radius: 6px;
-        color: #37ff9b;
-        font-size: 13px;
-        line-height: 1.7;
-        min-width: 230px;
-        pointer-events: none;
-        text-shadow: 0 0 8px rgba(0, 255, 128, 0.45);
+      .hidden {
+        display: none !important;
       }
-      #hud h1 {
-        margin: 0 0 6px 0;
-        font-size: 13px;
+      .t0 {
+        color: var(--cy);
+      }
+      .t1 {
+        color: var(--mg);
+      }
+
+      /* debug corner (from the skeleton) */
+      #debug {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        padding: 10px 14px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        font-size: 12px;
+        line-height: 1.7;
+        min-width: 210px;
+        pointer-events: none;
+        text-shadow: 0 0 8px rgba(0, 255, 128, 0.4);
+        z-index: 5;
+      }
+      #debug h1 {
+        margin: 0 0 6px;
+        font-size: 12px;
         letter-spacing: 3px;
         font-weight: 700;
         color: #baffdd;
         border-bottom: 1px solid rgba(0, 255, 128, 0.25);
         padding-bottom: 6px;
       }
-      #hud .row {
+      #debug .row {
         display: flex;
         justify-content: space-between;
         gap: 18px;
       }
-      #hud .dim {
+      #debug .dim {
         color: rgba(55, 255, 155, 0.55);
       }
-      #status-open {
+      .status-open {
         color: #37ff9b;
       }
-      #status-connecting {
+      .status-connecting {
         color: #ffd237;
       }
-      #status-closed {
+      .status-closed {
         color: #ff4d5e;
+      }
+
+      /* team score + match timer */
+      #topbar {
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        padding: 8px 20px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        pointer-events: none;
+        z-index: 5;
+      }
+      #score0,
+      #score1 {
+        font-size: 22px;
+        font-weight: 700;
+        text-shadow: 0 0 10px currentColor;
+        min-width: 34px;
+        text-align: center;
+      }
+      #timer {
+        font-size: 15px;
+        color: var(--ink);
+        min-width: 56px;
+        text-align: center;
+        letter-spacing: 2px;
+      }
+
+      /* HP + class */
+      #vitals {
+        position: absolute;
+        left: 16px;
+        bottom: 16px;
+        width: 250px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px 12px;
+        pointer-events: none;
+        z-index: 5;
+      }
+      #clsLabelRow {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: #baffdd;
+        margin-bottom: 7px;
+      }
+      #hpNum {
+        color: var(--ink);
+      }
+      #hpbar {
+        height: 10px;
+        background: rgba(55, 255, 155, 0.1);
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      #hpfill {
+        height: 100%;
+        width: 100%;
+        background: linear-gradient(90deg, #0fe37e, #37ff9b);
+        box-shadow: 0 0 8px rgba(55, 255, 155, 0.6);
+        transition: width 0.15s;
+      }
+      #hpfill.low {
+        background: #ff4d5e;
+        box-shadow: 0 0 8px rgba(255, 77, 94, 0.7);
+      }
+
+      /* crosshair dot */
+      #crosshair {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 6px;
+        height: 6px;
+        margin: -3px 0 0 -3px;
+        border-radius: 50%;
+        background: var(--ink);
+        box-shadow: 0 0 7px rgba(55, 255, 155, 0.95);
+        pointer-events: none;
+        z-index: 5;
+      }
+      #crosshair.locked {
+        background: var(--mg);
+        box-shadow: 0 0 11px rgba(255, 77, 210, 0.95);
+      }
+
+      /* killfeed */
+      #killfeed {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        align-items: flex-end;
+        pointer-events: none;
+        z-index: 5;
+        max-width: 42%;
+      }
+      .kf {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 3px 10px;
+        font-size: 12px;
+        letter-spacing: 1px;
+        opacity: 1;
+        transition: opacity 0.7s;
+      }
+      .kf.fade {
+        opacity: 0;
+      }
+      .kf .arrow {
+        color: #baffdd;
+        margin: 0 6px;
+      }
+
+      /* minimap */
+      #minimap {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: rgba(2, 10, 6, 0.85);
+        pointer-events: none;
+        z-index: 5;
+      }
+
+      /* pointer-lock hint */
+      #lockHint {
+        position: absolute;
+        bottom: 96px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 6px 16px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        font-size: 12px;
+        letter-spacing: 3px;
+        pointer-events: none;
+        z-index: 6;
+      }
+
+      /* full-screen overlays */
+      .overlay {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(2, 7, 4, 0.8);
+        z-index: 10;
+      }
+      #deathOverlay {
+        background: rgba(46, 3, 22, 0.55);
+        z-index: 11;
+      }
+      #endOverlay {
+        z-index: 12;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 26px 34px;
+        text-align: center;
+        box-shadow: 0 0 50px rgba(0, 255, 128, 0.14);
+        max-width: 860px;
+      }
+      .logo {
+        margin: 0;
+        font-size: 42px;
+        letter-spacing: 14px;
+        color: var(--ink);
+        text-shadow: 0 0 20px rgba(55, 255, 155, 0.8);
+      }
+      .tag {
+        font-size: 11px;
+        letter-spacing: 5px;
+        color: rgba(55, 255, 155, 0.6);
+        margin: 8px 0 22px;
+      }
+      .joinRow {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 20px;
+      }
+      .joinRow label {
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: rgba(55, 255, 155, 0.7);
+      }
+      #nameInput {
+        background: #02120a;
+        border: 1px solid var(--line);
+        color: var(--ink);
+        font: inherit;
+        font-size: 14px;
+        padding: 8px 12px;
+        width: 230px;
+        border-radius: 4px;
+        outline: none;
+        text-align: center;
+        letter-spacing: 1px;
+      }
+      #nameInput:focus {
+        border-color: var(--cy);
+        box-shadow: 0 0 12px rgba(55, 255, 155, 0.25);
+      }
+
+      /* class cards (join + respawn) */
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(160px, 1fr));
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .card {
+        background: rgba(2, 18, 10, 0.92);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px 12px;
+        cursor: pointer;
+        text-align: left;
+        transition: border-color 0.15s, box-shadow 0.15s;
+        user-select: none;
+      }
+      .card:hover {
+        border-color: rgba(55, 255, 155, 0.85);
+      }
+      .card.selected {
+        border-color: var(--cy);
+        box-shadow: 0 0 16px rgba(55, 255, 155, 0.35);
+      }
+      .card-name {
+        font-size: 13px;
+        letter-spacing: 2px;
+        color: var(--ink);
+      }
+      .card-weapon {
+        font-size: 10px;
+        color: rgba(55, 255, 155, 0.75);
+        margin: 3px 0 8px;
+        letter-spacing: 1px;
+      }
+      .card-stats {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px 8px;
+        font-size: 11px;
+        color: #baffdd;
+      }
+      .card-note {
+        margin-top: 8px;
+        font-size: 10px;
+        color: rgba(255, 77, 210, 0.85);
+        letter-spacing: 1px;
+      }
+
+      .btn {
+        background: rgba(55, 255, 155, 0.12);
+        border: 1px solid var(--cy);
+        color: var(--cy);
+        font: inherit;
+        font-size: 14px;
+        letter-spacing: 5px;
+        padding: 10px 38px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .btn:hover:not(:disabled) {
+        background: rgba(55, 255, 155, 0.25);
+        box-shadow: 0 0 14px rgba(55, 255, 155, 0.4);
+      }
+      .btn:disabled {
+        opacity: 0.35;
+        cursor: default;
+      }
+      .dim {
+        font-size: 11px;
+        color: rgba(55, 255, 155, 0.55);
+        margin-top: 14px;
+        letter-spacing: 1px;
+      }
+
+      /* death overlay */
+      #deathTitle {
+        font-size: 26px;
+        letter-spacing: 5px;
+        color: #ff6d9d;
+        text-shadow: 0 0 16px rgba(255, 77, 210, 0.55);
+      }
+      #deathCount {
+        font-size: 56px;
+        color: var(--ink);
+        margin: 14px 0;
+        text-shadow: 0 0 18px rgba(55, 255, 155, 0.5);
+      }
+
+      /* match end overlay */
+      .end-title {
+        font-size: 27px;
+        letter-spacing: 6px;
+        color: var(--ink);
+      }
+      .end-title.t0 {
+        color: var(--cy);
+        text-shadow: 0 0 16px rgba(55, 255, 155, 0.6);
+      }
+      .end-title.t1 {
+        color: var(--mg);
+        text-shadow: 0 0 16px rgba(255, 77, 210, 0.6);
+      }
+      #endScore {
+        font-size: 42px;
+        margin: 12px 0 8px;
+        color: var(--ink);
+      }
+      #endScore .t0,
+      #endScore .t1 {
+        text-shadow: 0 0 12px currentColor;
+      }
+      #endCount {
+        font-size: 22px;
+        color: rgba(55, 255, 155, 0.85);
+        margin-bottom: 4px;
       }
     </style>
   </head>
   <body>
     <canvas id="renderCanvas"></canvas>
-    <div id="hud">
-      <h1>HACKSTRIKE // SKELETON</h1>
+
+    <div id="crosshair"></div>
+
+    <div id="topbar">
+      <span id="score0" class="t0">0</span>
+      <span id="timer">--:--</span>
+      <span id="score1" class="t1">0</span>
+    </div>
+
+    <div id="vitals">
+      <div id="clsLabelRow"><span id="clsLabel">—</span><span id="hpNum">0</span></div>
+      <div id="hpbar"><div id="hpfill"></div></div>
+    </div>
+
+    <div id="killfeed"></div>
+    <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="lockHint" class="hidden">КЛИК — ЗАХВАТ КУРСОРА</div>
+
+    <div id="debug">
+      <h1>HACKSTRIKE // M1</h1>
       <div class="row"><span class="dim">link</span><span id="status" class="status-connecting">CONNECTING…</span></div>
       <div class="row"><span class="dim">tick</span><span id="tick">—</span></div>
       <div class="row"><span class="dim">players</span><span id="players">—</span></div>
       <div class="row"><span class="dim">rtt</span><span id="rtt">—</span></div>
       <div class="row"><span class="dim">snaps/s</span><span id="snaps">—</span></div>
     </div>
+
+    <div id="joinScreen" class="overlay">
+      <div class="panel">
+        <h1 class="logo">HACKSTRIKE</h1>
+        <div class="tag">M1 // FPS CORE</div>
+        <div class="joinRow">
+          <label for="nameInput">НИК</label>
+          <input id="nameInput" maxlength="16" spellcheck="false" autocomplete="off" />
+        </div>
+        <div id="joinCards" class="cards"></div>
+        <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
+        <div id="joinStatus" class="dim">ЗАГРУЗКА КАРТЫ…</div>
+      </div>
+    </div>
+
+    <div id="deathOverlay" class="overlay hidden">
+      <div class="panel">
+        <div id="deathTitle">УБИТ ▸ ???</div>
+        <div id="deathCount">5</div>
+        <div id="deathCards" class="cards hidden"></div>
+        <button id="respawnBtn" class="btn hidden">РЕСПАУН</button>
+      </div>
+    </div>
+
+    <div id="endOverlay" class="overlay hidden">
+      <div class="panel">
+        <div id="endTitle" class="end-title">МАТЧ ОКОНЧЕН</div>
+        <div id="endScore">0 : 0</div>
+        <div id="endCount">10</div>
+        <div class="dim">АВТО-РЕСТАРТ</div>
+      </div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
