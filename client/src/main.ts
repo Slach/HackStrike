@@ -67,6 +67,7 @@ const prevAlive = new Map<number, boolean>()
 const lastHits = new Map<number, { by: number; at: number }>()
 const debugShots: ShotMsg[] = [] // ring buffer behind window.__hs for e2e probes
 let lastMyHp = -1
+let myWeapon: 'pistol' | 'knife' = 'pistol' // хакер: Q переключает (§3.2)
 
 function resetSession(): void {
   playing = false
@@ -78,6 +79,8 @@ function resetSession(): void {
   prevAlive.clear()
   lastHits.clear()
   matchOver = false
+  myWeapon = 'pistol'
+  hud.setWeapon(null)
   autofire.reset()
   scope.reset()
   hackviewOff(false)
@@ -130,7 +133,14 @@ function handleSnap(snap: SnapMsg): void {
     if (lastMyHp > me.hp) hud.damageFlash()
     lastMyHp = me.hp
   }
-  if (me !== undefined) myCls = me.cls // server may have adjusted the class
+  if (me !== undefined) {
+    if (me.cls !== myCls) { // сервер скорректировал класс — сброс оружия
+      myCls = me.cls
+      myWeapon = 'pistol'
+      sock.sendWeapon('pistol')
+    }
+    hud.setWeapon(myCls === 'hacker' ? (myWeapon === 'knife' ? 'НОЖ' : 'ПИСТОЛЕТ [Q]') : null)
+  }
   hud.setVitals(me !== undefined ? me.hp : 0, CLASS_BY_KEY[myCls].hp, CLASS_BY_KEY[myCls].label)
   hud.setScores(snap.scores, snap.timeLeft / 1000) // hud expects seconds, wire has ms
 
@@ -257,6 +267,15 @@ function hackviewOff(relock: boolean): void {
   if (relock && playing) controls.requestLock()
 }
 
+// Q — переключение оружия хакера (пистолет ⇄ нож, §3.2).
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyQ' || e.repeat) return
+  if (!playing || hackview.active || myCls !== 'hacker') return
+  myWeapon = myWeapon === 'pistol' ? 'knife' : 'pistol'
+  sock.sendWeapon(myWeapon)
+  hud.setWeapon(myWeapon === 'knife' ? 'НОЖ' : 'ПИСТОЛЕТ')
+})
+
 // Джек-аут: ESC или Backspace (любая платформа, страницы их получают), плюс
 // прежний Ctrl/Cmd+Alt+Delete — NB: на Windows Ctrl+Alt+Del перехватывается
 // ОС и до страницы НЕ доходит, на mac «Delete» это code Backspace.
@@ -348,6 +367,14 @@ engine.runRenderLoop(() => {
   const alive = me?.meta.alive === true
 
   // Подсказка джек-ина: хакер в 2 м от терминала / 8 м от радио (ГДД §12.1).
+  // Ховер-метка пропса под прицелом (switch/терминал/радио/дверь).
+  if (playing && alive && !hackview.active && propsView !== null) {
+    const fwd = camera.getDirection(Vector3.Forward())
+    hud.propLabel(propsView.propAt({ x: camera.position.x, y: camera.position.y, z: camera.position.z }, { x: fwd.x, y: fwd.y, z: fwd.z }, 24))
+  } else {
+    hud.propLabel(null)
+  }
+
   let hint: string | null = null
   if (playing && alive && !matchOver && !hackview.active && propsView !== null && me !== undefined) {
     const near = propsView.nearestJackPoint(me.x, me.z)
@@ -411,7 +438,8 @@ engine.runRenderLoop(() => {
     const dir = camera.getDirection(Vector3.Forward())
     // Закрытые двери — блокаторы автоогня: не цеплять врагов за ними.
     const doorBlockers = propsView?.closedDoorBoxes().map((b) => ({ min: b.min, max: b.max })) ?? []
-    fired = autofire.update(nowSec, myCls, camera.position, dir, enemies, world, doorBlockers)
+    const cableTargets = propsView?.cableBoxes().map((b) => ({ min: b.min, max: b.max })) ?? []
+    fired = autofire.update(nowSec, myCls, camera.position, dir, enemies, world, doorBlockers, myWeapon, cableTargets)
     if (fired) sock.sendFire(controls.yaw, controls.pitch)
   } else {
     autofire.lockedOn = false

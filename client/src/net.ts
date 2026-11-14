@@ -21,6 +21,7 @@ export type ClientMessage =
   | { t: 'input'; seq: number; keys: KeysState; yaw: number; pitch: number }
   | { t: 'fire'; yaw: number; pitch: number }
   | { t: 'respawn'; cls: Cls }
+  | { t: 'weapon'; w: 'pistol' | 'knife' } // hacker weapon toggle (GDD 3.2)
   | { t: 'ping'; c: number }
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
@@ -414,6 +415,10 @@ export class GameSocket {
 
   sendRespawn(cls: Cls): void {
     this.send({ t: 'respawn', cls })
+  }
+
+  sendWeapon(w: 'pistol' | 'knife'): void {
+    this.send({ t: 'weapon', w })
   }
 
   // M2 cyber-layer intents (GDD §12.5); the server re-validates everything.

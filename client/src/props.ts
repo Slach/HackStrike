@@ -251,7 +251,10 @@ export class PropsView {
   private rebuildCable(cable: CableView): void {
     cable.mesh?.dispose()
     const path = cable.severed ? droopPath(cable.path) : cable.path
-    cable.mesh = MeshBuilder.CreateTube(`prop.${cable.id}`, { path, radius: 0.045 }, this.scene)
+    // Кабель — заметный неоновый жгут (плейтест: «не видно, как идут провода»).
+    cable.mesh = MeshBuilder.CreateTube(`prop.${cable.id}`, { path, radius: 0.09 }, this.scene)
+    cable.mesh.enableEdgesRendering(0.95)
+    ;(cable.mesh as import('@babylonjs/core/Meshes/mesh').Mesh).edgesWidth = 1.5
     cable.mesh.material = cable.severed ? this.mats.cableDead : this.mats.cable
     cable.mesh.isPickable = false
   }
@@ -300,6 +303,51 @@ export class PropsView {
   }
 
   /** Анимация дверей: доворот к целевому углу, ~0.3 с на 90°. */
+  /** AABB неперерубленных кабелей — цели для ножа (автоудар при наведении). */
+  cableBoxes(): { id: string; min: [number, number, number]; max: [number, number, number] }[] {
+    const out: { id: string; min: [number, number, number]; max: [number, number, number] }[] = []
+    for (const c of this.cables.values()) {
+      if (c.severed || c.path.length < 2) continue
+      for (let i = 0; i + 1 < c.path.length; i++) {
+        const a = c.path[i]
+        const b = c.path[i + 1]
+        const min: [number, number, number] = [Math.min(a.x, b.x) - 0.08, Math.min(a.y, b.y) - 0.08, Math.min(a.z, b.z) - 0.08]
+        const max: [number, number, number] = [Math.max(a.x, b.x) + 0.08, Math.max(a.y, b.y) + 0.08, Math.max(a.z, b.z) + 0.08]
+        out.push({ id: c.id, min, max })
+      }
+    }
+    return out
+  }
+
+  /** Пропс под прицелом (ховер-метка): ближайший AABB на луче. */
+  propAt(origin: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, maxDist: number): string | null {
+    let best: string | null = null
+    let bestT = maxDist
+    const boxes: { label: string; min: [number, number, number]; max: [number, number, number] }[] = []
+    for (const d of this.doors.values()) {
+      const halfW = d.axis === 'x' ? d.len / 2 : 0.15
+      const halfD = d.axis === 'z' ? d.len / 2 : 0.15
+      boxes.push({ label: `ДВЕРЬ ${d.id.toUpperCase()} — ${d.open ? 'ОТКРЫТА' : 'ЗАКРЫТА'}`, min: [d.x - halfW, d.baseY, d.z - halfD], max: [d.x + halfW, d.baseY + d.h, d.z + halfD] })
+    }
+    for (const t of this.terminals.values()) {
+      boxes.push({ label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, min: [t.x - 0.6, 1, t.z - 0.6], max: [t.x + 0.6, 2.4, t.z + 0.6] })
+    }
+    for (const r of this.radios.values()) {
+      boxes.push({ label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, min: [r.x - 0.7, 1, r.z - 0.7], max: [r.x + 0.7, 3, r.z + 0.7] })
+    }
+    for (const s of this.switches.values()) {
+      boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, 1, s.z - 0.5], max: [s.x + 0.5, 1.9, s.z + 0.5] })
+    }
+    for (const b of boxes) {
+      const t = rayBoxAABB(origin, dir, b.min, b.max)
+      if (t !== null && t < bestT) {
+        bestT = t
+        best = b.label
+      }
+    }
+    return best
+  }
+
   /** AABB закрытых дверей — автоогонь/LOS клиента не видят врагов за ними. */
   closedDoorBoxes(): { min: [number, number, number]; max: [number, number, number] }[] {
     const out: { min: [number, number, number]; max: [number, number, number] }[] = []
@@ -405,4 +453,26 @@ export class PropsView {
     }
     this.miniCache = out
   }
+}
+
+
+function rayBoxAABB(o: { x: number; y: number; z: number }, d: { x: number; y: number; z: number }, min: readonly [number, number, number], max: readonly [number, number, number]): number | null {
+  let tmin = 0
+  let tmax = Number.POSITIVE_INFINITY
+  const os = [o.x, o.y, o.z]
+  const ds = [d.x, d.y, d.z]
+  for (let i = 0; i < 3; i++) {
+    if (Math.abs(ds[i]) < 1e-12) {
+      if (os[i] < min[i] || os[i] > max[i]) return null
+      continue
+    }
+    const inv = 1 / ds[i]
+    let t1 = (min[i] - os[i]) * inv
+    let t2 = (max[i] - os[i]) * inv
+    if (t1 > t2) [t1, t2] = [t2, t1]
+    tmin = Math.max(tmin, t1)
+    tmax = Math.min(tmax, t2)
+    if (tmin > tmax) return null
+  }
+  return tmin
 }

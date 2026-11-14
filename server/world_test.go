@@ -183,7 +183,7 @@ func TestRespawnRules(t *testing.T) {
 
 	// Смерть от своего же (friendly fire).
 	pl.hp = 1
-	w.damage(pl, pl)
+	w.damage(pl, pl, 150)
 	if pl.alive {
 		t.Fatalf("setup: player must be dead")
 	}
@@ -223,7 +223,7 @@ func TestMatchEndByFrags(t *testing.T) {
 	victim.hp = 1 // одно попадание снайпера (60) убивает — это и есть фраг
 	w.takeOut()
 
-	w.damage(killer, victim)
+	w.damage(killer, victim, 150)
 	w.simulateTick() // matchCheck внутри тика
 
 	var matchend *message

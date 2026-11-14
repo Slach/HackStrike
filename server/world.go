@@ -257,6 +257,12 @@ func (w *world) handleMessage(pl *player, msg message) {
 		w.handleRun(pl, msg)
 	case "ctrl": // контроллер устройства (§12.5)
 		w.handleCtrl(pl, msg)
+	case "weapon": // хакер: пистолет ⇄ нож (§3.2, M2)
+		if pl.cls == "hacker" {
+			if wpn := str(msg, "w"); wpn == "knife" || wpn == "pistol" {
+				pl.activeWeapon = wpn
+			}
+		}
 	}
 }
 

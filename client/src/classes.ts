@@ -58,7 +58,7 @@ export const CLASSES: readonly ClassDef[] = [
     damage: 18,
     rate: '3 / с',
     fireInterval: 0.33,
-    note: 'джек-ин в M2',
+    note: 'Q: пистолет/нож, нож режет кабели',
   },
 ]
 

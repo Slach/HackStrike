@@ -685,7 +685,7 @@ func (w *world) knife(pl *player, yaw, pitch float64) {
 	}
 	killed := false
 	if victim != nil {
-		killed = w.damage(pl, victim) // 60 урона ножа (weapon.damage)
+		killed = w.damage(pl, victim, hackWeapons["knife"].damage)
 	}
 	w.broadcast(message{"t": "shot", "by": pl.id, "hit": hit, "from": origin.round2(), "to": to.round2()})
 	if killed {

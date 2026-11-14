@@ -83,6 +83,8 @@ export class Hud {
     score0: byId('score0'),
     score1: byId('score1'),
     timer: byId('timer'),
+    propLabel: byId('propLabel'),
+    weaponTag: byId('weaponTag'),
     roster0: byId('roster0'),
     roster1: byId('roster1'),
     teamSeg: byId('teamSeg'),
@@ -207,6 +209,18 @@ export class Hud {
       this.el.jackinHint.textContent = text
       this.el.jackinHint.classList.remove('hidden')
     }
+  }
+
+  /** Текущее оружие (хакер: пистолет/нож) — рядом с HP. */
+  setWeapon(text: string | null): void {
+    const el = this.el.weaponTag
+    if (el === null) return
+    el.textContent = text ?? ''
+  }
+
+  /** Метка пропса под прицелом («SWITCH S1», «ДВЕРЬ D1 — ЗАКРЫТА»). */
+  propLabel(text: string | null): void {
+    this.el.propLabel.textContent = text ?? ''
   }
 
   /** Sniper scope overlay (auto-zoom engaged). */

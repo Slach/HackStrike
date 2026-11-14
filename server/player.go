@@ -21,14 +21,19 @@ var classes = map[string]classStats{
 	"sniper":  {hp: 100, speed: 5.5, weapon: weapon{name: "bolt", damage: 150, interval: 1200 * time.Millisecond}},
 	"assault": {hp: 125, speed: 6.5, weapon: weapon{name: "ar", damage: 10, interval: time.Second / 8}},
 	"heavy":   {hp: 200, speed: 4.5, weapon: weapon{name: "minigun", damage: 7, interval: time.Second / 12}},
-	// hacker M2 (§12.1): fire = удар ножом — melee 1.8 м, 60 урона, 1.2
-	// удара/с (интервал 1/1.2 с), перерубает кабель с одного удара. Пистолет
-	// вернётся с переключением оружия (§3.2, M7+): «доступен только offline
-	// от деки».
-	"hacker": {hp: 100, speed: 6.0, weapon: weapon{name: "knife", damage: 60, interval: time.Second / 12 * 10}},
+	// hacker (§3.3): дефолт — пистолет; нож — переключение (Q, M2): melee
+// 1.8 м, 60 урона, 1.2 с, перерубает кабели (§12.1).
+"hacker": {hp: 100, speed: 6.0, weapon: weapon{name: "pistol", damage: 18, interval: time.Second / 3}},
 }
 
 const defaultClass = "assault"
+
+// hackWeapons — переключаемый арсенал хакера (Q на клиенте): пистолет
+// (дальний) и нож (melee 60 + перерубает кабели, §12.1).
+var hackWeapons = map[string]weapon{
+	"pistol": {name: "pistol", damage: 18, interval: time.Second / 3},
+	"knife":  {name: "knife", damage: 60, interval: 1200 * time.Millisecond},
+}
 
 func classOr(cls string) (string, classStats) {
 	if st, ok := classes[cls]; ok {
@@ -81,6 +86,9 @@ type player struct {
 
 	inputSeq uint64
 	keys     keysState
+
+	// Активное оружие хакера (M2): "" = классовое; нож — для кабелей (§3.2).
+	activeWeapon string
 
 	lastShot         time.Time
 	inputCount       int // анти-спам: не более maxInputRate в секунду

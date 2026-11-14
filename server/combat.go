@@ -43,12 +43,18 @@ func (w *world) handleFire(pl *player, msg message) {
 		return
 	}
 	_, st := classOr(pl.cls)
+	// Активное оружие: у хакера Q переключает пистолет/нож (§3.2), у прочих
+	// классов — всегда классовое.
+	wpn := st.weapon
+	if pl.cls == "hacker" && pl.activeWeapon != "" {
+		wpn = hackWeapons[pl.activeWeapon]
+	}
 	now := w.now()
-	if pl.lastShot != (time.Time{}) && now.Before(pl.lastShot.Add(st.weapon.interval-rateEpsilon)) {
+	if pl.lastShot != (time.Time{}) && now.Before(pl.lastShot.Add(wpn.interval-rateEpsilon)) {
 		return // быстрее темпа оружия
 	}
 	pl.lastShot = now
-	if st.weapon.name == "knife" {
+	if wpn.name == "knife" {
 		w.knife(pl, num(msg, "yaw"), num(msg, "pitch"))
 		return
 	}
@@ -123,7 +129,7 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 
 	killed := false
 	if hit != nil {
-		killed = w.damage(pl, hit)
+		killed = w.damage(pl, hit, classStatsOf(pl.cls).weapon.damage)
 	}
 	shot := message{
 		"t":    "shot",
@@ -141,14 +147,21 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 	}
 }
 
+// classStatsOf — статы класса (с дефолтом для мусорного cls).
+func classStatsOf(cls string) classStats {
+	_, st := classOr(cls)
+	return st
+}
+
 // damage — урон (friendly fire ON: союзники получают урон так же).
+// dmg передаёт вызывающий (классовое оружие или нож 60 — нож больше не
+// классовое оружие хакера, см. hackWeapons).
 // Возвращает true, если жертва умерла.
-func (w *world) damage(shooter, victim *player) bool {
+func (w *world) damage(shooter, victim *player, dmg int) bool {
 	if !victim.alive {
 		return false
 	}
-	_, st := classOr(shooter.cls)
-	victim.hp -= st.weapon.damage
+	victim.hp -= dmg
 	if victim.hp > 0 {
 		return false
 	}

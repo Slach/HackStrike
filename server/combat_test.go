@@ -222,7 +222,7 @@ func TestFireRateLimit(t *testing.T) {
 
 	// Мёртвый не стреляет: убиваем самого стрелка.
 	shooter.hp = 1
-	w.damage(victim, shooter)
+	w.damage(victim, shooter, classStatsOf(shooter.cls).weapon.damage)
 	if shooter.alive {
 		t.Fatalf("setup: shooter must be dead")
 	}

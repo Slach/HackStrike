@@ -26,6 +26,10 @@ export interface TargetBox {
 const MINIGUN_SPINUP = 0.5 // GDD §3.1: first 0.5s of aiming, no shots
 const MINIGUN_HOLD = 1.0 // spin-up holds for 1s after losing the target
 
+// Нож хакера (§3.2/§12.1): melee 1.8 м, 60 урона, 1.2 с; режет кабели.
+const KNIFE_RANGE = 1.8
+const KNIFE_INTERVAL = 1.2
+
 // Sniper auto-scope (GDD §3.3): zoom x1.5 snaps on the moment an enemy is
 // in direct view; the shot is only allowed after the scope has been held
 // for 0.1s; zoom drops 1s after the last enemy leaves the view.
@@ -86,7 +90,35 @@ export class AutoFire {
     enemies: readonly TargetBox[],
     world: MapWorld,
     blockers: readonly TargetBox[] = [],
+    weapon: 'pistol' | 'knife' = 'pistol',
+    cables: readonly TargetBox[] = [],
   ): boolean {
+    // Нож: враг только вплотную, ЛИБО перерубание кабеля под прицелом.
+    if (weapon === 'knife') {
+      let target: number | null = null
+      for (const e of enemies) {
+        const t = rayAABB(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, e.min, e.max)
+        if (t !== null && t <= KNIFE_RANGE) {
+          if (world.rayHit(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, t - 0.02) !== null) continue
+          target = t
+          break
+        }
+      }
+      if (target === null) {
+        for (const c of cables) {
+          const t = rayAABB(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, c.min, c.max)
+          if (t !== null && t <= KNIFE_RANGE) {
+            target = t
+            break
+          }
+        }
+      }
+      this.lockedOn = target !== null
+      if (target === null) return false
+      if (now - this.lastShotAt < KNIFE_INTERVAL) return false
+      this.lastShotAt = now
+      return true
+    }
     let bestT = Number.POSITIVE_INFINITY
     for (const e of enemies) {
       const t = rayAABB(origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, e.min, e.max)

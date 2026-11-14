@@ -174,6 +174,15 @@
         pointer-events: none;
         z-index: 5;
       }
+      #weaponTag {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #ffd237;
+        margin: 0 8px;
+      }
+      #weaponTag:empty {
+        display: none;
+      }
       #clsLabelRow {
         display: flex;
         justify-content: space-between;
@@ -221,6 +230,24 @@
       #crosshair.locked {
         background: var(--mg);
         box-shadow: 0 0 11px rgba(255, 77, 210, 0.95);
+      }
+
+      /* prop hover label (under the crosshair) */
+      #propLabel {
+        position: absolute;
+        top: calc(50% + 26px);
+        left: 50%;
+        transform: translateX(-50%);
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: rgba(186, 255, 221, 0.85);
+        text-shadow: 0 0 6px rgba(55, 255, 155, 0.5);
+        pointer-events: none;
+        z-index: 5;
+        white-space: nowrap;
+      }
+      #propLabel:empty {
+        display: none;
       }
 
       /* sniper scope overlay (auto-zoom) */
@@ -1056,6 +1083,7 @@
   <body>
     <canvas id="renderCanvas"></canvas>
 
+    <div id="propLabel"></div>
     <div id="crosshair"></div>
     <div id="hitmarker"></div>
     <div id="dmg"></div>
@@ -1078,7 +1106,7 @@
     </div>
 
     <div id="vitals">
-      <div id="clsLabelRow"><span id="clsLabel">—</span><span id="hpNum">0</span></div>
+      <div id="clsLabelRow"><span id="clsLabel">—</span><span id="weaponTag"></span><span id="hpNum">0</span></div>
       <div id="hpbar"><div id="hpfill"></div></div>
     </div>
 
