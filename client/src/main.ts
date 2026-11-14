@@ -30,6 +30,7 @@ const RENDER_DELAY_MS = 100
 const INPUT_INTERVAL_MS = 1000 / 30
 const KILLFEED_ATTRIBUTION_MS = 3000
 const SNIPER_FOV_COS = Math.cos((25 * Math.PI) / 180) // конус «в поле зрения» для авто-зума
+const SNIPER_ZOOM_RANGE = 20 // дальше — зум не включается (м)
 
 type SnapMsg = Extract<ServerMessage, { t: 'snap' }>
 type ShotMsg = Extract<ServerMessage, { t: 'shot' }>
@@ -269,9 +270,10 @@ engine.runRenderLoop(() => {
   const alive = me?.meta.alive === true
 
   let fired = false
-  // Авто-зум снайпера: враг в конусе ~25° от направления взгляда.
+  // Авто-зум снайпера: враг в конусе ~25°, ближе 20 м и в прямой видимости
+  // (за стеной или через полкарты зум не включается).
   let enemyInFov = false
-  if (playing && alive && myCls === 'sniper') {
+  if (playing && alive && myCls === 'sniper' && world !== null) {
     const fwd = camera.getDirection(Vector3.Forward())
     for (const p of states.values()) {
       if (p.id === myId || !p.meta.alive || p.meta.team === myTeam) continue
@@ -279,10 +281,13 @@ engine.runRenderLoop(() => {
       const dy = p.y + 0.9 - camera.position.y
       const dz = p.z - camera.position.z
       const d = Math.hypot(dx, dy, dz)
-      if (d < 1e-6 || (dx * fwd.x + dy * fwd.y + dz * fwd.z) / d > SNIPER_FOV_COS) {
-        enemyInFov = true
-        break
+      if (d > SNIPER_ZOOM_RANGE) continue
+      if (d >= 1e-6) {
+        if ((dx * fwd.x + dy * fwd.y + dz * fwd.z) / d <= SNIPER_FOV_COS) continue
+        if (world.rayHit(camera.position.x, camera.position.y, camera.position.z, dx / d, dy / d, dz / d, d - 0.1) !== null) continue
       }
+      enemyInFov = true
+      break
     }
   }
   scope.update(performance.now(), myCls, enemyInFov)
