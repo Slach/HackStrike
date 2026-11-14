@@ -359,6 +359,12 @@
         color: #baffdd;
         margin: 0 6px;
       }
+      /* сработал watcher: хакер не в деке — уведомление в киллфид (M3 §13.3) */
+      .kf.watcher {
+        color: #ffcf6b;
+        border-color: rgba(255, 159, 67, 0.45);
+        text-shadow: 0 0 8px rgba(255, 159, 67, 0.5);
+      }
 
       /* minimap */
       #minimap {
@@ -973,6 +979,14 @@
         fill: none;
         stroke: #ffd237;
         stroke-width: 2;
+        pointer-events: none;
+      }
+      /* мой watcher на устройстве — янтарный пунктир (M3 §13.1) */
+      .svg-watched {
+        fill: none;
+        stroke: #ff9f43;
+        stroke-width: 2;
+        stroke-dasharray: 3 3;
         pointer-events: none;
       }
       .svg-deck {

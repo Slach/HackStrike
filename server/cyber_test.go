@@ -822,6 +822,112 @@ func runAndWaitM2(w *world, pl *player, msg message) {
 	pl.progs = nil
 }
 
+// findAlert — ищет alert для игрока по устройству; nil = не было.
+func findAlert(out []outMsg, to uint64, dev string) message {
+	for _, om := range out {
+		if om.msg["t"] == "alert" && om.to == to && om.msg["dev"] == dev {
+			return om.msg
+		}
+	}
+	return nil
+}
+
+// Watcher (M3 §13): установка (too_far без скана), триггер на чужой jack-in
+// (владельцу, даже не в деке), свой вход не триггерит, смерть гасит
+// триггеры, респаун переподключает без переустановки.
+func TestWatcher(t *testing.T) {
+	w, clock := cyberTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)
+	foe := w.addPlayer(2, "f", "hacker", -1)
+	killer := w.addPlayer(3, "k", "sniper", -1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+
+	// Цель не открыта portscan'ом — too_far (как vulnscan/trojan).
+	w.handleMessage(h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+	assertDenied(t, w, h, "too_far")
+
+	// Открыли сеть до t2, поставили watcher: триггер живёт на устройстве,
+	// слот деки свободен.
+	for i := 0; i < 3; i++ {
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+	if !w.cyber.devices["t2"].watcherBy[h.id] {
+		t.Fatalf("watcher must be installed on t2")
+	}
+	if len(h.progs) != 0 {
+		t.Fatalf("installed watcher must free the deck slot (lives on the device)")
+	}
+	// scan помечает устройство watched:true для хозяина (§13.2).
+	w.sendScan(h)
+	var watchedSeen bool
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "scan" || om.to != h.id {
+			continue
+		}
+		for _, d := range om.msg["devices"].([]scanDevice) {
+			if d.ID == "t2" && d.Watched {
+				watchedSeen = true
+			}
+		}
+	}
+	if !watchedSeen {
+		t.Fatalf("scan must mark t2 watched for the owner")
+	}
+
+	// Чужой джек-ин в t2 — alert хозяину (джекнутому).
+	out := jackAt(w, foe, "t2")
+	alert := findAlert(out, h.id, "t2")
+	if alert == nil {
+		t.Fatalf("owner must get an alert on enemy jack-in")
+	}
+	if alert["who"] != foe.id {
+		t.Fatalf("alert.who = %v, want %d", alert["who"], foe.id)
+	}
+
+	// Повторный вход триггерится снова; хозяину НЕ в деке — тоже доходит.
+	w.handleMessage(foe, message{"t": "jackout"})
+	w.handleMessage(h, message{"t": "jackout"})
+	out = jackAt(w, foe, "t2")
+	if findAlert(out, h.id, "t2") == nil {
+		t.Fatalf("offline (not jacked) owner must still receive the alert")
+	}
+
+	// Свой вход в наблюдаемое устройство не триггерит.
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t1"})
+	out = jackAt(w, h, "t1")
+	if findAlert(out, h.id, "t1") != nil {
+		t.Fatalf("own jack-in must not fire the watcher")
+	}
+
+	// Смерть хозяина: триггеры гаснут (§5.5) — уведомления нет.
+	w.damage(killer, h, 150)
+	if h.alive {
+		t.Fatalf("setup: hacker must die")
+	}
+	w.handleMessage(foe, message{"t": "jackout"})
+	out = jackAt(w, foe, "t2")
+	if findAlert(out, h.id, "t2") != nil {
+		t.Fatalf("dead owner must not receive alerts")
+	}
+	if !w.cyber.devices["t2"].watcherBy[h.id] {
+		t.Fatalf("death must NOT uninstall the watcher (it lives in the network)")
+	}
+
+	// Респаун: триггеры переподключаются мгновенно, без переустановки.
+	*clock = clock.Add(6 * time.Second)
+	w.handleMessage(h, message{"t": "respawn", "cls": "hacker"})
+	if !h.alive {
+		t.Fatalf("setup: hacker must be respawned")
+	}
+	w.handleMessage(foe, message{"t": "jackout"})
+	out = jackAt(w, foe, "t2")
+	if findAlert(out, h.id, "t2") == nil {
+		t.Fatalf("respawned owner must receive alerts again without reinstalling")
+	}
+}
+
 // Пули/нож не проходят сквозь ЗАКРЫТУЮ дверь (плейтест M2-2: «автоприцел
 // стреляет сквозь дверь»), открытая — прозрачна для огня.
 func TestFireBlockedByClosedDoor(t *testing.T) {

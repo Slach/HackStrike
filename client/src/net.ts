@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' // GDD §12.4
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' // GDD §12.4, §13.1
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -52,6 +52,7 @@ export interface ScanDevice {
   owner: number | null // playerId of the last hacker to trojan it
   links: string[] // ids of adjacent devices
   vulned?: boolean // my vulnscan found an exploit here (omitted when false)
+  watched?: boolean // my watcher trigger sits on this device (M3, omitted when false)
 }
 
 export interface DeckProg {
@@ -109,6 +110,8 @@ export type ServerMessage =
   | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   | { t: 'denied'; reason: string }
+  // M3 (GDD §13.2): another hacker jacked into a device with my watcher.
+  | { t: 'alert'; dev: string; who: number }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -209,6 +212,7 @@ function parseDevice(v: unknown): ScanDevice | null {
     owner: typeof p.owner === 'number' && Number.isFinite(p.owner) ? p.owner : null,
     links: Array.isArray(p.links) ? p.links.filter((l): l is string => typeof l === 'string') : [],
     vulned: p.vulned === true,
+    watched: p.watched === true,
   }
 }
 
@@ -321,6 +325,11 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     }
     case 'denied':
       return { t: 'denied', reason: str(m.reason) ?? 'unknown' }
+    case 'alert': {
+      const dev = str(m.dev)
+      if (dev === null) return null
+      return { t: 'alert', dev, who: num(m.who, -1) }
+    }
     default:
       return null
   }

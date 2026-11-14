@@ -296,6 +296,21 @@ export class Hud {
     }, KILLFEED_FADE_MS)
   }
 
+  /** Сработал watcher (M3 §13.3): янтарная строка в киллфиде — хакер не в деке. */
+  alert(text: string): void {
+    const row = document.createElement('div')
+    row.className = 'kf watcher'
+    row.textContent = text
+    this.el.killfeed.prepend(row)
+    while (this.el.killfeed.children.length > KILLFEED_ROWS) {
+      this.el.killfeed.lastElementChild?.remove()
+    }
+    window.setTimeout(() => {
+      row.classList.add('fade')
+      window.setTimeout(() => row.remove(), 700)
+    }, KILLFEED_FADE_MS)
+  }
+
   showDeath(killer: string, respawnAtMs: number): void {
     this.deathActive = true
     this.deathReady = false

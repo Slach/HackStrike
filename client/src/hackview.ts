@@ -50,6 +50,7 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   portscan: 'PORTSCAN',
   vulnscan: 'VULNSCAN',
   trojan: 'TROJAN',
+  watcher: 'WATCHER',
 }
 
 const HISTORY_MAX = 60 // 30 с истории при 2 Гц deck-сообщений
@@ -167,6 +168,8 @@ export class HackView {
   private readonly doorOpen = new Map<string, boolean>()
   private target: string | null = null
   private vulned = new Map<string, true>()
+  /** Устройства с моим watcher-триггером (M3 §13.1) — для ореола на карте. */
+  private watched = new Map<string, true>()
   private tabs: Tab[] = [{ key: 'deck', dev: null }]
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
@@ -253,6 +256,13 @@ export class HackView {
       }
     }
     this.vulned = new Map([...next].filter(([, d]) => d.vulned === true).map(([id]) => [id, true] as const))
+    // Обратная связь watcher'а (§13.1): установка видна на карте и тостом.
+    for (const d of msg.devices) {
+      if (d.watched === true && !this.watched.has(d.id)) {
+        this.toast(`WATCHER АКТИВЕН: ${d.id.toUpperCase()}`)
+      }
+    }
+    this.watched = new Map([...next].filter(([, d]) => d.watched === true).map(([id]) => [id, true] as const))
     // Таб на устройство при появлении владения (ГДД §12.6).
     for (const d of msg.devices) {
       if (d.owner !== null && d.owner === this.myId && !this.tabs.some((t) => t.dev === d.id)) {
@@ -274,6 +284,12 @@ export class HackView {
   onDenied(msg: DeniedMsg): void {
     if (!this._active) return
     this.toast(DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`)
+  }
+
+  /** Сработал watcher (M3 §13.2): чужой джек-ин в устройство с моим триггером. */
+  onAlert(text: string): void {
+    if (!this._active) return
+    this.toast(text)
   }
 
   /** Состояние дверей из snap.props (без перестройки DOM). */
@@ -369,6 +385,9 @@ export class HackView {
     } else if (e.code === 'Digit3') {
       e.preventDefault()
       this.runProg('trojan')
+    } else if (e.code === 'Digit4') {
+      e.preventDefault()
+      this.runProg('watcher')
     }
   }
 
@@ -566,6 +585,7 @@ export class HackView {
       ['1 ПОРТСКАН', 'portscan'],
       ['2 VULNSCAN', 'vulnscan'],
       ['3 ТРОЯН', 'trojan'],
+      ['4 WATCHER', 'watcher'],
     ] as const) {
       const b = el('button', 'hv-btn')
       b.textContent = label + this.targetSuffix()
@@ -688,7 +708,7 @@ export class HackView {
   private fillProgs(list: HTMLElement): void {
     list.replaceChildren()
     if (this.progs.length === 0) {
-      list.append(txt('div', 'hv-dim', 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3'))
+      list.append(txt('div', 'hv-dim', 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4'))
       return
     }
     for (const p of this.progs) {
@@ -828,6 +848,15 @@ export class HackView {
         vm.setAttribute('r', '10')
         vm.classList.add('svg-vulned')
         svg.append(vm)
+      }
+      // Мой watcher на устройстве — янтарный пунктирный ореол (§13.1).
+      if (d.watched === true) {
+        const wt = svgEl('circle')
+        wt.setAttribute('cx', String(cx))
+        wt.setAttribute('cy', String(cy))
+        wt.setAttribute('r', '10')
+        wt.classList.add('svg-watched')
+        svg.append(wt)
       }
       // Захваченное устройство: жирное кольцо цвета команды владельца —
       // «это уже моё/ихнее» видно с первого взгляда (плейтест M2).

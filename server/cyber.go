@@ -22,6 +22,7 @@ const (
 	portscanWork = 2.0 // с работы при полной CPU-доле (§12.4)
 	vulnscanWork = 3.0
 	trojanWork   = 2.0
+	watcherWork  = 1.0 // §13.1: пассивный слушатель — дешевле vulnscan'а
 
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
 
@@ -55,9 +56,10 @@ type device struct {
 	netMbps float64
 	box     aabb // дверь: AABB-коллайдер (open отключает)
 
-	owner    uint64          // владелец trojan (0 = нейтральное)
-	open     bool            // дверь: стартует закрытой
-	vulnedBy map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
+	owner     uint64          // владелец trojan (0 = нейтральное)
+	open      bool            // дверь: стартует закрытой
+	vulnedBy  map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
+	watcherBy map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
 }
 
 // cable — ребро сети (§12.3): полилиния. M2-2: перерубание удалено —
@@ -93,7 +95,8 @@ func buildCyber(m *gameMap) *cyberState {
 			id: p.ID, kind: p.Kind,
 			pos: vec3(p.Pos), radius: p.Radius,
 			cpu: st.cpu, npu: st.npu, ram: st.ram, netMbps: st.net,
-			vulnedBy: make(map[uint64]bool),
+			vulnedBy:  make(map[uint64]bool),
+			watcherBy: make(map[uint64]bool),
 		}
 		if d.kind == "radio" && d.radius <= 0 {
 			d.radius = jackRadioRadius
@@ -224,6 +227,8 @@ func progWork(name string) float64 {
 		return vulnscanWork
 	case "trojan":
 		return trojanWork
+	case "watcher":
+		return watcherWork
 	}
 	return 0
 }
@@ -258,6 +263,23 @@ func (w *world) jackin(pl *player, dev *device) {
 		"host": dev.id,
 		"deck": message{"cpu": deckCPU, "npu": deckNPU, "ram": deckRAM, "net": dev.netMbps},
 	})
+	w.fireWatchers(dev, pl)
+}
+
+// fireWatchers — чужой джек-ин в устройство с watcher'ами (§13.1): каждому
+// живому хозяину — alert. Мёртвым не шлём (триггеры гаснут, §5.5), но
+// watcher не снимается: после респауна сработает без переустановки.
+func (w *world) fireWatchers(dev *device, who *player) {
+	for ownerID := range dev.watcherBy {
+		if ownerID == who.id {
+			continue
+		}
+		owner, ok := w.players[ownerID]
+		if !ok || !owner.alive {
+			continue
+		}
+		w.sendTo(ownerID, message{"t": "alert", "dev": dev.id, "who": who.id})
+	}
 }
 
 // jackout — выход (CTRL/CMD+ALT+DEL) или смерть: процессы деки отменяются,
@@ -409,6 +431,12 @@ func (w *world) completeProgram(pl *player, p *program) {
 			dev.owner = pl.id // userland; двери дают владельцу toggle
 			w.resendScanFor(p.dev)
 		}
+	case "watcher":
+		// §13.1: триггер живёт на устройстве (как trojan), слот RAM освобождён.
+		if dev := w.cyber.devices[p.dev]; dev != nil {
+			dev.watcherBy[pl.id] = true
+			w.resendScanFor(p.dev) // на карте появится отметка watched
+		}
 	}
 }
 
@@ -435,6 +463,8 @@ type scanDevice struct {
 	// Vulned — уязвимость, найденная МОИМ vulnscan'ом (для этого хакера);
 	// omitempty: поле появляется только когда true (§12.5, доп. 2026-11-14).
 	Vulned bool `json:"vulned,omitempty"`
+	// Watched — на устройстве стоит МОЙ watcher-триггер (§13.2), omitempty.
+	Watched bool `json:"watched,omitempty"`
 }
 
 // sendScan — кибер-карта хакера: только открытые его portscan'ом устройства
@@ -456,6 +486,9 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.vulnedBy[pl.id] {
 			sd.Vulned = true
+		}
+		if d.watcherBy[pl.id] {
+			sd.Watched = true
 		}
 		devs = append(devs, sd)
 	}

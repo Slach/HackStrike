@@ -232,6 +232,14 @@ const sock = new GameSocket({
       case 'denied':
         hackview.onDenied(msg)
         break
+      case 'alert': {
+        // Сработал watcher (M3 §13.2): в деке-WM — тост, иначе — строка HUD.
+        const whoName = latestMeta.get(msg.who)?.name ?? `#${msg.who}`
+        const text = `W ▸ ${msg.dev.toUpperCase()} ← ${whoName}`
+        if (hackview.active) hackview.onAlert(text)
+        else hud.alert(text)
+        break
+      }
       case 'pong':
         break // RTT is tracked inside the socket
       default:

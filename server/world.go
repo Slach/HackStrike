@@ -173,6 +173,10 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 				d.vulnedBy[id] = true
 				delete(d.vulnedBy, s.oldID)
 			}
+			if d.watcherBy[s.oldID] { // §13.1: F5 не снимает watcher'ы
+				d.watcherBy[id] = true
+				delete(d.watcherBy, s.oldID)
+			}
 		}
 		if !pl.alive {
 			pl.respawnAt = w.now()
