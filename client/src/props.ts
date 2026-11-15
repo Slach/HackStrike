@@ -216,6 +216,9 @@ export class PropsView {
       // Кабели — самосветящийся янтарь (плейтест M2-2: «не видно, как идут
       // провода»): контраст к зелёной неоновой теме, виден и у тёмного пола.
       cable: glow('cable', [0.85, 0.55, 0.1]),
+      // Водопроводные трубы — приглушённый синий (ревебр owner): отличим от
+      // янтарных сетевых кабелей, не спорит с оранжевым огнём.
+      pipe: glow('pipe', [0.16, 0.3, 0.5]),
       sphere: glow('sphere', [0.04, 0.3, 0.16]),
     }
     this.mats.sphere.alpha = 0.06 // тусклая сфера радиуса радио-точки, видна всем
@@ -463,40 +466,42 @@ export class PropsView {
     }
   }
 
-  /** Водяной клапан (§14.6.1): настенный щиток (карта прижимает позицию к
-   *  стене) + маховик сверху. Труба к полосе — отдельным проходом
-   *  (tryValvePipe): порядок постройки fire/valve в props не гарантирован.
+  /** Водяной клапан (§14.6.1, ревебр owner): на потолке при y>5 (карта
+   *  задаёт точку подвеса: кабина висит под плитой
+   *  y=7 / крышей y=15, маховик снизу) или на стене при низком y (щиток,
+   *  маховик сверху). Труба к полосе — отдельным проходом (tryValvePipe):
+   *  порядок постройки fire/valve в props не гарантирован.
    *  LED-акцент как у switch'а (сеть та же). */
   private buildValve(id: string, pos: readonly [number, number, number]): void {
+    const ceiling = pos[1] > 5 // v1/v2 под плитой (y≈6.1), v3 под крышей (y≈14.1)
     const cab = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.5, height: 0.85, depth: 0.3 }, this.scene)
     cab.position.set(pos[0], pos[1] + 0.425, pos[2])
     cab.material = this.mats.body
     cab.isPickable = false
     const head = MeshBuilder.CreateCylinder(`prop.${id}.head`, { diameter: 0.42, height: 0.08 }, this.scene)
-    head.position.set(pos[0], pos[1] + 1.05, pos[2])
+    // на потолке маховик снизу кабины (тянешь вниз), на стене — сверху
+    head.position.set(pos[0], ceiling ? pos[1] - 0.2 : pos[1] + 1.05, pos[2])
     head.material = this.mats.led
     head.isPickable = false
     this.valves.set(id, { id, x: pos[0], y: pos[1], z: pos[2], open: false, pipeBuilt: false, pipeMeshes: [] })
     this.tryValvePipe(id)
   }
 
-  /** Труба клапана → полоса (§14.6.1, ревебр owner «трубы криво лежат»):
-   *  короткая подводка от щитка вниз, затем по полу до центра своей полосы.
-   *  Идемпотентна — вызывается и из buildValve, и из buildFire (кто вторым
-   *  узнал про обе половины, тот и построил). */
+  /** Труба клапана → полоса (§14.6.1, ревебр owner: клапаны на потолке,
+   *  трубы прямые, приглушённо-синие): ОДИН прямой сегмент от клапана до
+   *  центра полосы, без ломаных. Идемпотентна — вызывается и из buildValve,
+   *  и из buildFire (кто вторым узнал про обе половины, тот и построил). */
   private tryValvePipe(id: string): void {
     const v = this.valves.get(id)
     if (v === undefined || v.pipeBuilt) return
     const fire = [...this.fires.values()].find((f) => f.valveId === id)
     if (fire === undefined) return
-    const floorY = fire.y - fire.h / 2 // верх плиты, на которой стоит полоса
     const path = [
-      new Vector3(v.x, v.y + 0.15, v.z), // из низа щитка
-      new Vector3(v.x, floorY, v.z), // вниз к плите
-      new Vector3(fire.x, floorY, fire.z), // по полу до центра полосы
+      new Vector3(v.x, v.y, v.z),
+      new Vector3(fire.x, fire.y, fire.z),
     ]
     const pipe = MeshBuilder.CreateTube(`prop.${id}.pipe`, { path, radius: 0.09 }, this.scene)
-    pipe.material = this.mats.body
+    pipe.material = this.mats.pipe
     pipe.isPickable = false
     v.pipeBuilt = true
     v.pipeMeshes = [pipe]
