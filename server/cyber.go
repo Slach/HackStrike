@@ -421,12 +421,9 @@ func (w *world) handleRun(pl *player, msg message) {
 			w.denied(pl, "not_vulned")
 			return
 		}
-		// §13.5: firewall ставится только на точку входа — фильтровать
-		// jack-in у switch/дверей нечего.
-		if prog == "firewall" && dev.kind != "terminal" && dev.kind != "radio" {
-			w.denied(pl, "bad_target")
-			return
-		}
+		// NB: firewall ставится на любое сетевое устройство (§13.5, ред.
+		// плейтеста M3 2026-11-15): switch режет транзитные линки, конечные
+		// устройства — чужой доступ через них. kind-ограничения нет.
 	}
 	pl.progs = append(pl.progs, &program{id: pl.nextProgID, prog: prog, dev: devID, work: work})
 	pl.nextProgID++

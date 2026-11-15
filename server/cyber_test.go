@@ -1008,7 +1008,8 @@ func TestSnapReportsJacked(t *testing.T) {
 }
 
 // firewallTestWorld — карта для сегментации (§13.5): t1—s1—t2(шлюз)—s2,
-// s2—d1, радио r2 с аплинком к s2 (вторая точка входа в сегмент за t2).
+// s2—d1, s2—cam1, радио r2 с аплинком к s2 (вторая точка входа в сегмент
+// за t2).
 func firewallTestWorld(t *testing.T) (*world, *time.Time) {
 	t.Helper()
 	const j = `{
@@ -1025,10 +1026,12 @@ func firewallTestWorld(t *testing.T) (*world, *time.Time) {
 	  {"kind":"switch","id":"s2","pos":[28,1,20]},
 	  {"kind":"door","id":"d1","pos":[28,1,27],"size":[3,3,0.3],"axis":"x","to":"s2"},
 	  {"kind":"radio","id":"r2","pos":[28,1,13],"radius":8},
+	  {"kind":"camera","id":"cam1","pos":[28,2.6,20]},
 	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
 	  {"kind":"cable","id":"c5","from":"s1","to":"t2"},
 	  {"kind":"cable","id":"c6","from":"t2","to":"s2"},
-	  {"kind":"cable","id":"c7","from":"s2","to":"d1"}
+	  {"kind":"cable","id":"c7","from":"s2","to":"d1"},
+	  {"kind":"cable","id":"c8","from":"s2","to":"cam1"}
 	 ]}`
 	m, err := parseGameMap([]byte(j))
 	if err != nil {
@@ -1041,7 +1044,7 @@ func firewallTestWorld(t *testing.T) (*world, *time.Time) {
 }
 
 // Firewall (M3 §13.5, редакция «сетевая сегментация» 2026-11-15): установка
-// (too_far без скана, bad_target на switch); скан чужого не раскрывает сегмент
+// (too_far без скана); скан чужого не раскрывает сегмент
 // за D, D сам видим (firewalled/firewalledBy в scan); ранее открытое гаснет;
 // jack-in в D чужим проходит; обход через вторую точку входа; vulnscan+trojan
 // выкуривает; ровно один alert src=firewall на упор portscan'а; союзники
@@ -1070,13 +1073,12 @@ func TestFirewall(t *testing.T) {
 		}
 	}
 
-	// --- Установка: цель не открыта — too_far; switch — bad_target.
+	// --- Установка: цель не открыта — too_far (kind-ограничения больше нет,
+	// ред. плейтеста M3 2026-11-15: firewall на любое устройство).
 	jackAt(w, h, "t1")
 	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	assertDenied(t, w, h, "too_far")
 	scan(h, 1) // t1, s1
-	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "s1"})
-	assertDenied(t, w, h, "bad_target")
 
 	// Атакующий заранее раскрывает сеть (4 хопа — вся, включая сегмент за t2).
 	out := jackAt(w, foe, "t1")
@@ -1245,6 +1247,111 @@ func TestFirewall(t *testing.T) {
 		t.Fatalf("the live firewall must still segment the enemy scan: %v", foe.scanned)
 	}
 	_ = clock
+}
+
+// Firewall на любое устройство (§13.5, ред. плейтеста M3 2026-11-15):
+// firewall на switch разрезает карту пополам (t1-сторона не видит
+// s2-сторону и наоборот), ставится на конечные устройства (дверь/камера),
+// союзники и владелец проходят свободно.
+func TestFirewallAnyDevice(t *testing.T) {
+	w, _ := firewallTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", 0)   // team 0: защитник
+	foe := w.addPlayer(2, "f", "hacker", 1) // team 1: атакующий
+	ally := w.addPlayer(3, "a", "hacker", 0)
+	w.takeOut()
+
+	runCollect := func(pl *player, msg message) {
+		w.handleMessage(pl, msg)
+		for i := 0; i < 400 && len(pl.progs) > 0; i++ {
+			w.simulateTick()
+		}
+		if len(pl.progs) > 0 {
+			t.Fatalf("program did not finish: %v", msg)
+		}
+	}
+	scan := func(pl *player, steps int) {
+		for i := 0; i < steps; i++ {
+			runCollect(pl, message{"t": "run", "prog": "portscan"})
+		}
+	}
+
+	// Обе стороны заранее раскрывают сеть (фильтра ещё нет).
+	jackAt(w, h, "t1")
+	scan(h, 5) // t1, s1, t2, s2, d1/r2/cam1 — вся сеть
+	jackAt(w, foe, "t1")
+	scan(foe, 5)
+	for _, id := range []string{"t2", "s2", "d1", "r2", "cam1"} {
+		if !foe.scanned[id] {
+			t.Fatalf("setup: foe must have scanned %s before the firewall", id)
+		}
+	}
+
+	// Firewall на switch s1 — классическое место фильтра: линк s1↔t2
+	// перерезан, карта разрезана. Ранее открытое гаснет у чужого и
+	// повторным portscan'ом не возвращается.
+	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "s1"})
+	if w.cyber.devices["s1"].firewalled != h.id {
+		t.Fatalf("firewall must be installable on a switch (any device, §13.5)")
+	}
+	for _, id := range []string{"t2", "s2", "d1", "r2", "cam1"} {
+		if foe.scanned[id] {
+			t.Fatalf("firewall on s1 must fade %s from the enemy scan", id)
+		}
+	}
+	scan(foe, 5)
+	for _, id := range []string{"t2", "s2", "d1", "r2", "cam1"} {
+		if foe.scanned[id] {
+			t.Fatalf("enemy portscan must not cross the firewalled switch to %s", id)
+		}
+	}
+	if !foe.scanned["t1"] || !foe.scanned["s1"] {
+		t.Fatalf("t1-side must stay visible to the enemy: %v", foe.scanned)
+	}
+
+	// Обратная сторона: с r2 (аплинк → s2) чужой видит s2-сторону, но не
+	// проходит через firewalled s1 к t1-стороне.
+	w.handleMessage(foe, message{"t": "jackout"})
+	jackAt(w, foe, "r2")
+	scan(foe, 5)
+	for _, id := range []string{"r2", "s2", "d1", "cam1", "t2"} {
+		if !foe.scanned[id] {
+			t.Fatalf("s2-side must be visible from r2 incl %s: %v", id, foe.scanned)
+		}
+	}
+	// Сам s1 (интерфейс фильтра) виден, но за ним — никого.
+	if !foe.scanned["s1"] {
+		t.Fatalf("the firewalled switch itself must stay visible (interface): %v", foe.scanned)
+	}
+	if foe.scanned["t1"] {
+		t.Fatalf("scan from s2-side must not cross the firewalled switch to t1: %v", foe.scanned)
+	}
+
+	// Конечные устройства: firewall на дверь и камеру ставится (зависит от
+	// достижимости per-player — защитник проходит сквозь свой фильтр на s1).
+	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "d1"})
+	if w.cyber.devices["d1"].firewalled != h.id {
+		t.Fatalf("firewall must be installable on a door")
+	}
+	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "cam1"})
+	if w.cyber.devices["cam1"].firewalled != h.id {
+		t.Fatalf("firewall must be installable on a camera")
+	}
+
+	// Союзники и владелец проходят свободно: ally с t1 видит всю сеть
+	// сквозь фильтры хозяина на s1/d1/cam1.
+	jackAt(w, ally, "t1")
+	scan(ally, 5)
+	for _, id := range []string{"t2", "s2", "d1", "r2", "cam1"} {
+		if !ally.scanned[id] {
+			t.Fatalf("ally must not be cut by the owner's firewalls, missing %s: %v", id, ally.scanned)
+		}
+	}
+	runCollect(h, message{"t": "run", "prog": "portscan"})
+	for _, id := range []string{"t2", "s2", "d1", "r2", "cam1"} {
+		if !h.scanned[id] {
+			t.Fatalf("owner must not be cut by own firewalls, missing %s: %v", id, h.scanned)
+		}
+	}
 }
 
 // Antivirus (M3 §13.6): установка (too_far без скана, слот свободен,
@@ -1563,9 +1670,15 @@ func TestCamera(t *testing.T) {
 		t.Fatalf("snap.props must carry cam1 with kind/owner: %+v", camProp)
 	}
 
-	// firewall на камеру — bad_target (фильтр только точек входа, §13.5).
+	// firewall на камеру ставится (любое устройство, §13.5 ред. 2026-11-15).
 	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "cam1"})
-	assertDenied(t, w, h, "bad_target")
+	for i := 0; i < 400 && len(h.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	if len(h.progs) != 0 || w.cyber.devices["cam1"].firewalled != h.id {
+		t.Fatalf("firewall must be installable on a camera (any device): fw=%v",
+			w.cyber.devices["cam1"].firewalled)
+	}
 
 	// antivirus на камере работает: чужой trojan отбит (гонка версий §13.6).
 	runCollect := func(pl *player, msg message) []outMsg {

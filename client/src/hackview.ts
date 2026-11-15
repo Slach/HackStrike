@@ -38,7 +38,7 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   not_jacked: 'НЕ В СЕТИ',
   no_los: 'НЕТ ПРЯМОЙ ВИДИМОСТИ',
   too_far: 'СЛИШКОМ ДАЛЕКО',
-  bad_target: 'FIREWALL — ТОЛЬКО ТЕРМИНАЛ ИЛИ РАДИО',
+  bad_target: 'НЕВЕРНАЯ ЦЕЛЬ',
   antivirus: 'ANTIVIRUS — УСТАНОВКА TROJAN ОТБИТА',
 }
 
@@ -58,6 +58,36 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   watcher: 'WATCHER',
   firewall: 'FIREWALL',
   antivirus: 'ANTIVIRUS',
+}
+
+/** Программы слэш-палитры (ГДД §13.3) — порядок = порядок ряда хоткеев 1..6. */
+const PALETTE_PROGS: readonly RunProg[] = [
+  'portscan',
+  'vulnscan',
+  'trojan',
+  'watcher',
+  'firewall',
+  'antivirus',
+]
+
+/** Короткие алиасы kind для фильтра палитры: /term, /cam (ГДД §13.3). */
+const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
+  term: 'terminal',
+  radio: 'radio',
+  switch: 'switch',
+  door: 'door',
+  cam: 'camera',
+}
+
+/** Кандидат слэш-палитры: устройство или программа. */
+interface PalCand {
+  kind: 'dev' | 'prog'
+  /** Что вставляется в токен при автодополнении. */
+  text: string
+  dev?: string
+  prog?: RunProg
+  label: string
+  hint: string
 }
 
 const HISTORY_MAX = 60 // 30 с истории при 2 Гц deck-сообщений
@@ -195,6 +225,14 @@ export class HackView {
   private activePane = 0
   private splitDir: 'h' | 'v' = 'h'
   private menuOpen = false
+  // Слэш-палитра (§13.3): командная строка запуска программ с клавиатуры.
+  private palette: { wrap: HTMLElement; input: HTMLInputElement; list: HTMLElement } | null = null
+  private paletteCands: readonly PalCand[] = []
+  private paletteSel = -1
+  /** Токен, который дополняет Tab: 0 = устройство, 1 = программа. */
+  private paletteTok: 0 | 1 = 0
+  private readonly cmdHistory: string[] = []
+  private histIdx = 0
 
   // Refs для точечных обновлений без перестройки DOM (клики не срываются).
   private sparkRefs: SparkRef[] = []
@@ -244,6 +282,7 @@ export class HackView {
     if (!this._active) return
     this._active = false
     this.menuOpen = false
+    this.closePalette()
     this.pendingJobs = []
     if (this.raf !== null) {
       window.cancelAnimationFrame(this.raf)
@@ -395,6 +434,12 @@ export class HackView {
       e.preventDefault()
       return
     }
+    // Палитра открыта — дека-хоткеи заблокированы, кроме её навигации
+    // (ГДД §13.3); CTRL/CMD+ALT+DEL выше уже отдан main.ts.
+    if (this.palette !== null) {
+      this.onPaletteKey(e)
+      return
+    }
     if (e.code === 'Escape' && this.menuOpen) {
       e.preventDefault()
       this.menuOpen = false
@@ -443,6 +488,13 @@ export class HackView {
     // Хоткеи программ — пока активна панель деки (ГДД §12.6).
     const pane = this.panes[this.activePane]
     if (pane === undefined || pane.tabKey !== 'deck') return
+    if (e.key === '/' && !e.altKey) {
+      // '/' не конфликтует с браузером, но перехватываем — Firefox иначе
+      // открывает quick-find.
+      e.preventDefault()
+      this.openPalette()
+      return
+    }
     if (e.code === 'Digit1') {
       e.preventDefault()
       this.runProg('portscan')
@@ -515,14 +567,22 @@ export class HackView {
   }
 
   private runProg(prog: RunProg): void {
+    this.runProgAt(prog, null)
+  }
+
+  /** Запуск программы; dev — до-поленная цель слэш-палитры (null = this.target).
+   *  Гейты и протокол те же, что у кнопок/хоткеев деки (§13.3). */
+  private runProgAt(prog: RunProg, dev: string | null): void {
     const needDev = prog !== 'portscan'
-    if (needDev && this.target === null) {
+    const target = dev ?? this.target
+    if (needDev && target === null) {
       this.toast('ВЫБЕРИТЕ ЦЕЛЬ НА КАРТЕ СЕТИ')
       return
     }
-    const devSuffix = needDev && this.target !== null ? ` → ${this.target.toUpperCase()}` : ''
+    if (dev !== null) this.target = dev
+    const devSuffix = needDev && target !== null ? ` → ${target.toUpperCase()}` : ''
     this.deps.send(
-      needDev && this.target !== null ? { t: 'run', prog, dev: this.target } : { t: 'run', prog },
+      needDev && target !== null ? { t: 'run', prog, dev: target } : { t: 'run', prog },
     )
     this.toast(`ЗАПУЩЕНО: ${PROG_LABEL[prog] ?? prog}${devSuffix}`)
   }
@@ -535,6 +595,218 @@ export class HackView {
       t.classList.add('fade')
       window.setTimeout(() => t.remove(), 500)
     }, TOAST_MS)
+  }
+
+  // ── слэш-палитра (ГДД §13.3) ────────────────────────────────────────────
+
+  private onPaletteKey(e: KeyboardEvent): void {
+    const pal = this.palette
+    if (pal === null) return
+    if (e.ctrlKey || e.metaKey) {
+      // Блокируем дека-комбинации (T/W/H/V/Digit), остальные браузерные
+      // шорткаты (копипаст и т.п.) не трогаем.
+      if (e.altKey) return // CTRL/CMD+ALT+DEL уже обработан выше
+      if (['KeyT', 'KeyW', 'KeyH', 'KeyV'].includes(e.code) || keyIndex(e.code, 'Digit') !== null) {
+        e.preventDefault()
+      }
+      return
+    }
+    if (keyIndex(e.code, 'F') !== null) {
+      e.preventDefault() // F-табы заблокированы, F1 не открывает помощь
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      this.closePalette()
+      return
+    }
+    if (e.key === 'Tab' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      this.paletteCycle(1)
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      if (pal.input.value.trim() === '') this.recallHistory()
+      else this.paletteCycle(-1)
+      return
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      this.paletteRun()
+    }
+    // Остальное — обычный ввод в строку фильтра (input-событие обновит список).
+  }
+
+  private openPalette(): void {
+    if (this.palette !== null) return
+    const wrap = el('div', 'hv-palette')
+    const input = document.createElement('input')
+    input.type = 'text'
+    input.className = 'hv-pal-input'
+    input.autocomplete = 'off'
+    input.spellcheck = false
+    input.placeholder = 'фильтр устройства + программа — напр. cam1 port'
+    input.addEventListener('input', () => {
+      this.paletteSel = -1
+      this.updatePalette()
+    })
+    const list = el('div', 'hv-pal-list')
+    const hint = el('div', 'hv-pal-hint')
+    hint.textContent = 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ЗАПУСК · ESC ЗАКРЫТЬ'
+    wrap.append(input, list, hint)
+    this.root.append(wrap)
+    this.palette = { wrap, input, list }
+    this.paletteSel = -1
+    this.histIdx = 0
+    this.updatePalette()
+    input.focus()
+  }
+
+  private closePalette(): void {
+    if (this.palette === null) return
+    this.palette.wrap.remove()
+    this.palette = null
+    this.paletteCands = []
+    this.paletteSel = -1
+  }
+
+  /** Устройство подходит под токен: подстрока в id или kind (с алиасами
+   *  term/cam); пустой токен подходит всем (§13.3). */
+  private devMatch(d: ScanDevice, q: string): boolean {
+    if (q === '') return true
+    const alias = KIND_ALIAS[q]
+    return d.id.includes(q) || d.kind.includes(q) || (alias !== undefined && d.kind === alias)
+  }
+
+  private updatePalette(): void {
+    const pal = this.palette
+    if (pal === null) return
+    const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
+    const dq = (tokens[0] ?? '').toLowerCase()
+    const pq = (tokens[1] ?? '').toLowerCase()
+    const cands: PalCand[] = []
+    this.paletteTok = tokens.length > 1 ? 1 : 0
+    if (this.paletteTok === 0) {
+      // Первый токен: устройства (только из текущего скана), потом программы.
+      const devs = [...this.devices.values()]
+        .filter((d) => this.devMatch(d, dq))
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+      for (const d of devs) {
+        cands.push({
+          kind: 'dev',
+          text: d.id,
+          dev: d.id,
+          label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
+          hint: this.ownerLabel(d.owner),
+        })
+      }
+      for (const p of PALETTE_PROGS) {
+        if (p.includes(dq)) {
+          cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
+        }
+      }
+    } else {
+      // Второй токен: программы поверх уже отфильтрованного устройства.
+      for (const p of PALETTE_PROGS) {
+        if (p.includes(pq)) {
+          cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
+        }
+      }
+    }
+    this.paletteCands = cands
+    if (this.paletteSel >= cands.length) this.paletteSel = cands.length - 1
+    pal.list.replaceChildren()
+    const MAX_SHOWN = 8
+    cands.slice(0, MAX_SHOWN).forEach((c, i) => {
+      const row = el('div', 'hv-pal-cand' + (i === this.paletteSel ? ' sel' : ''))
+      row.append(txt('span', 'hv-pal-name', c.label))
+      row.append(txt('span', 'hv-pal-hintc', c.hint))
+      pal.list.append(row)
+    })
+    if (cands.length === 0) {
+      pal.list.append(txt('div', 'hv-dim', 'НЕТ КАНДИДАТОВ — ПОРТСКАН [1] РАСКРОЕТ СЕТЬ'))
+    } else if (cands.length > MAX_SHOWN) {
+      pal.list.append(txt('div', 'hv-pal-more', `+${cands.length - MAX_SHOWN} …`))
+    }
+  }
+
+  /** Tab/↑↓: цикл по кандидатам; первый выбор дописывает токен в строку. */
+  private paletteCycle(dir: 1 | -1): void {
+    const pal = this.palette
+    if (pal === null || this.paletteCands.length === 0) return
+    const len = this.paletteCands.length
+    this.paletteSel = this.paletteSel < 0 ? 0 : (this.paletteSel + dir + len) % len
+    const c = this.paletteCands[this.paletteSel]
+    const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
+    if (this.paletteTok === 0) {
+      // устройство дополняем с пробелом — следующий Tab дополнит программу
+      pal.input.value = c.kind === 'dev' ? `${c.text} ` : c.text
+    } else {
+      pal.input.value = `${tokens[0] ?? ''} ${c.text}`
+    }
+    pal.input.setSelectionRange(pal.input.value.length, pal.input.value.length)
+    // Программная правка строки не бросает input-событие, поэтому выделение
+    // не сбрасывается — updatePalette просто перерисует список с ним.
+    this.updatePalette()
+  }
+
+  private recallHistory(): void {
+    const pal = this.palette
+    if (pal === null || this.cmdHistory.length === 0) return
+    const i = Math.min(this.histIdx, this.cmdHistory.length - 1)
+    pal.input.value = this.cmdHistory[this.cmdHistory.length - 1 - i]
+    this.histIdx = i + 1
+    this.paletteSel = -1
+    this.updatePalette()
+  }
+
+  /** Enter: запуск программы с до-поленной целью; кандидат-устройство без
+   *  программы — выбор цели, палитра остаётся (§13.3). */
+  private paletteRun(): void {
+    const pal = this.palette
+    if (pal === null) return
+    const raw = pal.input.value.trim()
+    const tokens = raw.split(/\s+/).filter((t) => t !== '')
+    const sel =
+      this.paletteSel >= 0 && this.paletteSel < this.paletteCands.length
+        ? this.paletteCands[this.paletteSel]
+        : undefined
+    // Цель: выделенный кандидат-устройство, иначе уникальное/точное
+    // совпадение первого токена.
+    let dev: string | null = null
+    if (sel !== undefined && sel.kind === 'dev' && sel.dev !== undefined) {
+      dev = sel.dev
+    } else if (tokens.length > 0) {
+      const m = [...this.devices.values()].filter((d) => this.devMatch(d, tokens[0].toLowerCase()))
+      dev = m.length === 1 ? m[0].id : (m.find((d) => d.id === tokens[0].toLowerCase())?.id ?? null)
+    }
+    // Программа: выделенный кандидат-программа, иначе фильтр по токену.
+    let pq = tokens.length > 1 ? tokens[1] : (tokens[0] ?? '')
+    if (sel !== undefined && sel.kind === 'prog' && sel.prog !== undefined) pq = sel.prog
+    const progs = PALETTE_PROGS.filter((p) => p.includes(pq.toLowerCase()))
+    const prog = progs.find((p) => p === pq.toLowerCase()) ?? progs[0]
+    if (prog === undefined) {
+      // Программы нет, но устройство есть и оно ещё не в строке как цель —
+      // выбираем цель и остаёмся в палитре (пользователь введёт программу).
+      if (dev !== null && tokens.length <= 1) {
+        this.target = dev
+        pal.input.value = `${dev} `
+        this.paletteSel = -1
+        this.updatePalette()
+        this.schedule(() => this.render())
+        return
+      }
+      this.toast('НЕТ ТАКОЙ ПРОГРАММЫ — TAB ПОКАЖЕТ СПИСОК')
+      return
+    }
+    if (this.cmdHistory[this.cmdHistory.length - 1] !== raw && raw !== '') {
+      this.cmdHistory.push(raw)
+      if (this.cmdHistory.length > 20) this.cmdHistory.shift()
+    }
+    this.histIdx = 0
+    this.closePalette()
+    this.runProgAt(prog, dev)
   }
 
   private push(key: 'cpu' | 'npu' | 'ram' | 'net', v: number): void {
@@ -621,7 +893,7 @@ export class HackView {
 
     const foot = el('div', 'hv-foot')
     foot.textContent =
-      'T ТАБ · W ЗАКРЫТЬ · ЦИФРЫ / F1..F9 ПЕРЕКЛЮЧИТЬ · H/V СПЛИТ · ESC ВЫХОД'
+      'T ТАБ · W ЗАКРЫТЬ · ЦИФРЫ / F1..F9 ПЕРЕКЛЮЧИТЬ · H/V СПЛИТ · / ПАЛИТРА · ESC ВЫХОД'
     main.append(foot)
 
     if (this.menuOpen) main.append(this.buildMenu())
