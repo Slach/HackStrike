@@ -609,9 +609,8 @@ export class HackView {
       this.openPalette('run')
       return
     }
-    // Хоткеи программ — пока активна панель деки (ГДД §12.6).
-    const pane = this.panes[this.activePane]
-    if (pane === undefined || pane.tabKey !== 'deck') return
+    // Хоткеи программ — из ЛЮБОГО таба (плейтест M4: S/V/D/G/T/R/CAM тоже,
+    // не только дека; ГДД §12.6): программа идёт с текущей целью (this.target).
     if (e.code === 'Digit1') {
       e.preventDefault()
       this.runProg('portscan')
