@@ -1617,6 +1617,168 @@
           letter-spacing: 7px;
         }
       }
+      /* Экран настроек под ДЕПЛОЕМ (ГДД §15.5). Десктоп: display:contents —
+         ряд .chk рендерится ровно как раньше, слайдер/заголовок скрыты. */
+      .joinSettings {
+        display: contents;
+      }
+      .joinSettings .setHead,
+      .joinSettings .setRow {
+        display: none;
+      }
+      .joinSettings .tskl {
+        display: none;
+      }
+      body.touch .joinSettings {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+        margin-top: 14px;
+        order: 6; /* под ДЕПЛОЕМ (.panel на touch — flex-колонка) */
+      }
+      body.touch .panel {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+      body.touch #deployBtn { order: 5; margin-top: 0; }
+      body.touch #joinStatus { order: 7; }
+      body.touch .teamSegWrap,
+      body.touch #teamSeg { order: 4; }
+      .setHead {
+        font-size: 10px;
+        letter-spacing: 3px;
+        color: rgba(55, 255, 155, 0.6);
+        border-top: 1px solid rgba(55, 255, 155, 0.18);
+        padding-top: 10px;
+        width: 100%;
+      }
+      .setRow {
+        width: 100%;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .setLabel {
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: rgba(170, 255, 210, 0.7);
+        white-space: nowrap;
+      }
+      .setVal {
+        font-size: 11px;
+        color: var(--cy);
+        min-width: 38px;
+        text-align: right;
+      }
+      #lookSens {
+        flex: 1;
+        accent-color: #37ff9b;
+        height: 28px; /* зона пальца */
+      }
+      body.touch .joinSettings .setHead,
+      body.touch .joinSettings .setRow {
+        display: flex;
+      }
+      body.touch .setHead { display: block; }
+      body.touch .joinSettings .dskl { display: none; }
+      body.touch .joinSettings .tskl { display: inline; }
+      body.touch .chk { font-size: 13px; }
+
+
+      /* Mobile meatview HUD (ГДД §15.5): нижние углы эксклюзивны за tc-
+         контролами — всё остальное ушло вверх; дебаг на телефоне не нужен;
+         миникарта компактная в топ-леф; ростер — максимально компактно */
+      body.touch #debug {
+        display: none;
+      }
+      /* миникарта компактная в top-right (owner): топбар по центру не мешает,
+         киллфид спустили под неё — углы не конфликтуют (§15.5) */
+      body.touch #minimap {
+        top: calc(8px + env(safe-area-inset-top));
+        right: calc(8px + env(safe-area-inset-right));
+        left: auto;
+        bottom: auto;
+        width: 110px;
+        height: 110px;
+      }
+      body.touch #topbar {
+        top: calc(8px + env(safe-area-inset-top));
+        padding: 5px 12px;
+        gap: 10px;
+      }
+      body.touch #score0,
+      body.touch #score1 {
+        font-size: 15px;
+        min-width: 20px;
+      }
+      body.touch #timer {
+        font-size: 12px;
+      }
+      /* ростер: одна строка с обрезком — максимально компактно (§15.5) */
+      body.touch .roster {
+        font-size: 8px;
+        letter-spacing: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-height: 1.2em;
+        max-width: 130px;
+      }
+      /* HP-щит под топбаром по центру: левый низ занят крестиной */
+      body.touch #vitals {
+        left: 50%;
+        transform: translateX(-50%);
+        right: auto;
+        bottom: auto;
+        top: calc(62px + env(safe-area-inset-top));
+        width: 150px;
+        padding: 5px 8px;
+      }
+      body.touch #clsLabelRow {
+        font-size: 9px;
+        letter-spacing: 1px;
+        margin-bottom: 4px;
+      }
+      body.touch #hpbar {
+        height: 7px;
+      }
+      body.touch #killfeed {
+        top: calc(124px + env(safe-area-inset-top));
+        right: calc(8px + env(safe-area-inset-right));
+        max-width: 32vw;
+        gap: 2px;
+      }
+      body.touch .kf {
+        font-size: 9px;
+        padding: 2px 6px;
+        letter-spacing: 0;
+      }
+      /* тосты-подсказки: не гигантский пластырь по центру — компактно, над
+          полосой контролов в мёртвой зоне между крестиной и прицелом */
+      body.touch #jackinHint {
+        top: auto;
+        bottom: calc(132px + env(safe-area-inset-bottom));
+        font-size: 11px;
+        padding: 5px 12px;
+        letter-spacing: 1px;
+      }
+      body.touch #propLabel {
+        font-size: 9px;
+        letter-spacing: 1px;
+        top: calc(50% + 16px);
+      }
+      /* portrait-фолбэк (standalone iOS без ландшафта): миникарта ещё меньше */
+      @media (orientation: portrait) {
+        body.touch #minimap {
+          width: 86px;
+          height: 86px;
+        }
+        body.touch #killfeed {
+          top: calc(100px + env(safe-area-inset-top));
+        }
+      }
       .hv-exit-btn {
         margin-left: auto;
         background: rgba(255, 77, 210, 0.12);
@@ -1686,7 +1848,15 @@
           <button type="button" data-team="0" class="segBtn t0">ЗЕЛЁНЫЕ</button>
           <button type="button" data-team="1" class="segBtn t1">РОЗОВЫЕ</button>
         </div>
-        <label class="chk"><input id="invertY" type="checkbox" /><span>ИНВЕРСИЯ МЫШИ (Y)</span></label>
+        <div id="joinSettings" class="joinSettings">
+          <div class="setHead">НАСТРОЙКИ</div>
+          <label class="chk"><input id="invertY" type="checkbox" /><span class="dskl">ИНВЕРСИЯ МЫШИ (Y)</span><span class="tskl">ИНВЕРСИЯ ВЗГЛЯДА</span></label>
+          <div class="setRow" id="lookSensRow">
+            <span class="setLabel">ЧУВСТВИТЕЛЬНОСТЬ</span>
+            <input id="lookSens" type="range" min="30" max="300" step="10" value="100" />
+            <span id="lookSensVal" class="setVal">1.0×</span>
+          </div>
+        </div>
         <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
         <div id="joinStatus" class="dim">ЗАГРУЗКА КАРТЫ…</div>
       </div>

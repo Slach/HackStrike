@@ -525,7 +525,7 @@ engine.runRenderLoop(() => {
         // (плейтест M2-2), чтобы не засорять HUD чужим классом.
         if (near.dist <= 2) hint = `ДЖЕК-ИН // ${label} — ТОЛЬКО ХАКЕР`
       } else if (near.dist <= near.range) {
-        hint = `SPACE — ДЖЕК-ИН // ${label}`
+        hint = `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — ДЖЕК-ИН // ${label}`
       } else {
         hint = `${label} — ${Math.round(near.dist)} м (РАДИУС ${Math.round(near.range)} М)`
       }

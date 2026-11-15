@@ -4,6 +4,7 @@
 
 import { CLASSES } from './classes'
 import type { Cls, NetStats, SnapPlayer } from './net'
+import { IS_TOUCH, setLookScale } from './mobile'
 
 const TEAM_LABEL = ['ЦИАНОВЫЕ', 'МАДЖЕНТОВЫЕ'] as const
 const KILLFEED_ROWS = 5
@@ -65,6 +66,8 @@ export class Hud {
     join: byId('joinScreen'),
     name: byId<HTMLInputElement>('nameInput'),
     invertY: byId<HTMLInputElement>('invertY'),
+    lookSens: byId<HTMLInputElement>('lookSens'),
+    lookSensVal: byId('lookSensVal'),
     deploy: byId<HTMLButtonElement>('deployBtn'),
     joinStatus: byId('joinStatus'),
     joinCards: byId('joinCards'),
@@ -106,10 +109,28 @@ export class Hud {
     return this.el.invertY.checked
   }
 
+  /** Множитель чувствительности тач-прицела (0.3..3.0, слайдер §15.5). */
+  get lookScale(): number {
+    return Number(this.el.lookSens.value) / 100
+  }
+
   constructor() {
     buildCards(this.el.joinCards, this.joinCls, (c) => (this.joinCls = c))
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
     this.el.invertY.checked = localStorage.getItem('hs.invertY') === '1'
+    // Слайдер сенсы тач-прицела (§15.5): персист + live-применение; на
+    // десктопе блок .setRow скрыт CSS, персист всё равно безвреден.
+    const savedSens = Number(localStorage.getItem('hs.lookSens'))
+    if (Number.isFinite(savedSens) && savedSens >= 30 && savedSens <= 300) {
+      this.el.lookSens.value = String(savedSens)
+    }
+    const applySens = (): void => {
+      localStorage.setItem('hs.lookSens', this.el.lookSens.value)
+      this.el.lookSensVal.textContent = `${this.lookScale.toFixed(1)}×`
+      if (IS_TOUCH) setLookScale(this.lookScale)
+    }
+    applySens()
+    this.el.lookSens.addEventListener('input', applySens)
     for (const btn of this.el.teamSeg.querySelectorAll<HTMLButtonElement>('.segBtn')) {
       if (Number(btn.dataset.team) === Number(localStorage.getItem('hs.team'))) {
         this.joinTeam = Number(btn.dataset.team)
@@ -131,6 +152,8 @@ export class Hud {
       if (e.key === 'Enter') this.deploy()
     })
     this.el.deploy.addEventListener('click', () => this.deploy())
+    // На touch [SPACE]-подсказка в лейбле — шум: кнопка и так тапается (§15.5)
+    if (IS_TOUCH) this.el.respawn.textContent = 'РЕСПАУН'
     this.el.respawn.addEventListener('click', () => this.respawnNow())
     // SPACE = respawn hotkey, but only once the countdown is over (and only
     // while the death overlay is up — in-game Space stays the interact key).
