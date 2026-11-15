@@ -58,7 +58,7 @@ export const CLASSES: readonly ClassDef[] = [
     damage: 18,
     rate: '3 / с',
     fireInterval: 0.33,
-    note: 'дека: portscan/vulnscan/trojan + watcher/firewall/antivirus',
+    note: 'кибердека: взлом сети и устройств',
   },
 ]
 
