@@ -1614,6 +1614,26 @@
         /* портрет: 4 колонки режут значения — переносим в 2×2, график шире */
         body.touch .hv-sparks { grid-template-columns: repeat(2, 1fr); }
       }
+      /* §15.6 ревебр owner: палитра — первой кнопкой ряда программ, сам ряд
+         компактнее; графики в ландшафте сдвинуты вправо, над колонкой карты
+         (не висят над программами); полоска-заголовок «ДЕКА» убрана совсем —
+         её дублирует ряд чипов-табов, × переехал в плавающий угол панели,
+         чтобы табы оставались закрываемы без W. */
+      body.touch .hv-btn-slash { order: -1; }
+      body.touch .hv-run { gap: 3px; }
+      body.touch .hv-run .hv-btn { padding: 5px 8px; font-size: 10px; letter-spacing: 1px; }
+      /* список процессов тоже плотнее: на 390px по высоте каждый пикселя на вес */
+      body.touch .hv-progs { min-height: 0; gap: 2px; font-size: 10px; }
+      @media (orientation: landscape) and (min-width: 600px) {
+        /* 240px deck-left + 12px gap — старт колонки netmap */
+        body.touch .hv-sparks { margin-left: 252px; }
+      }
+      body.touch .pane-head { display: none; }
+      body.touch .hv-pane { position: relative; }
+      body.touch .pane-x {
+        position: absolute; top: 4px; right: 6px; z-index: 3;
+        min-width: 36px; min-height: 30px;
+      }
       /* Join/death-оверлеи на телефоне: скроллятся пальцем до ДЕПЛОЯ (§15.3) */
       body.touch .overlay {
         touch-action: pan-y;
