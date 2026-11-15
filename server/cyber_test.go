@@ -822,24 +822,71 @@ func runAndWaitM2(w *world, pl *player, msg message) {
 	pl.progs = nil
 }
 
+// runCollectM3 — как runAndWaitM2, но возвращает исходящие завершившегося
+// тика (alert'ы, scan): дождаться финиша программы и забрать аутпут.
+func runCollectM3(w *world, pl *player, msg message) []outMsg {
+	w.handleMessage(pl, msg)
+	for i := 0; i < 400 && len(pl.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	if len(pl.progs) > 0 {
+		panic("runCollectM3: program did not finish")
+	}
+	return w.takeOut()
+}
+
 // findAlert — ищет alert для игрока по устройству; nil = не было.
 func findAlert(out []outMsg, to uint64, dev string) message {
+	return findAlertSrc(out, to, dev, "")
+}
+
+// findAlertSrc — то же, но с фильтром по src ("watcher"/"firewall"/...;
+// "" — любой). §13.1: на watched-устройстве alert'ы разных источников
+// не должны мешать друг друга.
+func findAlertSrc(out []outMsg, to uint64, dev, src string) message {
 	for _, om := range out {
 		if om.msg["t"] == "alert" && om.to == to && om.msg["dev"] == dev {
-			return om.msg
+			if src == "" || om.msg["src"] == src {
+				return om.msg
+			}
 		}
 	}
 	return nil
 }
 
-// Watcher (M3 §13): установка (too_far без скана), триггер на чужой jack-in
-// (владельцу, даже не в деке), свой вход не триггерит, смерть гасит
-// триггеры, респаун переподключает без переустановки.
+// countAlerts — число alert'ов для игрока по устройству с фильтром по src
+// и relay ("*" — любое значение поля).
+func countAlerts(out []outMsg, to uint64, dev, src string, relay any) int {
+	n := 0
+	for _, om := range out {
+		if om.msg["t"] != "alert" || om.to != to || om.msg["dev"] != dev {
+			continue
+		}
+		if src != "" && om.msg["src"] != src {
+			continue
+		}
+		if relay != "*" && om.msg["relay"] != relay {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// Watcher — инфраструктура разведки (M3 §13.1, ред. плейтеста 2026-11-15):
+// установка (too_far без скана), триггер на чужой jack-in с ev=jackin
+// (владельцу, даже не в деке, ровно один alert на событие), свой вход не
+// триггерит, журнал пишется и читается в scan.devices[].log только хозяином,
+// ретрансляция живому союзнику (relay:true), смерть гасит alert/радар
+// (журнал — нет), респаун переподключает без переустановки.
 func TestWatcher(t *testing.T) {
 	w, clock := cyberTestWorld(t)
-	h := w.addPlayer(1, "h", "hacker", -1)
-	foe := w.addPlayer(2, "f", "hacker", -1)
-	killer := w.addPlayer(3, "k", "sniper", -1)
+	// Команды сбалансированы (2×2): иначе rebalanceTeams перекидывает игрока
+	// между командами и рвёт предположения теста о союзничестве.
+	h := w.addPlayer(1, "h", "hacker", 0)   // team 0: хозяин watcher'а
+	foe := w.addPlayer(2, "f", "hacker", 1) // team 1: актор событий
+	killer := w.addPlayer(3, "k", "sniper", 1)
+	ally := w.addPlayer(4, "a", "hacker", 0) // team 0: получатель relay
 	w.takeOut()
 	jackAt(w, h, "t1")
 
@@ -876,40 +923,134 @@ func TestWatcher(t *testing.T) {
 		t.Fatalf("scan must mark t2 watched for the owner")
 	}
 
-	// Чужой джек-ин в t2 — alert хозяину (джекнутому).
+	// Чужой джек-ин в t2 — ровно один alert хозяину (джекнутому) с ev=jackin.
 	out := jackAt(w, foe, "t2")
-	alert := findAlert(out, h.id, "t2")
+	alert := findAlertSrc(out, h.id, "t2", "watcher")
 	if alert == nil {
 		t.Fatalf("owner must get an alert on enemy jack-in")
 	}
 	if alert["who"] != foe.id {
 		t.Fatalf("alert.who = %v, want %d", alert["who"], foe.id)
 	}
+	if alert["ev"] != "jackin" {
+		t.Fatalf("alert.ev = %v, want jackin (§13.1 №2)", alert["ev"])
+	}
+	if _, ok := alert["prog"]; ok {
+		t.Fatalf("jackin alert must not carry prog: %v", alert)
+	}
+	if countAlerts(out, h.id, "t2", "watcher", nil) != 1 {
+		t.Fatalf("exactly one watcher alert per event, no relay to the owner himself")
+	}
 
 	// Повторный вход триггерится снова; хозяину НЕ в деке — тоже доходит.
 	w.handleMessage(foe, message{"t": "jackout"})
 	w.handleMessage(h, message{"t": "jackout"})
 	out = jackAt(w, foe, "t2")
-	if findAlert(out, h.id, "t2") == nil {
+	if findAlertSrc(out, h.id, "t2", "watcher") == nil {
 		t.Fatalf("offline (not jacked) owner must still receive the alert")
 	}
 
-	// Свой вход в наблюдаемое устройство не триггерит.
-	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t1"})
-	out = jackAt(w, h, "t1")
-	if findAlert(out, h.id, "t1") != nil {
-		t.Fatalf("own jack-in must not fire the watcher")
+	// Журнал событий (§13.1 №1): пишется с момента установки watcher'а,
+	// свои события тоже; приходит в scan.devices[].log только хозяину.
+	// К этому моменту: своя установка + два чужих джек-ина (сверху).
+	t2 := w.cyber.devices["t2"]
+	if len(t2.log) != 3 || t2.log[0].Ev != "install" || t2.log[0].Who != h.id ||
+		t2.log[1].Ev != "jackin" || t2.log[1].Who != foe.id ||
+		t2.log[2].Ev != "jackin" || t2.log[2].Who != foe.id {
+		t.Fatalf("journal must hold install + 2 jack-ins: %+v", t2.log)
+	}
+	w.sendScan(h)
+	var log []logEntry
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "scan" || om.to != h.id {
+			continue
+		}
+		for _, d := range om.msg["devices"].([]scanDevice) {
+			if d.ID == "t2" {
+				log = d.Log
+			}
+		}
+	}
+	if len(log) != 3 || log[2].Ev != "jackin" || log[2].Who != foe.id {
+		t.Fatalf("scan.devices[].log must carry the journal for the owner: %+v", log)
+	}
+	// Чужой scan — журнал не раздуваем трафик (§13.2): foe джекнут в t2,
+	// portscan открывает t2, но чужой watcher-журнал в его scan не попадает.
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	if !foe.scanned["t2"] {
+		t.Fatalf("setup: foe must have scanned t2")
+	}
+	w.sendScan(foe)
+	var foeSawT2 bool
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "scan" || om.to != foe.id {
+			continue
+		}
+		for _, d := range om.msg["devices"].([]scanDevice) {
+			if d.ID == "t2" {
+				foeSawT2 = true
+				if len(d.Log) != 0 {
+					t.Fatalf("journal must be sent only to the watcher owner: %+v", d.Log)
+				}
+			}
+		}
+	}
+	if !foeSawT2 {
+		t.Fatalf("setup: foe scan must contain t2")
 	}
 
-	// Смерть хозяина: триггеры гаснут (§5.5) — уведомления нет.
+	// Свой вход в наблюдаемое устройство не триггерит, но пишется в журнал
+	// (журнал — история устройства, а не только угроз).
+	jackAt(w, h, "t1") // хазяин не в деке — возвращаемся
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t1"})
+	w.handleMessage(h, message{"t": "jackout"})
+	out = jackAt(w, h, "t1")
+	if findAlertSrc(out, h.id, "t1", "watcher") != nil {
+		t.Fatalf("own jack-in must not fire the watcher")
+	}
+	t1log := w.cyber.devices["t1"].log
+	if len(t1log) != 2 || t1log[0].Ev != "install" || t1log[1].Ev != "jackin" || t1log[1].Who != h.id {
+		t.Fatalf("own jack-in must be written to the journal: %+v", t1log)
+	}
+
+	// Ретрансляция (§13.1 №4): живому союзнику хозяина — дубль с relay:true,
+	// самому хозяину и актору дубль не приходит.
+	w.handleMessage(foe, message{"t": "jackout"})
+	out = jackAt(w, foe, "t2")
+	ra := findAlertSrc(out, ally.id, "t2", "watcher")
+	if ra == nil || ra["relay"] != true {
+		t.Fatalf("ally must receive the relayed alert: %v", ra)
+	}
+	if ra["who"] != foe.id || ra["ev"] != "jackin" {
+		t.Fatalf("relay must carry the event context: %v", ra)
+	}
+	if findAlertSrc(out, h.id, "t2", "watcher") == nil {
+		t.Fatalf("owner must still receive his own alert")
+	}
+	if countAlerts(out, h.id, "t2", "watcher", true) != 0 {
+		t.Fatalf("the owner must not receive a relay duplicate of his own alert")
+	}
+	if countAlerts(out, foe.id, "t2", "watcher", "*") != 0 {
+		t.Fatalf("the actor must not receive a relay of his own action")
+	}
+
+	// Смерть хозяина: триггеры гаснут (§5.5) — уведомления нет, но журнал
+	// живёт на устройстве и продолжает писаться (§13.1).
 	w.damage(killer, h, 150)
 	if h.alive {
 		t.Fatalf("setup: hacker must die")
 	}
 	w.handleMessage(foe, message{"t": "jackout"})
 	out = jackAt(w, foe, "t2")
-	if findAlert(out, h.id, "t2") != nil {
+	if findAlertSrc(out, h.id, "t2", "watcher") != nil {
 		t.Fatalf("dead owner must not receive alerts")
+	}
+	if countAlerts(out, ally.id, "t2", "watcher", "*") != 0 {
+		t.Fatalf("dead owner's ally must not receive relay either")
+	}
+	last := t2.log[len(t2.log)-1]
+	if last.Who != foe.id || last.Ev != "jackin" {
+		t.Fatalf("journal keeps living while the owner is dead: %+v", t2.log)
 	}
 	if !w.cyber.devices["t2"].watcherBy[h.id] {
 		t.Fatalf("death must NOT uninstall the watcher (it lives in the network)")
@@ -923,8 +1064,279 @@ func TestWatcher(t *testing.T) {
 	}
 	w.handleMessage(foe, message{"t": "jackout"})
 	out = jackAt(w, foe, "t2")
-	if findAlert(out, h.id, "t2") == nil {
+	if findAlertSrc(out, h.id, "t2", "watcher") == nil {
 		t.Fatalf("respawned owner must receive alerts again without reinstalling")
+	}
+}
+
+// Триггеры на кибер-события (§13.1 №2): установка чужой программы и смена
+// владельца (trojan) дают alert с ev=install/owner и prog; своя установка не
+// триггерит; отбитый antivirus'ом trojan — не событие (установки не было).
+func TestWatcherInstallTriggers(t *testing.T) {
+	w, clock := firewallTestWorld(t) // t1—s1—t2—s2, r2 за s2
+	h := w.addPlayer(1, "h", "hacker", 0)
+	foe := w.addPlayer(2, "f", "hacker", 1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	scanStep(w, h, clock, 4) // s1, t2, s2, r2+cam1 — вся сеть
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+
+	// Своя установка программы на своём watched-устройстве — не событие
+	// (пишется в журнал, alert'а нет).
+	out := runCollectM3(w, h, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	if findAlertSrc(out, h.id, "t2", "watcher") != nil {
+		t.Fatalf("own install must not fire the watcher")
+	}
+
+	// Чужая установка: атакующий заходит с r2, firewall на watched t2.
+	if out := jackAt(w, foe, "r2"); !foe.jacked {
+		t.Fatalf("setup: foe must jack into r2, out=%v", out)
+	}
+	scanStep(w, foe, clock, 2) // r2, s2, t2
+	out = runCollectM3(w, foe, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	a := findAlertSrc(out, h.id, "t2", "watcher")
+	if a == nil || a["ev"] != "install" || a["prog"] != "firewall" || a["who"] != foe.id {
+		t.Fatalf("foreign firewall install must alert the watcher owner with ev=install: %v", a)
+	}
+	if countAlerts(out, h.id, "t2", "watcher", "*") != 1 {
+		t.Fatalf("exactly one alert per event")
+	}
+
+	// Чужой antivirus на watched-устройстве — событие install.
+	out = runCollectM3(w, foe, message{"t": "run", "prog": "antivirus", "dev": "t2"})
+	a = findAlertSrc(out, h.id, "t2", "watcher")
+	if a == nil || a["ev"] != "install" || a["prog"] != "antivirus" {
+		t.Fatalf("foreign antivirus install must alert with ev=install prog=antivirus: %v", a)
+	}
+
+	// Смена владельца: vulnscan+trojan -> ev=owner prog=trojan.
+	runCollectM3(w, foe, message{"t": "run", "prog": "vulnscan", "dev": "t2"})
+	out = runCollectM3(w, foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	a = findAlertSrc(out, h.id, "t2", "watcher")
+	if a == nil || a["ev"] != "owner" || a["prog"] != "trojan" {
+		t.Fatalf("owner change via trojan must alert with ev=owner prog=trojan: %v", a)
+	}
+
+	// Отбитый antivirus'ом trojan — НЕ событие (§13.1 №2): хозяин antivirus'а
+	// h переустанавливает щит, атакующий бьёт trojan'ом снова — repelled
+	// (владелец t2 — сам foe, повторный trojan не меняет владельца → install).
+	runCollectM3(w, h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
+	out = runCollectM3(w, foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	assertDeniedOut(t, out, foe, "antivirus")
+	if findAlertSrc(out, h.id, "t2", "watcher") != nil {
+		t.Fatalf("a repelled trojan is not an install/owner event: no watcher alert")
+	}
+	if a := findAlertSrc(out, h.id, "t2", "antivirus"); a == nil {
+		t.Fatalf("setup: antivirus owner must get its own alert (§13.6)")
+	}
+
+	// Журнал устройства — история всех событий, включая чужие (§13.1 №1).
+	var installs, owners int
+	for _, e := range w.cyber.devices["t2"].log {
+		switch e.Ev {
+		case "install":
+			installs++
+		case "owner":
+			owners++
+		}
+	}
+	if installs < 3 || owners < 1 {
+		t.Fatalf("journal must hold installs+owner changes: %+v", w.cyber.devices["t2"].log)
+	}
+}
+
+// Журнал: ring-buffer ёмкости 20, переполнение вытесняет старейшую (§13.1 №1).
+func TestWatcherJournalOverflow(t *testing.T) {
+	w, clock := firewallTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", 0)
+	foe := w.addPlayer(2, "f", "hacker", 1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	scanStep(w, h, clock, 4)
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+
+	// 24 записи: свой jack-in в t2 x24 (не триггерит, но пишется).
+	for i := 0; i < 24; i++ {
+		w.handleMessage(h, message{"t": "jackout"})
+		jackAt(w, h, "t2")
+		w.takeOut()
+	}
+	log := w.cyber.devices["t2"].log
+	if len(log) != watcherLogCap {
+		t.Fatalf("journal must cap at %d, got %d", watcherLogCap, len(log))
+	}
+	if log[0].Ev != "jackin" {
+		t.Fatalf("newest entries must be kept: %+v", log)
+	}
+
+	// Журнал пишет только пока на устройстве есть watcher; alert'ы чужих
+	// событий после удаления watcher'а не доходят (§5.5/§13.1).
+	delete(w.cyber.devices["t2"].watcherBy, h.id)
+	n := len(log)
+	w.handleMessage(foe, message{"t": "jackout"})
+	out := jackAt(w, foe, "t2")
+	if len(w.cyber.devices["t2"].log) != n {
+		t.Fatalf("journal stops without a watcher: %+v", w.cyber.devices["t2"].log)
+	}
+	if findAlertSrc(out, h.id, "t2", "watcher") != nil {
+		t.Fatalf("no watchers — no alerts")
+	}
+}
+
+// Радар-срез (§13.1 №3): 1 Гц джекнутые хакеры в BFS-сегменте ОТ watched-
+// устройства; сам хозяин не в срезе; живой хозяин джек-аутнутый — срез всё
+// равно идёт; чужой firewall режет видимость за собой; мёртвому хозяину —
+// тишина.
+func TestWatcherRadar(t *testing.T) {
+	w, clock := firewallTestWorld(t) // t1—s1—t2—s2—{d1,r2,cam1}
+	// Команды 2×3 с первого加入 (wantTeam уважается только без перекоса ≥2,
+	// иначе addPlayer/rebalanceTeams перекидуют игрока и рвут предпосылки
+	// о союзничестве). ally2 jacked: rebalanceTeams не двигает джекнутых.
+	h := w.addPlayer(1, "h", "hacker", 0)
+	victim := w.addPlayer(2, "v", "hacker", 1)
+	ally2 := w.addPlayer(3, "b", "hacker", 0)
+	jackAt(w, ally2, "t1")
+	hidden := w.addPlayer(4, "x", "hacker", 1)
+	foe := w.addPlayer(5, "f", "hacker", 1)
+	if foe.team != 1 || hidden.team != 1 || ally2.team != 0 {
+		t.Fatalf("setup: teams must honor requests: %d %d %d", foe.team, hidden.team, ally2.team)
+	}
+	w.takeOut()
+
+	// Хозяин ставит watcher на t2 (сегмент = вся карта).
+	jackAt(w, h, "t1")
+	scanStep(w, h, clock, 4)
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+	w.handleMessage(h, message{"t": "jackout"}) // живый вне деки — радар идёт
+
+	// victim джек-инется в t1 (сегмент от t2), hidden — за future st2=r2.
+	if out := jackAt(w, victim, "t1"); !victim.jacked {
+		t.Fatalf("setup: victim must jack into t1, out=%v", out)
+	}
+	if out := jackAt(w, hidden, "r2"); !hidden.jacked {
+		t.Fatalf("setup: hidden must jack into r2, out=%v", out)
+	}
+	w.takeOut()
+
+	// До установки firewall: срез на каждом radarFeedEvery-тике, victim виден,
+	// hidden виден (сегмент общий), хозяина в срезе нет.
+	radars := func(n int) []message {
+		var got []message
+		for i := 0; i < n; i++ {
+			*clock = clock.Add(time.Second / 30)
+			w.simulateTick()
+			for _, om := range w.takeOut() {
+				if om.msg["t"] == "radar" && om.to == h.id && om.msg["dev"] == "t2" {
+					got = append(got, om.msg)
+				}
+			}
+		}
+		return got
+	}
+	radWho := func(m message) []radarWho {
+		who, _ := m["who"].([]radarWho)
+		return who
+	}
+	seen := func(who []radarWho, id uint64) bool {
+		for _, p := range who {
+			if p.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+	sweeps := radars(radarFeedEvery + 1)
+	if len(sweeps) < 1 {
+		t.Fatalf("radar must stream at 1 Hz to the living owner")
+	}
+	if len(sweeps) > 2 {
+		t.Fatalf("radar must not exceed 1 Hz: %d", len(sweeps))
+	}
+	who := radWho(sweeps[len(sweeps)-1])
+	if !seen(who, victim.id) || !seen(who, hidden.id) {
+		t.Fatalf("both jacked hackers in the segment must be seen: %+v", who)
+	}
+	if seen(who, h.id) {
+		t.Fatalf("the owner himself must not be in the sweep")
+	}
+	for _, p := range who {
+		if p.ID == victim.id && (p.Host != "t1" || p.Name != "v" || p.Team != 1 || p.Cls != "hacker") {
+			t.Fatalf("sweep entry must carry id/name/team/cls/host: %+v", p)
+		}
+	}
+
+	// Пустой срез тоже шлётся (§13.1 №3): все джек-аутнулись — who пустой.
+	w.handleMessage(victim, message{"t": "jackout"})
+	w.handleMessage(hidden, message{"t": "jackout"})
+	w.handleMessage(ally2, message{"t": "jackout"})
+	sweeps = radars(radarFeedEvery + 1)
+	if len(sweeps) == 0 || len(radWho(sweeps[len(sweeps)-1])) != 0 {
+		t.Fatalf("an empty sweep must be sent (UI: «сегмент чист»)")
+	}
+
+	// Firewall закрывает транзит: foe ставит фильтр на s2 (союзник hidden).
+	// hidden снова джек-инется за фильтром.
+	if out := jackAt(w, foe, "r2"); !foe.jacked {
+		t.Fatalf("setup: foe must jack into r2, out=%v", out)
+	}
+	scanStep(w, foe, clock, 2) // r2, s2
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "firewall", "dev": "s2"})
+	w.handleMessage(hidden, message{"t": "jackout"})
+	if out := jackAt(w, hidden, "r2"); !hidden.jacked {
+		t.Fatalf("setup: hidden re-jacks r2, out=%v", out)
+	}
+	if out := jackAt(w, victim, "t1"); !victim.jacked {
+		t.Fatalf("setup: victim re-jacks t1, out=%v", out)
+	}
+	sweeps = radars(radarFeedEvery + 1)
+	who = radWho(sweeps[len(sweeps)-1])
+	if !seen(who, victim.id) {
+		t.Fatalf("victim before the filter must stay visible: %+v", who)
+	}
+	if seen(who, hidden.id) {
+		t.Fatalf("a hacker behind an enemy firewall must not be radar-visible: %+v", who)
+	}
+
+	// Смерть хозяина: радар гаснет (§5.5), срезов нет. (ally2 jacked —
+	// rebalanceTeams его не тронет; id 6.)
+	killer := w.addPlayer(6, "k", "sniper", 1)
+	w.takeOut()
+	w.damage(killer, h, 150)
+	if h.alive {
+		t.Fatalf("setup: radar owner must die")
+	}
+	if got := radars(45); len(got) != 0 {
+		t.Fatalf("dead owner must not receive radar sweeps: %d", len(got))
+	}
+}
+
+// Упор чужого portscan'а в firewall на watched-устройстве — запись журнала
+// scanhit без watcher-alert'а (§13.1 №1: событие firewall, а не триггер).
+func TestWatcherScanhit(t *testing.T) {
+	w, clock := firewallTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", 0)
+	foe := w.addPlayer(2, "f", "hacker", 1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	scanStep(w, h, clock, 4)
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	w.takeOut()
+
+	if out := jackAt(w, foe, "t1"); !foe.jacked {
+		t.Fatalf("setup: foe must jack into t1, out=%v", out)
+	}
+	scanStep(w, foe, clock, 3) // до упора в t2
+	out := runCollectM3(w, foe, message{"t": "run", "prog": "portscan"})
+	if countAlerts(out, h.id, "t2", "watcher", "*") != 0 {
+		t.Fatalf("scanhit must not fire a watcher alert")
+	}
+	if findAlertSrc(out, h.id, "t2", "firewall") == nil {
+		t.Fatalf("setup: firewall alert must go to the firewall owner")
+	}
+	hit := w.cyber.devices["t2"].log[len(w.cyber.devices["t2"].log)-1]
+	if hit.Ev != "scanhit" || hit.Who != foe.id {
+		t.Fatalf("scanhit must be journaled: %+v", w.cyber.devices["t2"].log)
 	}
 }
 

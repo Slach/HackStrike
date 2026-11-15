@@ -177,6 +177,11 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 				d.watcherBy[id] = true
 				delete(d.watcherBy, s.oldID)
 			}
+			for i := range d.log { // §13.1 №1: журнал перемапливает «кто» на новый id
+				if d.log[i].Who == s.oldID {
+					d.log[i].Who = id
+				}
+			}
 			if d.firewalled == s.oldID { // §13.5: F5 не снимает firewall
 				d.firewalled = id
 			}
@@ -326,7 +331,8 @@ func (w *world) simulateTick() {
 	w.matchCheck()
 	w.rebalanceTeams()
 	w.deckStatusTick()
-	w.camFeedTick() // §13.7: лента камер владельцам
+	w.camFeedTick()   // §13.7: лента камер владельцам
+	w.radarFeedTick() // §13.1 №3: радар-срезы хозяевам watcher'ов
 	w.broadcastSnap()
 }
 

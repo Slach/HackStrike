@@ -30,6 +30,9 @@ const (
 	camFeedEvery    = tickRate / 2 // лента камеры 2 Гц (§13.7: 0.5–1 с достаточно)
 	camBodyHeight   = 0.9          // центр корпуса игрока от ног (цель LOS-луча)
 
+	watcherLogCap  = 20      // §13.1 №1: ёмкость ring-buffer журнала событий
+	radarFeedEvery = tickRate // §13.1 №3: радар-срез 1 Гц (аналог camFeedTick)
+
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
 
 	// progNetMbps — «поток» одной активной программы для графика netLoad
@@ -68,6 +71,21 @@ type device struct {
 	watcherBy   map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
 	firewalled  uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
 	antivirused uint64          // хозяин antivirus-процесса (§13.6; 0 = нет)
+
+	// log — журнал событий watcher'а (§13.1 №1): ring-buffer последних
+	// watcherLogCap записей; пишется пока на устройстве есть хотя бы один
+	// watcher, читается хозяевами в scan.devices[].log.
+	log []logEntry
+}
+
+// logEntry — запись журнала событий watcher'а (§13.1 №1, §13.2): тик + что
+// (ev) + кто (who) + опционально программа (prog). ev: jackin|install|owner|
+// scanhit.
+type logEntry struct {
+	Tick uint64 `json:"tick"`
+	Ev   string `json:"ev"`
+	Who  uint64 `json:"who"`
+	Prog string `json:"prog,omitempty"`
 }
 
 // cable — ребро сети (§12.3): полилиния. M2-2: перерубание удалено —
@@ -349,13 +367,21 @@ func (w *world) jackin(pl *player, dev *device) {
 		}
 		w.sendScan(pl)
 	}
-	w.fireWatchers(dev, pl)
+	w.fireWatchers(dev, pl, "jackin", "")
 }
 
-// fireWatchers — чужой джек-ин в устройство с watcher'ами (§13.1): каждому
-// живому хозяину — alert. Мёртвым не шлём (триггеры гаснут, §5.5), но
-// watcher не снимается: после респауна сработает без переустановки.
-func (w *world) fireWatchers(dev *device, who *player) {
+// fireWatchers — кибер-событие на устройстве с watcher'ами (§13.1): пишем
+// запись в журнал (если watcher'ы есть), каждому живому хозяину — alert с
+// контекстом ev/prog, плюс ретрансляция живым союзникам хозяина (№4). Мёртвым
+// не шлём (триггеры гаснут, §5.5), но watcher не снимается: после респауна
+// сработает без переустановки. Свои действия (who == хозяин) не триггерят.
+func (w *world) fireWatchers(dev *device, who *player, ev, prog string) {
+	if len(dev.watcherBy) == 0 {
+		return
+	}
+	// Журнал — история устройства, пишется независимо от живости хозяев
+	// (в т.ч. собственные события, §13.1).
+	w.logWatcherEvent(dev, ev, who, prog)
 	for ownerID := range dev.watcherBy {
 		if ownerID == who.id {
 			continue
@@ -364,7 +390,45 @@ func (w *world) fireWatchers(dev *device, who *player) {
 		if !ok || !owner.alive {
 			continue
 		}
-		w.sendTo(ownerID, message{"t": "alert", "dev": dev.id, "who": who.id, "src": "watcher"})
+		w.sendWatcherAlert(owner, dev, who, ev, prog, false)
+		w.relayWatcherAllies(owner, dev, who, ev, prog)
+	}
+}
+
+// logWatcherEvent — запись в ring-buffer журнала устройства (§13.1 №1).
+// Пишется только пока на устройстве есть хотя бы один watcher.
+func (w *world) logWatcherEvent(dev *device, ev string, who *player, prog string) {
+	if len(dev.watcherBy) == 0 {
+		return
+	}
+	dev.log = append(dev.log, logEntry{Tick: w.tick, Ev: ev, Who: who.id, Prog: prog})
+	if len(dev.log) > watcherLogCap {
+		dev.log = dev.log[len(dev.log)-watcherLogCap:]
+	}
+}
+
+// sendWatcherAlert — alert хозяину watcher'а (relay=false) или союзнику
+// (relay=true). ev/prog — контекст события; prog omitempty.
+func (w *world) sendWatcherAlert(to *player, dev *device, who *player, ev, prog string, relay bool) {
+	m := message{"t": "alert", "dev": dev.id, "who": who.id, "src": "watcher", "ev": ev}
+	if prog != "" {
+		m["prog"] = prog
+	}
+	if relay {
+		m["relay"] = true
+	}
+	w.sendTo(to.id, m)
+}
+
+// relayWatcherAllies — дубль alert'а живым СОЮЗНИКАМ хозяина watcher'а
+// (§13.1 №4): та же команда, кроме самого хозяина и актора события. Мёртвым
+// не шлём.
+func (w *world) relayWatcherAllies(owner *player, dev *device, who *player, ev, prog string) {
+	for _, ally := range w.players {
+		if ally.id == owner.id || ally.id == who.id || !ally.alive || ally.team != owner.team {
+			continue
+		}
+		w.sendWatcherAlert(ally, dev, who, ev, prog, true)
 	}
 }
 
@@ -520,6 +584,10 @@ func (w *world) completeProgram(pl *player, p *program) {
 			if owner, ok := w.players[hit.firewalled]; ok && owner.alive {
 				w.sendTo(hit.firewalled, message{"t": "alert", "dev": hit.id, "who": pl.id, "src": "firewall"})
 			}
+			// §13.1 №1: упор скана в firewall — запись журнала устройства
+			// (если на нём есть watcher). Alert watcher'а НЕ шлём: это
+			// событие firewall, а не watcher-триггер.
+			w.logWatcherEvent(hit, "scanhit", pl, "")
 		}
 		w.sendScan(pl)
 	case "vulnscan":
@@ -544,11 +612,22 @@ func (w *world) completeProgram(pl *player, p *program) {
 					return
 				}
 			}
+			// §13.1 №2: один alert на событие. Завершённый чужой trojan —
+			// это «смена владельца» (ev=owner) либо «установка» (ev=install),
+			// если владелец не изменился (повторный trojan на своё).
+			ownerChanged := dev.owner != pl.id
 			dev.owner = pl.id // userland; двери дают владельцу toggle
 			// §13.5: новый trojan выкуривает чужой firewall — обход без
 			// тупика (взломщик получает и владение, и открытый вход).
 			if dev.firewalled != 0 && dev.firewalled != pl.id {
 				dev.firewalled = 0
+			}
+			// Кибер-событие для watcher'ов. Пишем до resendScanFor, чтобы
+			// журнал уехал в scan одним сообщением.
+			if ownerChanged {
+				w.fireWatchers(dev, pl, "owner", "trojan")
+			} else {
+				w.fireWatchers(dev, pl, "install", "trojan")
 			}
 			w.resendScanFor(p.dev)
 		}
@@ -556,6 +635,9 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// §13.1: триггер живёт на устройстве (как trojan), слот RAM освобождён.
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.watcherBy[pl.id] = true
+			// §13.1 №2: чужой watcher на устройстве с моим — событие install
+			// (пишем до resendScanFor; свой watcher себя не триггерит).
+			w.fireWatchers(dev, pl, "install", "watcher")
 			w.resendScanFor(p.dev) // на карте появится отметка watched
 		}
 	case "firewall":
@@ -563,6 +645,9 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// Повторная установка тем же хакером — no-op (один firewall на девайс).
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.firewalled = pl.id
+			// §13.1 №2: установка firewall — кибер-событие для watcher'ов
+			// (ev=install). Пишем до rescan, чтобы журнал уехал в scan.
+			w.fireWatchers(dev, pl, "install", "firewall")
 			// Сегмент за D закрылся для чужих: их кибер-карта — живой вид
 			// сети. Обрезаем знания всех джекнутых по их достижимости и
 			// пересылаем scan (гаснет «за D», появляется бейдж firewalled).
@@ -589,6 +674,9 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// перезаписывает хозяина (переустановка после износа — гонка версий).
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.antivirused = pl.id
+			// §13.1 №2: установка antivirus — кибер-событие для watcher'ов
+			// (ev=install). Пишем до resendScanFor.
+			w.fireWatchers(dev, pl, "install", "antivirus")
 			w.resendScanFor(p.dev) // на карте появится ореол antivirused
 		}
 	}
@@ -619,6 +707,9 @@ type scanDevice struct {
 	Vulned bool `json:"vulned,omitempty"`
 	// Watched — на устройстве стоит МОЙ watcher-триггер (§13.2), omitempty.
 	Watched bool `json:"watched,omitempty"`
+	// Log — журнал событий watcher'а (§13.1 №1, §13.2): только для устройств
+	// с МОИМ watcher'ом (не раздуваем трафик остальным); omitempty.
+	Log []logEntry `json:"log,omitempty"`
 	// Firewalled — на устройстве стоит чей-то firewall (§13.5), omitempty.
 	// Наблюдаемый сетевой фильтр — виден всем, кто открыл устройство
 	// (в отличие от личных vulned/watched).
@@ -654,6 +745,11 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.watcherBy[pl.id] {
 			sd.Watched = true
+			// Журнал — только хозяину watcher'а (§13.1 №1); копия, чтобы
+			// будущий append не задел уже отправленный срез.
+			if len(d.log) > 0 {
+				sd.Log = append([]logEntry(nil), d.log...)
+			}
 		}
 		if d.firewalled != 0 {
 			sd.Firewalled = true
@@ -749,6 +845,53 @@ func (w *world) camFeedTick() {
 			})
 		}
 		w.sendTo(owner.id, message{"t": "cam", "dev": cam.id, "seen": seen})
+	}
+}
+
+// radarWho — один джекнутый хакер в радар-срезе (§13.1 №3): кто + точка входа.
+type radarWho struct {
+	ID   uint64 `json:"id"`
+	Name string `json:"name"`
+	Team int    `json:"team"`
+	Cls  string `json:"cls"`
+	Host string `json:"host"`
+}
+
+// radarFeedTick — радар «жучок» 1 Гц (§13.1 №3): каждому живому хозяину
+// watcher'а (джекнут или нет — как лента камеры, §5.5) по каждому его
+// устройству — срез джекнутых хакеров в сегменте, достижимом BFS ОТ этого
+// устройства. Достижимость per-player (§13.5): чужой firewall режет видимость
+// радара — сегментация работает против разведки. Сам хозяин в срез не входит;
+// пустой срез тоже шлётся (UI: «сегмент чист»).
+func (w *world) radarFeedTick() {
+	if w.tick%radarFeedEvery != 0 {
+		return
+	}
+	for _, id := range w.cyber.order {
+		dev := w.cyber.devices[id]
+		if len(dev.watcherBy) == 0 {
+			continue
+		}
+		for ownerID := range dev.watcherBy {
+			owner, ok := w.players[ownerID]
+			if !ok || !owner.alive {
+				continue
+			}
+			reach := w.reachableFor(dev.id, owner)
+			who := make([]radarWho, 0, 4)
+			for _, pl := range w.players {
+				if pl.id == ownerID || !pl.alive || !pl.jacked || pl.jackHost == nil {
+					continue
+				}
+				if !reach[pl.jackHost.id] {
+					continue // за чужим firewall / вне сегмента — радар не видит
+				}
+				who = append(who, radarWho{
+					ID: pl.id, Name: pl.name, Team: pl.team, Cls: pl.cls, Host: pl.jackHost.id,
+				})
+			}
+			w.sendTo(ownerID, message{"t": "radar", "dev": dev.id, "who": who})
+		}
 	}
 }
 

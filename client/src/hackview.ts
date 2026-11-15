@@ -13,7 +13,9 @@ import type {
   CamSeen,
   ClientMessage,
   DeckProg,
+  LogEntry,
   PropKind,
+  RadarWho,
   RunProg,
   ScanDevice,
   ServerMessage,
@@ -25,10 +27,13 @@ type DeckMsg = Extract<ServerMessage, { t: 'deck' }>
 type ScanMsg = Extract<ServerMessage, { t: 'scan' }>
 type DeniedMsg = Extract<ServerMessage, { t: 'denied' }>
 type CamMsg = Extract<ServerMessage, { t: 'cam' }>
+type RadarMsg = Extract<ServerMessage, { t: 'radar' }>
 
 export interface HackViewDeps {
   send: (msg: ClientMessage) => void
   teamOf: (playerId: number) => number | null
+  /** Имя игрока по id (для журнала событий watcher'а, §13.1 №1); null — неизвестен. */
+  nameOf: (playerId: number) => string | null
 }
 
 const DENIED_TEXT: Readonly<Record<string, string>> = {
@@ -225,6 +230,9 @@ export class HackView {
   private readonly camFirstFrame = new Map<string, number>()
   private readonly camPrevFrame = new Map<string, ReadonlyMap<number, CamSeen>>()
   private readonly camLastContact = new Map<string, { name: string; at: number }>()
+  /** Радар-срезы watcher'а (M3 §13.1 №3): последний срез по каждому МОЕМУ
+   *  watched-устройству; живёт между перестройками DOM, обновление на месте. */
+  private readonly radarFeeds = new Map<string, readonly RadarWho[]>()
   private tabs: Tab[] = [{ key: 'deck', dev: null }]
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
@@ -245,6 +253,7 @@ export class HackView {
   private netmapBoxes: HTMLElement[] = []
   private doorRefs: { dev: string; status: HTMLElement; btn: HTMLButtonElement }[] = []
   private camRefs: { dev: string; list: HTMLElement; time: HTMLElement; count: HTMLElement }[] = []
+  private radarRefs: { dev: string; list: HTMLElement; count: HTMLElement }[] = []
 
   constructor(private deps: HackViewDeps) {
     this.root = byId('hackview')
@@ -307,6 +316,7 @@ export class HackView {
     this.netmapBoxes = []
     this.doorRefs = []
     this.camRefs = []
+    this.radarRefs = []
   }
 
   onDeck(msg: DeckMsg): void {
@@ -374,6 +384,9 @@ export class HackView {
         this.camPrevFrame.delete(id)
         this.camLastContact.delete(id)
       }
+      // §13.1: watcher'а на устройстве больше нет (у меня) — радар-срез гаснет;
+      // журнал живёт на устройстве, данные приходят прямо в scan.devices[].log.
+      if (d.watched !== true) this.radarFeeds.delete(id)
     }
     this.tabs = this.tabs.filter((t) => t.dev === null || next.has(t.dev))
     for (const p of this.panes) {
@@ -408,6 +421,13 @@ export class HackView {
       this.camLastContact.set(msg.dev, { name: keep, at: now })
     }
     this.schedule(() => this.updateCamFeeds())
+  }
+
+  /** Радар-срез watcher'а (M3 §13.1 №3): 1 Гц по моему watched-устройству.
+   *  Храним даже вне hackview — открыв таб, хакер видит срез сразу. */
+  onRadar(msg: RadarMsg): void {
+    this.radarFeeds.set(msg.dev, msg.who)
+    this.schedule(() => this.updateRadar())
   }
 
   /** Состояние дверей из snap.props (без перестройки DOM). */
@@ -889,6 +909,8 @@ export class HackView {
     this.progLists = []
     this.netmapBoxes = []
     this.doorRefs = []
+    this.camRefs = []
+    this.radarRefs = []
     const main = this.main
     main.replaceChildren()
 
@@ -936,6 +958,7 @@ export class HackView {
     this.updateDoorStates()
     this.updateNetmaps()
     this.updateCamFeeds()
+    this.updateRadar()
   }
 
   private buildPane(pane: Pane, index: number): HTMLElement {
@@ -1042,6 +1065,7 @@ export class HackView {
       }
       body.append(wrap)
       this.doorRefs.push({ dev, status, btn })
+      this.appendWatchPanel(body, dev, d)
       return
     }
     if (d.kind === 'camera') {
@@ -1069,6 +1093,7 @@ export class HackView {
         wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] ТРОЯН'))
       }
       body.append(wrap)
+      this.appendWatchPanel(body, dev, d)
       return
     }
     const info = el('div', 'dev-info')
@@ -1083,6 +1108,28 @@ export class HackView {
     row('СВЯЗИ', d.links.map((l) => l.toUpperCase()).join(' ') || '—')
     info.append(txt('div', 'hv-dim', 'КОНТРОЛЛЕРОВ НЕТ — ЗАГЛУШКА M2'))
     body.append(info)
+    this.appendWatchPanel(body, dev, d)
+  }
+
+  /** Панель разведки watched-устройства (§13.1 №1/№3): радар-срез (1 Гц,
+   *  сервер шлёт только живому хозяину) + журнал событий. Добавляется к
+   *  любому контенту таба — устройство под watcher'ом остаётся устройством
+   *  (дверь так и управляется, лента камеры — идёт). */
+  private appendWatchPanel(body: HTMLElement, dev: string, d: ScanDevice): void {
+    if (d.watched !== true) return
+    const wrap = el('div', 'watch-ui')
+    wrap.append(txt('div', 'watch-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)} · WATCHER АКТИВЕН`))
+    const radar = el('div', 'watch-radar')
+    const rhead = el('div', 'watch-radar-head')
+    rhead.append(txt('span', 'watch-radar-title', 'РАДАР СЕГМЕНТА'))
+    const rcount = txt('span', 'watch-radar-count', 'В СЕТИ: 0')
+    rhead.append(rcount)
+    const rlist = el('div', 'watch-radar-list')
+    radar.append(rhead, rlist)
+    wrap.append(radar)
+    this.radarRefs.push({ dev, list: rlist, count: rcount })
+    wrap.append(this.logPanel(d))
+    body.append(wrap)
   }
 
   private buildMenu(): HTMLElement {
@@ -1243,6 +1290,79 @@ export class HackView {
     const a = Math.atan2(dx, -dz) // −π..π, 0 = север
     const i = Math.round(a / (Math.PI / 4))
     return ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'][(i + 8) % 8]
+  }
+
+  /** Текст события журнала/радар-строки по ev (§13.1 №1/№2). */
+  private evText(ev: string, prog?: string): string {
+    switch (ev) {
+      case 'install':
+        return `УСТАНОВКА ${(prog ?? '').toUpperCase()}`
+      case 'owner':
+        return 'ВЛАДЕЛЕЦ'
+      case 'scanhit':
+        return 'УПОР-СКАН'
+      default:
+        return 'ДЖЕК-ИН' // старые записи без ev трактуются как jackin (§13.2)
+    }
+  }
+
+  /** Имя из журнала: своё — «Я» (журнал — история устройства, свои события
+   *  тоже пишутся); неизвестный (offline-хозяин) — id. */
+  private logWhoName(who: number): string {
+    if (who === this.myId) return 'Я'
+    return this.deps.nameOf(who) ?? `#${who}`
+  }
+
+  /** Блок «ЛОГ СОБЫТИЙ» (§13.1 №1): последние сверху; данные — из
+   *  scan.devices[].log, обновляются вместе с перестройкой таба на scan. */
+  private logPanel(d: ScanDevice): HTMLElement {
+    const box = el('div', 'watch-log')
+    box.append(txt('div', 'watch-log-title', 'ЛОГ СОБЫТИЙ'))
+    const list = el('div', 'watch-log-list')
+    const entries: readonly LogEntry[] = d.log ?? []
+    if (entries.length === 0) {
+      list.append(txt('div', 'watch-empty', 'СОБЫТИЙ НЕТ'))
+    }
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i]
+      const row = el('div', 'watch-log-row')
+      row.append(txt('span', 'watch-log-tick', `T${e.tick}`))
+      row.append(txt('span', 'watch-log-ev', this.evText(e.ev, e.prog)))
+      const name = txt('span', 'watch-log-who', this.logWhoName(e.who))
+      name.style.color = this.deps.teamOf(e.who) === 1 ? '#ff4dd2' : '#37ff9b'
+      row.append(name)
+      list.append(row)
+    }
+    box.append(list)
+    return box
+  }
+
+  /** Точечное обновление радар-срезов (§13.1 №3, 1 Гц): без перестройки DOM.
+   *  Пустой срез — осмысленный стейт «СЕГМЕНТ ЧИСТ»; до первого среза —
+   *  «ОЖИДАНИЕ СРЕЗА» (сервер шлёт 1 Гц, пауза до секунды). */
+  private updateRadar(): void {
+    for (const ref of this.radarRefs) {
+      const who = this.radarFeeds.get(ref.dev)
+      ref.count.textContent = `В СЕТИ: ${who?.length ?? 0}`
+      ref.list.replaceChildren()
+      if (who === undefined) {
+        ref.list.append(txt('div', 'watch-empty', 'ОЖИДАНИЕ СРЕЗА…'))
+        continue
+      }
+      if (who.length === 0) {
+        ref.list.append(txt('div', 'watch-empty', 'СЕГМЕНТ ЧИСТ'))
+        continue
+      }
+      for (const w of who) {
+        const row = el('div', 'watch-radar-row')
+        const name = txt('span', 'watch-radar-name', w.name)
+        name.style.color = w.team === 1 ? '#ff4dd2' : '#37ff9b'
+        row.append(name)
+        row.append(txt('span', 'watch-radar-cls', w.cls.toUpperCase()))
+        row.append(txt('span', 'watch-radar-host', `ХОСТ ${w.host.toUpperCase()}`))
+        ref.list.append(row)
+      }
+    }
   }
 
   private updateNetmaps(): void {

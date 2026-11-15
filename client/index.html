@@ -1037,6 +1037,128 @@
         font-size: 11px;
         text-align: center;
       }
+      /* панель разведки watcher'а (M3 §13.1 №1/№3): радар-срез + журнал
+         событий того же CRT-происхождения, что рапорт камеры */
+      .watch-ui {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        flex: 1;
+        max-width: 420px;
+        margin: 0 auto;
+        width: 100%;
+      }
+      .watch-owner {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: #baffdd;
+        text-align: center;
+      }
+      .watch-radar,
+      .watch-log {
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 4px;
+        background: rgba(4, 18, 11, 0.7);
+        box-shadow: inset 0 0 24px rgba(55, 255, 155, 0.06);
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .watch-radar-head {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        border-bottom: 1px solid rgba(55, 255, 155, 0.35);
+        padding-bottom: 6px;
+        font-size: 11px;
+        letter-spacing: 2px;
+      }
+      .watch-radar-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #37ff9b;
+        text-shadow: 0 0 12px rgba(55, 255, 155, 0.5);
+        letter-spacing: 3px;
+      }
+      .watch-radar-count {
+        color: #ffd237;
+        margin-left: auto;
+      }
+      .watch-radar-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        max-height: 150px;
+        overflow-y: auto;
+      }
+      .watch-radar-row {
+        display: grid;
+        grid-template-columns: minmax(90px, 1fr) auto auto;
+        align-items: baseline;
+        gap: 12px;
+        border-bottom: 1px dashed rgba(55, 255, 155, 0.15);
+        padding: 3px 0;
+        font-size: 13px;
+      }
+      .watch-radar-name {
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .watch-radar-cls,
+      .watch-radar-host {
+        color: rgba(170, 255, 210, 0.65);
+        font-size: 11px;
+        letter-spacing: 1px;
+        white-space: nowrap;
+      }
+      .watch-log-title {
+        font-size: 11px;
+        letter-spacing: 3px;
+        color: rgba(170, 255, 210, 0.75);
+        border-bottom: 1px solid rgba(55, 255, 155, 0.35);
+        padding-bottom: 6px;
+      }
+      .watch-log-list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        max-height: 190px;
+        overflow-y: auto;
+      }
+      .watch-log-row {
+        display: grid;
+        grid-template-columns: 4.5em 1fr auto;
+        align-items: baseline;
+        gap: 12px;
+        font-size: 12px;
+      }
+      .watch-log-tick {
+        color: rgba(170, 255, 210, 0.5);
+        font-size: 11px;
+        letter-spacing: 1px;
+      }
+      .watch-log-ev {
+        color: #ffd237;
+        letter-spacing: 1px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .watch-log-who {
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .watch-empty {
+        color: rgba(170, 255, 210, 0.55);
+        letter-spacing: 4px;
+        font-size: 12px;
+        text-align: center;
+        padding: 6px 0;
+      }
       .dev-info {
         display: flex;
         flex-direction: column;

@@ -54,9 +54,18 @@ export interface ScanDevice {
   links: string[] // ids of adjacent devices
   vulned?: boolean // my vulnscan found an exploit here (omitted when false)
   watched?: boolean // my watcher trigger sits on this device (M3, omitted when false)
+  log?: LogEntry[] // watcher event journal (M3 §13.1 №1; only for MY watched devices)
   firewalled?: boolean // someone's firewall sits on this device (M3 §13.5, visible to everyone who scanned it)
   firewalledBy?: number // firewall owner id (M3 §13.5: whose filter — for the own/ally/enemy badge; sent together with firewalled)
   antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
+}
+
+/** Запись журнала событий watcher'а (M3 §13.1 №1): тик + что + кто + программа. */
+export interface LogEntry {
+  tick: number
+  ev: string // jackin | install | owner | scanhit
+  who: number
+  prog?: string // для install/owner: какая программа
 }
 
 /** Один «кадр» ленты камеры (M3 §13.7): живой игрок в зоне видимости. */
@@ -68,6 +77,15 @@ export interface CamSeen {
   x: number
   y: number
   z: number
+}
+
+/** Один джекнутый хакер в радар-срезе watcher'а (M3 §13.1 №3): кто + точка входа. */
+export interface RadarWho {
+  id: number
+  name: string
+  team: number
+  cls: string
+  host: string
 }
 
 export interface DeckProg {
@@ -128,9 +146,12 @@ export type ServerMessage =
   // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
   // into my watched device) from firewall (enemy portscan hit my filter,
   // one alert per scan run) or antivirus (enemy trojan repelled).
-  | { t: 'alert'; dev: string; who: number; src?: string }
+  // ev/prog — контекст события watcher'а (§13.1 №2); relay — дубль союзнику (§13.1 №4).
+  | { t: 'alert'; dev: string; who: number; src?: string; ev?: string; prog?: string; relay?: boolean }
   // M3 (GDD §13.7): camera feed — 2 Hz, only to the living trojan owner.
   | { t: 'cam'; dev: string; seen: CamSeen[] }
+  // M3 (GDD §13.1 №3): radar sweep — 1 Hz, only to the living watcher owner.
+  | { t: 'radar'; dev: string; who: RadarWho[] }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -224,7 +245,7 @@ function parseDevice(v: unknown): ScanDevice | null {
   const id = str(p.id)
   const kind = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
   if (id === null || kind === null) return null
-  return {
+  const dev: ScanDevice = {
     id,
     kind,
     x: num(p.x, 0),
@@ -238,6 +259,25 @@ function parseDevice(v: unknown): ScanDevice | null {
     firewalledBy: typeof p.firewalledBy === 'number' && Number.isFinite(p.firewalledBy) ? p.firewalledBy : undefined,
     antivirused: p.antivirused === true,
   }
+  // Журнал событий watcher'а (§13.1 №1): только у watched-устройств, но парсим
+  // защитно — пустой/битый массив просто не даём.
+  if (Array.isArray(p.log) && p.log.length > 0) {
+    const log: LogEntry[] = []
+    for (const e of p.log) {
+      if (typeof e !== 'object' || e === null) continue
+      const r = e as Record<string, unknown>
+      const ev = str(r.ev)
+      if (ev === null) continue
+      const who = num(r.who, Number.NaN)
+      if (!Number.isFinite(who)) continue
+      const entry: LogEntry = { tick: Math.max(0, num(r.tick, 0)), ev, who }
+      const prog = str(r.prog)
+      if (prog !== null) entry.prog = prog
+      log.push(entry)
+    }
+    if (log.length > 0) dev.log = log
+  }
+  return dev
 }
 
 function parseDeckProg(v: unknown): DeckProg | null {
@@ -353,7 +393,17 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       const dev = str(m.dev)
       if (dev === null) return null
       const src = str(m.src)
-      return { t: 'alert', dev, who: num(m.who, -1), src: src === null ? undefined : src }
+      const ev = str(m.ev)
+      const prog = str(m.prog)
+      return {
+        t: 'alert',
+        dev,
+        who: num(m.who, -1),
+        src: src === null ? undefined : src,
+        ev: ev === null ? undefined : ev,
+        prog: prog === null ? undefined : prog,
+        relay: m.relay === true ? true : undefined,
+      }
     }
     case 'cam': {
       const dev = str(m.dev)
@@ -377,6 +427,27 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         }
       }
       return { t: 'cam', dev, seen }
+    }
+    case 'radar': {
+      const dev = str(m.dev)
+      if (dev === null) return null
+      const who: RadarWho[] = []
+      if (Array.isArray(m.who)) {
+        for (const s of m.who) {
+          if (typeof s !== 'object' || s === null) continue
+          const r = s as Record<string, unknown>
+          const id = num(r.id, Number.NaN)
+          if (!Number.isFinite(id)) continue
+          who.push({
+            id,
+            name: typeof r.name === 'string' && r.name.length > 0 ? r.name : `p${id}`,
+            team: num(r.team, 0) === 1 ? 1 : 0,
+            cls: str(r.cls) ?? 'hacker',
+            host: str(r.host) ?? '',
+          })
+        }
+      }
+      return { t: 'radar', dev, who }
     }
     default:
       return null

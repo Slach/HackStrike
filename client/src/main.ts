@@ -265,12 +265,32 @@ const sock = new GameSocket({
         hackview.onDenied(msg)
         break
       case 'alert': {
-        // Сработал триггер (M3 §13.2): watcher — чужой вход; firewall —
-        // чужой portscan упёрся в мой фильтр (§13.5); antivirus — отбита
-        // попытка trojan (§13.6). В деке-WM — тост, иначе — HUD.
+        // Сработал триггер (M3 §13.2): watcher — чужой вход/установка/смена
+        // владельца (§13.1); firewall — чужой portscan упёрся в мой фильтр
+        // (§13.5); antivirus — отбита попытка trojan (§13.6). relay — дубль
+        // союзнику хозяина watcher'а (§13.1 №4): понятная строка, не «W ▸».
+        // В деке-WM — тост, иначе — HUD.
         const whoName = latestMeta.get(msg.who)?.name ?? `#${msg.who}`
-        const mark = msg.src === 'firewall' ? 'F' : msg.src === 'antivirus' ? 'A' : 'W'
-        const text = `${mark} ▸ ${msg.dev.toUpperCase()} ← ${whoName}`
+        const dev = msg.dev.toUpperCase()
+        let text: string
+        if (msg.relay === true) {
+          const evText =
+            msg.ev === 'install'
+              ? `УСТАНОВКА ${(msg.prog ?? '').toUpperCase()}`
+              : msg.ev === 'owner'
+                ? 'СМЕНА ВЛАДЕЛЬЦА'
+                : 'ДЖЕК-ИН'
+          text = `WATCHER: ${dev} ← ${whoName} · ${evText}`
+        } else if (msg.src === 'firewall') {
+          text = `F ▸ ${dev} ← ${whoName}`
+        } else if (msg.src === 'antivirus') {
+          text = `A ▸ ${dev} ← ${whoName}`
+        } else {
+          // Хозяин watcher'а: хакерская строка с контекстом события.
+          text = `W ▸ ${dev} ← ${whoName}`
+          if (msg.ev === 'install') text += ` ▸ УСТАНОВКА ${(msg.prog ?? '').toUpperCase()}`
+          else if (msg.ev === 'owner') text += ` ▸ ВЛАДЕЛЕЦ`
+        }
         if (hackview.active) hackview.onAlert(text)
         else hud.alert(text)
         break
@@ -279,6 +299,11 @@ const sock = new GameSocket({
         // Лента камеры (M3 §13.7): только моей — сервер фильтрует; храним и
         // вне hackview (открыв таб, увиим последний кадр).
         hackview.onCam(msg)
+        break
+      case 'radar':
+        // Радар-срез watcher'а (M3 §13.1 №3): только мой — сервер фильтрует;
+        // храним и вне hackview (открыв таб устройства, вижу срез сразу).
+        hackview.onRadar(msg)
         break
       case 'pong':
         break // RTT is tracked inside the socket
@@ -295,6 +320,9 @@ sock.start() // connect + stats window; without this join has no socket to ride 
 const hackview = new HackView({
   send: (m) => sock.send(m),
   teamOf: (playerId) => latestMeta.get(playerId)?.team ?? null,
+  // Имя по id для журнала событий watcher'а (§13.1 №1): те же метаданные
+  // снапа, что и для whoName в роутинге alert.
+  nameOf: (playerId) => latestMeta.get(playerId)?.name ?? null,
 })
 
 function hackviewOn(msg: JackinMsg): void {
@@ -319,12 +347,15 @@ function hackviewOff(relock: boolean): void {
 // Джек-аут из деки — ТОЛЬКО тройка Ctrl/Cmd+Alt+Del (фишка: специально
 // неудобно, «системный» жест, решение владельца 2026-11-15). ESC/Backspace
 // принадлежат деке (палитра, меню). NB: на Windows Ctrl+Alt+Del перехватывается
-// ОС и до страницы не доходит; mac: Fn+Backspace (code 'Delete').
+// ОС и до страницы не доходит. На mac клавиша «Delete» физически = Backspace
+// (e.code 'Backspace'), forward-Delete только с Fn — принимаем оба кода,
+// иначе тройка Cmd+Alt+Delete на mac-ноутбуке не работает (плейтест M3).
 window.addEventListener(
   'keydown',
   (e) => {
     if (!hackview.active) return
-    if (e.code === 'Delete' && e.altKey && (e.ctrlKey || e.metaKey)) {
+    const del = e.code === 'Delete' || e.code === 'Backspace'
+    if (del && e.altKey && (e.ctrlKey || e.metaKey)) {
       e.preventDefault()
       sock.sendJackout()
       hackviewOff(true)
