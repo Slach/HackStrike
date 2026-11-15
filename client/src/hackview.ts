@@ -677,12 +677,13 @@ export class HackView {
     this.paletteSel = -1
   }
 
-  /** Устройство подходит под токен: подстрока в id или kind (с алиасами
-   *  term/cam); пустой токен подходит всем (§13.3). */
+  /** Устройство подходит под токен: совпадение по НАЧАЛУ строки в id/kind
+   *  (с алиасами term/cam); пустой токен подходит всем (§13.3). Префикс, а
+   *  не подстрока — иначе «d1 t» даёт portscan раньше trojan. */
   private devMatch(d: ScanDevice, q: string): boolean {
     if (q === '') return true
     const alias = KIND_ALIAS[q]
-    return d.id.includes(q) || d.kind.includes(q) || (alias !== undefined && d.kind === alias)
+    return d.id.startsWith(q) || d.kind.startsWith(q) || (alias !== undefined && d.kind === alias)
   }
 
   private updatePalette(): void {
@@ -711,7 +712,7 @@ export class HackView {
         })
       }
       for (const p of PALETTE_PROGS) {
-        if (p.includes(dq)) {
+        if (p.startsWith(dq)) {
           cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
         }
       }
@@ -720,7 +721,7 @@ export class HackView {
       // готовности (плейтест M3: «нажал CAM1 + Tab — покажи что можно»).
       const dev = [...this.devices.values()].find((d) => this.devMatch(d, dq))
       for (const p of PALETTE_PROGS) {
-        if (!p.includes(pq)) continue
+        if (!p.startsWith(pq)) continue
         let hint = 'ГОТОВО'
         if (p === 'portscan') hint = 'БЕЗ ЦЕЛИ'
         else if (p === 'trojan' && dev !== undefined && !dev.vulned) hint = 'СНАЧАЛА VULNSCAN'
@@ -797,7 +798,7 @@ export class HackView {
     // Программа: выделенный кандидат-программа, иначе фильтр по токену.
     let pq = tokens.length > 1 ? tokens[1] : (tokens[0] ?? '')
     if (sel !== undefined && sel.kind === 'prog' && sel.prog !== undefined) pq = sel.prog
-    const progs = PALETTE_PROGS.filter((p) => p.includes(pq.toLowerCase()))
+    const progs = PALETTE_PROGS.filter((p) => p.startsWith(pq.toLowerCase()))
     const prog = progs.find((p) => p === pq.toLowerCase()) ?? progs[0]
     if (prog === undefined) {
       // Программы нет, но устройство есть и оно ещё не в строке как цель —
