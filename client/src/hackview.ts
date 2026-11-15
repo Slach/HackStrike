@@ -488,9 +488,10 @@ export class HackView {
     // Хоткеи программ — пока активна панель деки (ГДД §12.6).
     const pane = this.panes[this.activePane]
     if (pane === undefined || pane.tabKey !== 'deck') return
-    if (e.key === '/' && !e.altKey) {
-      // '/' не конфликтует с браузером, но перехватываем — Firefox иначе
-      // открывает quick-find.
+    // e.code — физическая клавиша: слэш открывает палитру в любой раскладке
+    // (в русской e.key = '.', а code всё равно 'Slash'). Firefox иначе
+    // открывает quick-find.
+    if (e.code === 'Slash' && !e.altKey) {
       e.preventDefault()
       this.openPalette()
       return
