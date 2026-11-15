@@ -383,8 +383,11 @@
         position: absolute;
         inset: 0;
         display: flex;
-        align-items: center;
+        /* flex-start + margin:auto на .panel: центр пока влезает, при переполнении
+           доступ сверху не режется (иначе ДЕПЛОЙ недостижим на узких экранах) */
+        align-items: flex-start;
         justify-content: center;
+        overflow: auto;
         background: rgba(2, 7, 4, 0.8);
         z-index: 10;
       }
@@ -403,6 +406,7 @@
         text-align: center;
         box-shadow: 0 0 50px rgba(0, 255, 128, 0.14);
         max-width: 860px;
+        margin: auto; /* авто-центрирование по обеим осям в overflow-контейнере */
       }
       .logo {
         margin: 0;
@@ -1451,7 +1455,9 @@
         --kb: 0px; /* высота экранной клавиатуры: mobile.ts следит, CSS якорит палитру */
       }
       body.touch {
-        touch-action: none;
+        /* НЕ глобальный touch-action:none: он глушил скролл join/death-оверлеев
+           (§15.3). Зоны игры (canvas, tc-*, netmap) несут none точечно. */
+        overscroll-behavior: none;
         -webkit-user-select: none;
         user-select: none;
         -webkit-touch-callout: none;
@@ -1579,6 +1585,27 @@
       }
       body.touch .hv-chip { padding: 9px 12px; } /* табы пальцем */
       body.touch .hv-btn { padding: 11px 12px; }
+      /* Join/death-оверлеи на телефоне: скроллятся пальцем до ДЕПЛОЯ (§15.3) */
+      body.touch .overlay {
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
+        padding: 12px 8px;
+      }
+      /* Классы не влезают по ширине — идут вертикально в одну колонку (§15.3).
+         Медиазапрос, не body.touch: решает ширина, телефон в ландшафте тоже
+         попадает при <720px логической ширины. */
+      @media (max-width: 720px) {
+        .cards {
+          grid-template-columns: 1fr;
+        }
+        .panel {
+          padding: 16px 14px;
+        }
+        .logo {
+          font-size: 28px;
+          letter-spacing: 7px;
+        }
+      }
       .hv-exit-btn {
         margin-left: auto;
         background: rgba(255, 77, 210, 0.12);
