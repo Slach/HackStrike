@@ -432,6 +432,19 @@ export class Hud {
         this.el.settings.classList.add('hidden')
         this.el.invite.classList.add('hidden')
       }
+      // Хоткеи команд A/W/B (десктоп, по e.code — любая раскладка): кликаем
+      // сегмент команды на join. Из поля ника — не перехватываем.
+      if (!this.el.join.classList.contains('hidden') && !e.repeat) {
+        const teamByCode: Record<string, string> = { KeyA: '-1', KeyW: '0', KeyB: '1' }
+        const team = teamByCode[e.code]
+        if (
+          team !== undefined &&
+          !(e.target instanceof HTMLElement && e.target.closest('input') !== null)
+        ) {
+          this.el.teamSeg.querySelector<HTMLButtonElement>(`[data-team="${team}"]`)?.click()
+          return
+        }
+      }
       // Хоткеи классов 1..4 (десктоп): кликаем карточку на видимом наборе —
       // join до деплоя, death-оверлей после гибели. Порядок = CLASSES.
       const idx = ['1', '2', '3', '4'].indexOf(e.key)
@@ -440,6 +453,14 @@ export class Hud {
         !this.el.join.classList.contains('hidden') ? this.el.joinCards : this.el.deathCards
       if (cont.classList.contains('hidden')) return
       cont.querySelectorAll<HTMLElement>('.card')[idx]?.click()
+    })
+    // Enter в join-окне = ДЕПЛОЙ (в том числе прямо из поля ника). В меню
+    // паузы деплой скрыт — Enter там ничего не делает.
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.repeat) return
+      if (this.el.join.classList.contains('hidden')) return
+      if (this.el.deploy.classList.contains('hidden')) return
+      if (!this.el.deploy.disabled) this.deploy()
     })
     // Приглашение (§15.5): QR + ссылка на текущий origin. URL считаем на
     // момент открытия — стенд может переехать между открытиями (zrok и т.п.).

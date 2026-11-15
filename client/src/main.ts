@@ -462,6 +462,9 @@ hud.onRespawn = (cls) => {
 const isUiTarget = (e: Event): boolean =>
   e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null
 const tryRelock = (e: Event) => {
+  // Меню паузы открыто — курсор нужен для выбора команды/класса; никакой
+  // перекламки указателя (иначе любой keydown в меню возвращает mlook).
+  if (menuOpen) return
   if (isUiTarget(e)) return
   // В hacker view курсор нужен для кликов по WM — не захватываем его обратно.
   if (playing && !hackview.active && !controls.locked) controls.requestLock()
