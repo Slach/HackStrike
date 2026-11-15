@@ -346,7 +346,7 @@ export class HackView {
     // увидеть (иначе «нажал 2 и ничего не произошло»).
     for (const d of msg.devices) {
       if (d.vulned && !this.vulned.has(d.id)) {
-        this.toast(`УЯЗВИМОСТЬ НАЙДЕНА: ${d.id.toUpperCase()} — ТРОЯНЬ [3]`)
+        this.toast(`УЯЗВИМОСТЬ НАЙДЕНА: ${d.id.toUpperCase()} — TROJAN [3]`)
       }
     }
     this.vulned = new Map([...next].filter(([, d]) => d.vulned === true).map(([id]) => [id, true] as const))
@@ -812,7 +812,7 @@ export class HackView {
       pal.list.append(row)
     })
     if (cands.length === 0) {
-      pal.list.append(txt('div', 'hv-dim', 'НЕТ КАНДИДАТОВ — ПОРТСКАН [1] РАСКРОЕТ СЕТЬ'))
+      pal.list.append(txt('div', 'hv-dim', 'НЕТ КАНДИДАТОВ — PORTSCAN [1] РАСКРОЕТ СЕТЬ'))
     } else if (cands.length > MAX_SHOWN) {
       pal.list.append(txt('div', 'hv-pal-more', `+${cands.length - MAX_SHOWN} …`))
     }
@@ -1065,9 +1065,9 @@ export class HackView {
 
     const run = el('div', 'hv-run')
     for (const [label, prog] of [
-      ['1 ПОРТСКАН', 'portscan'],
+      ['1 PORTSCAN', 'portscan'],
       ['2 VULNSCAN', 'vulnscan'],
-      ['3 ТРОЯН', 'trojan'],
+      ['3 TROJAN', 'trojan'],
       ['4 WATCHER', 'watcher'],
       ['5 FIREWALL', 'firewall'],
       ['6 ANTIVIRUS', 'antivirus'],
@@ -1124,7 +1124,7 @@ export class HackView {
       btn.addEventListener('click', () => this.deps.send({ t: 'ctrl', dev, action: 'toggle' }))
       wrap.append(btn)
       if (d.owner !== this.myId) {
-        wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] ТРОЯН'))
+        wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] TROJAN'))
       }
       body.append(wrap)
       this.doorRefs.push({ dev, kind: d.kind, status, btn })
@@ -1153,7 +1153,7 @@ export class HackView {
         wrap.append(report)
         this.camRefs.push({ dev, list, time, count })
       } else {
-        wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] ТРОЯН'))
+        wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] TROJAN'))
       }
       body.append(wrap)
       this.appendWatchPanel(body, dev, d)
@@ -1206,7 +1206,7 @@ export class HackView {
     menu.append(txt('div', 'menu-title', 'НОВЫЙ ТАБ — ВЫБЕРИ УСТРОЙСТВО'))
     const devs = [...this.devices.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
     if (devs.length === 0) {
-      menu.append(txt('div', 'hv-dim', 'НЕТ ДАННЫХ — ЗАПУСТИ ПОРТСКАН [1]'))
+      menu.append(txt('div', 'hv-dim', 'НЕТ ДАННЫХ — ЗАПУСТИ PORTSCAN [1]'))
     }
     for (const d of devs) {
       const b = el('button', 'menu-dev')
@@ -1636,7 +1636,7 @@ export class HackView {
     }
 
     if (nodes.length === 0) {
-      label(W / 2, H / 2, 'ТУМАН ВОЙНЫ — ПОРТСКАН [1]', 'svg-dim')
+      label(W / 2, H / 2, 'ТУМАН ВОЙНЫ — PORTSCAN [1]', 'svg-dim')
       return svg
     }
 
