@@ -1502,3 +1502,9 @@ m1 содержит ровно 3 лужи; embedded-тесты не пересе
   kind `lava` вне cyber-графа, `CyberKind = PropKind\lava` на клиенте
   гарантирует по типам; LAVA_DPS=25 постоянный, envDamage owner=0 → «ЛОВУШКА»
   без очков. Спека §14.6.
+
+- 2026-11-15 (плейтест-инфра): **auto-reload клиента после пердеплоя** —
+  updatewatch.ts каждые 4 сfetch'ит свой index.html (no-store) и сравнивает
+  path хэш-бандла с import.meta.url; не совпал → location.reload(). Хэш Vite
+  меняется только при изменении кода → ложных reload нет; в dev не срабатывает
+  (HMR). Владелец больше не жмёт Cmd+Shift+R после каждого деплоя.
