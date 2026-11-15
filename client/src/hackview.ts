@@ -181,6 +181,11 @@ function gridClass(panes: number, dir: 'h' | 'v'): string {
 }
 
 export class HackView {
+  /** Базовый viewBox SVG-карты сети (плейтест M3: 480×360 — больше воздуха
+   *  между узлами, было 340×250). Зум/пан считаются от него. */
+  private static readonly NETMAP_W = 480
+  private static readonly NETMAP_H = 360
+
   private readonly root: HTMLElement
   private readonly main: HTMLElement
   private readonly toasts: HTMLElement
@@ -288,8 +293,8 @@ export class HackView {
     this._active = false
     this.menuOpen = false
     this.closePalette()
-    this.netmapZoom = 1 // зум карты не переживает сессию деки
-    this.netmapCenter = { x: 170, y: 125 }
+    this.netmapZoom = 1 // зум/пан карты не переживает сессию деки
+    this.netmapCenter = { x: HackView.NETMAP_W / 2, y: HackView.NETMAP_H / 2 }
     this.pendingJobs = []
     if (this.raf !== null) {
       window.cancelAnimationFrame(this.raf)
@@ -1251,13 +1256,30 @@ export class HackView {
    *  Зум (плейтест M3): колесо мыши и pinch-жест — масштаб к точке курсора,
    *  двойной клик — сброс. Состояние общее для карты деки, живёт до деактивации. */
   private netmapZoom = 1
-  private netmapCenter: { x: number; y: number } = { x: 170, y: 125 }
+  private netmapCenter: { x: number; y: number } = {
+    x: HackView.NETMAP_W / 2,
+    y: HackView.NETMAP_H / 2,
+  }
   private pinchDist = 0
+  // Пан (плейтест M3): активные указатели + порог drag→click.
+  private netmapPointers = new Set<number>()
+  private netmapPanLast: { x: number; y: number } | null = null
+  private netmapDragged = false
+  private netmapSuppressClick = false
 
   private applyNetmapZoom(svg: SVGElement): void {
-    const vw = 340 / this.netmapZoom
-    const vh = 250 / this.netmapZoom
-    svg.setAttribute('viewBox', `${this.netmapCenter.x - vw / 2} ${this.netmapCenter.y - vh / 2} ${vw} ${vh}`)
+    const vw = HackView.NETMAP_W / this.netmapZoom
+    const vh = HackView.NETMAP_H / this.netmapZoom
+    // Мягкий clamp центра: видимая область не уходит за базовый прямоугольник
+    // карты — пан/зум не вывозят карту в бесконечность. При zoom < 1 (обзор
+    // шире базы) центр фиксируется в центре базы.
+    const cx =
+      vw >= HackView.NETMAP_W ? HackView.NETMAP_W / 2 : Math.min(HackView.NETMAP_W - vw / 2, Math.max(vw / 2, this.netmapCenter.x))
+    const cy =
+      vh >= HackView.NETMAP_H ? HackView.NETMAP_H / 2 : Math.min(HackView.NETMAP_H - vh / 2, Math.max(vh / 2, this.netmapCenter.y))
+    this.netmapCenter.x = cx
+    this.netmapCenter.y = cy
+    svg.setAttribute('viewBox', `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`)
   }
 
   private netmapZoomAt(svg: SVGElement, clientX: number, clientY: number, factor: number): void {
@@ -1276,7 +1298,7 @@ export class HackView {
 
   private netmapResetZoom(svg: SVGElement): void {
     this.netmapZoom = 1
-    this.netmapCenter = { x: 170, y: 125 }
+    this.netmapCenter = { x: HackView.NETMAP_W / 2, y: HackView.NETMAP_H / 2 }
     this.applyNetmapZoom(svg)
   }
 
@@ -1289,6 +1311,74 @@ export class HackView {
       e.preventDefault()
       this.netmapResetZoom(svg)
     })
+    // Пан зажатой ЛКМ / одним пальцем. Слушатели — на window (курсор может
+    // выйти за svg посреди drag), снимаются при pointerup или когда svg уже
+    // перестроен (карта перерисовывается на каждом обновлении скана).
+    svg.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return
+      this.netmapSuppressClick = false
+      this.netmapPointers.add(e.pointerId)
+      if (this.netmapPointers.size > 1) {
+        this.netmapPanLast = null // второй палец = pinch, не пан
+        return
+      }
+      this.netmapPanLast = { x: e.clientX, y: e.clientY }
+      this.netmapDragged = false
+    })
+    const onMove = (e: PointerEvent): void => {
+      if (!this.netmapPointers.has(e.pointerId) || this.netmapPointers.size > 1 || this.netmapPanLast === null) return
+      const dx = e.clientX - this.netmapPanLast.x
+      const dy = e.clientY - this.netmapPanLast.y
+      // Порог 4 px: меньше — это клик по узлу (выбор цели), не drag.
+      if (!this.netmapDragged) {
+        if (Math.hypot(dx, dy) < 4) return
+        this.netmapDragged = true
+        svg.classList.add('netmap-dragging')
+      }
+      const rect = svg.getBoundingClientRect()
+      const vb = (svg as SVGSVGElement).viewBox.baseVal
+      this.netmapCenter.x -= (dx * vb.width) / rect.width
+      this.netmapCenter.y -= (dy * vb.height) / rect.height
+      this.netmapPanLast = { x: e.clientX, y: e.clientY }
+      this.applyNetmapZoom(svg)
+    }
+    const onUp = (e: PointerEvent): void => {
+      if (!this.netmapPointers.delete(e.pointerId)) return
+      if (this.netmapDragged) {
+        // Реальный drag состоялся — гасим следующий за ним click по узлу.
+        this.netmapSuppressClick = true
+        svg.classList.remove('netmap-dragging')
+      }
+      this.netmapDragged = false
+      this.netmapPanLast = null
+    }
+    const detach = (): void => {
+      window.removeEventListener('pointermove', onMoveGuarded)
+      window.removeEventListener('pointerup', onUpGuarded)
+      window.removeEventListener('pointercancel', onUpGuarded)
+      // svg перестроен посреди жеста — сбрасываем состояние пана, чтобы
+      // «залипший» suppressClick не съел следующий клик по узлу.
+      this.netmapPointers.clear()
+      this.netmapPanLast = null
+      this.netmapDragged = false
+    }
+    const onMoveGuarded = (e: PointerEvent): void => {
+      if (!svg.isConnected) {
+        detach()
+        return
+      }
+      onMove(e)
+    }
+    const onUpGuarded = (e: PointerEvent): void => {
+      if (!svg.isConnected) {
+        detach()
+        return
+      }
+      onUp(e)
+    }
+    window.addEventListener('pointermove', onMoveGuarded)
+    window.addEventListener('pointerup', onUpGuarded)
+    window.addEventListener('pointercancel', onUpGuarded)
     // Pinch: масштаб по отношению расстояний между пальцами.
     svg.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2) {
@@ -1315,16 +1405,30 @@ export class HackView {
   }
 
   private buildNetmapSvg(): SVGElement {
-    const W = 340
-    const H = 250
-    const PAD = 30
+    const W = HackView.NETMAP_W
+    const H = HackView.NETMAP_H
+    const PAD = 40
     const svg = svgEl('svg')
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
     svg.classList.add('netmap-svg')
     this.attachNetmapZoom(svg)
 
     const nodes = [...this.devices.values()]
-    const label = (x: number, y: number, text: string, cls: string): void => {
+    const label = (x: number, y: number, text: string, cls: string, plate = false): void => {
+      // Подложка под подпись узла: полупрозрачная тёмная плашка, чтобы
+      // текст не перебивал соседние узлы/подписи (плейтест M3).
+      if (plate) {
+        const fs = 8
+        const w = text.length * fs * 0.62 + 5
+        const r = svgEl('rect')
+        r.setAttribute('x', String(x - w / 2))
+        r.setAttribute('y', String(y - fs))
+        r.setAttribute('width', String(w))
+        r.setAttribute('height', String(fs + 3))
+        r.setAttribute('rx', '2')
+        r.classList.add('svg-label-plate')
+        svg.append(r)
+      }
       const t = svgEl('text')
       t.setAttribute('x', String(x))
       t.setAttribute('y', String(y))
@@ -1369,14 +1473,49 @@ export class HackView {
     const px = (x: number): number => PAD + offX + (x - minX) * k
     const py = (z: number): number => PAD + 10 + offZ + (z - minZ) * k
 
-    // связи (дедуп по паре)
+    // Declutter: мировые координаты дают наложения (в m1 cam1/d1 и cam2/d2
+    // проектируются в ~16 px друг от друга). Лёгкое раздвижение пар ближе
+    // MIN_DIST — 2 прохода, без физики.
+    const pos = new Map<string, { x: number; y: number }>()
+    for (const d of nodes) pos.set(d.id, { x: px(d.x), y: py(d.z) })
+    const MIN_DIST = 30
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const a = pos.get(nodes[i].id)
+          const b = pos.get(nodes[j].id)
+          if (a === undefined || b === undefined) continue
+          let dx = b.x - a.x
+          let dy = b.y - a.y
+          const d = Math.hypot(dx, dy)
+          if (d >= MIN_DIST) continue
+          if (d < 0.01) {
+            dx = 0
+            dy = 1 // полный сдвиг: два узла в одной точке
+          } else {
+            dx /= d
+            dy /= d
+          }
+          const push = (MIN_DIST - d) / 2 + 0.5
+          a.x -= dx * push
+          a.y -= dy * push
+          b.x += dx * push
+          b.y += dy * push
+        }
+      }
+    }
+
+    // связи (дедуп по паре); координаты — после declutter
     const seen = new Set<string>()
     const drawLink = (a: ScanDevice, b: ScanDevice): void => {
       const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
       if (seen.has(key)) return
       seen.add(key)
+      const pa = pos.get(a.id)
+      const pb = pos.get(b.id)
+      if (pa === undefined || pb === undefined) return
       const wireless = a.kind === 'radio' || b.kind === 'radio'
-      line(px(a.x), py(a.z), px(b.x), py(b.z), wireless ? 'svg-link svg-wireless' : 'svg-link')
+      line(pa.x, pa.y, pb.x, pb.y, wireless ? 'svg-link svg-wireless' : 'svg-link')
     }
     for (const d of nodes) {
       for (const l of d.links) {
@@ -1386,22 +1525,25 @@ export class HackView {
     }
 
     // дека — узел в углу, линией к точке джек-ина
-    const deckX = 22
-    const deckY = 22
+    const deckX = 28
+    const deckY = 28
     const hostDev = this.devices.get(this.host)
-    if (hostDev !== undefined) line(deckX, deckY, px(hostDev.x), py(hostDev.z), 'svg-link svg-link-deck')
+    const hostPos = hostDev !== undefined ? pos.get(hostDev.id) : undefined
+    if (hostPos !== undefined) line(deckX, deckY, hostPos.x, hostPos.y, 'svg-link svg-link-deck')
     const deck = svgEl('circle')
     deck.setAttribute('cx', String(deckX))
     deck.setAttribute('cy', String(deckY))
     deck.setAttribute('r', '6')
     deck.classList.add('svg-deck')
     svg.append(deck)
-    label(deckX, deckY + 18, 'ДЕКА', 'svg-label')
+    label(deckX, deckY + 18, 'ДЕКА', 'svg-label', true)
 
     // устройства
     for (const d of nodes) {
-      const cx = px(d.x)
-      const cy = py(d.z)
+      const p = pos.get(d.id)
+      if (p === undefined) continue
+      const cx = p.x
+      const cy = p.y
       if (d.id === this.target) {
         const ring = svgEl('circle')
         ring.setAttribute('cx', String(cx))
@@ -1447,7 +1589,9 @@ export class HackView {
         badge.setAttribute('fill', this.fwColor(by))
         badge.setAttribute('font-size', '7')
         badge.classList.add('svg-fwbadge')
-        badge.textContent = `FW ${this.fwLabel(by)}`
+        // Короткий бейдж: цвет уже кодирует свой/чужой, полный текст — в
+        // tooltip узла (плейтест M3: длинные бейджи наезжали на подписи).
+        badge.textContent = 'FW'
         svg.append(badge)
       }
       // Antivirus на устройстве (чей — не важно: резидентный процесс
@@ -1480,14 +1624,21 @@ export class HackView {
       c.setAttribute('fill', this.ownerColor(d.owner))
       c.classList.add('svg-node')
       c.addEventListener('click', () => {
+        // После реального drag (≥4 px) клик по узлу гасится — это был пан.
+        if (this.netmapSuppressClick) {
+          this.netmapSuppressClick = false
+          return
+        }
         this.target = d.id
         this.schedule(() => this.render())
       })
       svg.append(c)
       const title = svgEl('title')
-      title.textContent = `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`
+      let tip = `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`
+      if (d.firewalled === true) tip += ` · FIREWALL: ${this.fwLabel(d.firewalledBy ?? 0)}`
+      title.textContent = tip
       c.append(title)
-      label(cx, cy + 19, d.id.toUpperCase(), 'svg-label')
+      label(cx, cy + 19, d.id.toUpperCase(), 'svg-label', true)
     }
     return svg
   }

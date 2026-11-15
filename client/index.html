@@ -1071,7 +1071,11 @@
         inset: 0;
         width: 100%;
         height: 100%;
-        touch-action: none; /* pinch-зум карты — не скролл страницы */
+        touch-action: none; /* pinch-зум/пан карты — не скролл страницы */
+        cursor: grab;
+      }
+      .netmap-svg.netmap-dragging {
+        cursor: grabbing;
       }
       .netmap-hint {
         font-size: 10px;
@@ -1146,9 +1150,14 @@
         stroke-dasharray: 3 2;
       }
       .svg-label {
-        fill: rgba(170, 255, 210, 0.8);
-        font-size: 9px;
+        fill: rgba(170, 255, 210, 0.85);
+        font-size: 8px;
         font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
+      /* подложка-плашка под подпись узла карты сети */
+      .svg-label-plate {
+        fill: rgba(1, 10, 5, 0.78);
+        pointer-events: none;
       }
       .svg-dim {
         fill: rgba(170, 255, 210, 0.55);
