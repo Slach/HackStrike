@@ -1100,7 +1100,16 @@ export class HackView {
   private ownerLabel(owner: number | null): string {
     if (owner === null) return 'НЕЙТРАЛЬНО'
     if (owner === this.myId) return 'ВЫ'
-    return `ИГРОК #${owner}`
+    // Ник вместо «ИГРОК #171» (плейтест M4: в чужом узле надо видеть, ЧЕЙ он).
+    const name = this.deps.nameOf(owner)
+    return (name !== null ? name : `ИГРОК #${owner}`).toUpperCase()
+  }
+
+  /** Окрашенный спан владельца: чужая команда — красным (ownerColor). */
+  private ownerSpan(owner: number | null): HTMLElement {
+    const s = txt('span', 'owner-name', this.ownerLabel(owner))
+    s.style.color = this.ownerColor(owner)
+    return s
   }
 
   private ownerColor(owner: number | null): string {
@@ -1293,7 +1302,9 @@ export class HackView {
       const wrap = el('div', 'door-ui')
       const status = el('div', 'door-status')
       wrap.append(status)
-      wrap.append(txt('div', 'door-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)}`))
+      const doorOwn = el('div', 'door-owner')
+      doorOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner))
+      wrap.append(doorOwn)
       const btn = el('button', 'hv-btn door-toggle')
       // [ПРОБЕЛ] — подсказка клавиатуры; на touch кнопка тапается (§15.2)
       btn.textContent = d.owner === this.myId && !IS_TOUCH ? 'TOGGLE [ПРОБЕЛ]' : 'TOGGLE'
@@ -1313,7 +1324,9 @@ export class HackView {
       // Плейтест M3: лента = «рапорт» — шапка (id/статус/T+/цели) + строки-
       // профили целей; пустой кадр — осмысленный стейт «СЕКТОР ЧИСТ».
       const wrap = el('div', 'cam-ui')
-      wrap.append(txt('div', 'cam-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)} · РАДИУС 12 М + LOS`))
+      const camOwn = el('div', 'cam-owner')
+      camOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner), ' · РАДИУС 12 М + LOS')
+      wrap.append(camOwn)
       if (d.owner === this.myId) {
         const report = el('div', 'cam-report')
         const head = el('div', 'cam-report-head')
@@ -1344,7 +1357,12 @@ export class HackView {
     }
     row('ID', d.id.toUpperCase())
     row('ТИП', KIND_LABEL[d.kind])
-    row('ВЛАДЕЛЕЦ', this.ownerLabel(d.owner))
+    // Владелец узла, открытого по связи из SWITCH и т.п.: ник + цвет команды.
+    const ownRow = el('div', 'dev-row')
+    const ownVal = this.ownerSpan(d.owner)
+    ownVal.classList.add('dev-v') // сетка строки как у остальных dev-row
+    ownRow.append(txt('span', 'dev-k', 'ВЛАДЕЛЕЦ'), ownVal)
+    info.append(ownRow)
     // СВЯЗИ — кликабельные чипы (тап и клик, desktop тоже, ГДД §15.7):
     // тап по связи открывает таб устройства. Не-просканированные ссылки
     // остаются тусклым текстом — открыть нечего.
@@ -1383,7 +1401,9 @@ export class HackView {
   private appendWatchPanel(body: HTMLElement, dev: string, d: ScanDevice): void {
     if (d.watched !== true) return
     const wrap = el('div', 'watch-ui')
-    wrap.append(txt('div', 'watch-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)} · WATCHER АКТИВЕН`))
+    const watchOwn = el('div', 'watch-owner')
+    watchOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner), ' · WATCHER АКТИВЕН')
+    wrap.append(watchOwn)
     const radar = el('div', 'watch-radar')
     const rhead = el('div', 'watch-radar-head')
     rhead.append(txt('span', 'watch-radar-title', 'РАДАР СЕГМЕНТА'))
