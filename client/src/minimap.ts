@@ -19,13 +19,13 @@ export interface MiniSelf {
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve'
 
 export interface MiniProp {
   x: number
   z: number
   kind: MiniPropKind
-  open?: boolean // дверь
+  open?: boolean // дверь / газ / водяной клапан (§14.6.1); для fire = «потушен»
   axis?: 'x' | 'z' // ориентация двери
   len?: number
 }
@@ -204,6 +204,29 @@ export class Minimap {
         ctx.fillStyle = open ? '#7dff50' : '#2b7a4b'
         ctx.beginPath()
         ctx.arc(x, y, 1.2, 0, Math.PI * 2)
+        ctx.fill()
+      } else if (p.kind === 'fire') {
+        // огонь (M4 §14.6.1): короткая полоса — оранжевая пока горит,
+        // тёмная когда потушена (вода идёт)
+        const out = p.open === true
+        ctx.strokeStyle = out ? 'rgba(26,35,42,0.9)' : 'rgba(255,106,46,0.95)'
+        ctx.lineWidth = 2.5
+        ctx.beginPath()
+        ctx.moveTo(x - 4, y)
+        ctx.lineTo(x + 4, y)
+        ctx.stroke()
+      } else if (p.kind === 'valve') {
+        // водяной клапан (§14.6.1): кольцо с точкой как камера, голубой —
+        // «вода»; ярче, когда вода идёт (полосы потушены)
+        const open = p.open === true
+        const c = open ? 'rgba(95,215,255,0.95)' : 'rgba(95,215,255,0.45)'
+        ctx.strokeStyle = c
+        ctx.beginPath()
+        ctx.arc(x, y, 4, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.fillStyle = c
+        ctx.beginPath()
+        ctx.arc(x, y, 1.4, 0, Math.PI * 2)
         ctx.fill()
       } else {
         // switch: ромб

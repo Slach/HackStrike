@@ -684,19 +684,32 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// M4-объект 2 (§14.4): кибер-слой 2 этажа — +5 устройств (s3, t3, d3,
 	// cam3, cam4) и +5 кабелей (c9 стояк s2—s3, c10 s3—d3, c11 t3—s3,
 	// c12 s3—cam3, c13 s3—cam4).
-	// §14.6: лава lv1..lv3 — НЕ устройство: в cs.lavas, счётчики графа
-	// unchanged (лава не должна протечь в devices/order/cables).
-	if len(cs.order) != 17 || len(cs.cables) != 16 || len(cs.doors) != 3 || len(cs.gases) != 2 {
-		t.Fatalf("m1 M2+M3+M4 props: want 17 devices / 14 cables + 2 radio uplinks / 3 doors / 2 gas, got %d/%d/%d/%d",
+	// §14.6.1 (ревизия v1): огонь lv1..lv3 — НЕ устройство; клапаны
+	// v1..v3 — устройства (+3 к графе), кабели c15/c16/c17 (+3).
+	if len(cs.order) != 20 || len(cs.cables) != 19 || len(cs.doors) != 3 || len(cs.gases) != 2 {
+		t.Fatalf("m1 M2+M3+M4 props: want 20 devices / 16 cables + 2 radio uplinks / 3 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
-	if len(cs.lavas) != 3 {
-		t.Fatalf("m1 must carry 3 lava pools lv1..lv3 (§14.6), got %d", len(cs.lavas))
+	if len(cs.fires) != 3 {
+		t.Fatalf("m1 must carry 3 fire strips lv1..lv3 (§14.6.1), got %d", len(cs.fires))
 	}
-	for _, lv := range cs.lavas {
+	for _, lv := range cs.fires {
 		if _, leaked := cs.devices[lv.id]; leaked {
-			t.Fatalf("lava %s must not leak into the cyber graph", lv.id)
+			t.Fatalf("fire %s must not leak into the cyber graph", lv.id)
 		}
+		if lv.valve == nil {
+			t.Fatalf("fire %s must reference its valve (§14.6.1)", lv.id)
+		}
+	}
+	// Клапаны в графе и привязаны к своим switch'ам (v1→s1, v2→s2, v3→s3).
+	for _, id := range []string{"v1", "v2", "v3"} {
+		if _, ok := cs.devices[id]; !ok {
+			t.Fatalf("valve %s must be a cyber device (§14.6.1)", id)
+		}
+	}
+	if cs.fires[0].valve.id != "v1" || cs.fires[1].valve.id != "v2" || cs.fires[2].valve.id != "v3" {
+		t.Fatalf("fire→valve binding broken: %s→%s %s→%s %s→%s",
+			cs.fires[0].id, cs.fires[0].valve.id, cs.fires[1].id, cs.fires[1].valve.id, cs.fires[2].id, cs.fires[2].valve.id)
 	}
 	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
 	// 2 этаж в графе через стояк c9 s2—s3.
@@ -726,16 +739,16 @@ func TestEmbeddedMapCyber(t *testing.T) {
 			}
 		}
 	}
-	// §14.6: лужи стоят НА плите (низ 1.0 / 8.0 точно по верху floor —
-	// касание, boxesOverlap строгая, не пересекает); floor пропускаем, как у
-	// газа, — все не-floor коллайдеры обязаны быть чисты.
-	for _, lv := range cs.lavas {
+	// §14.6.1: полосы огня стоят НА плите (низ 1.0 / 8.0 точно по верху
+	// floor — касание, boxesOverlap строгая, не пересекает); floor
+	// пропускаем, как у газа, — все не-floor коллайдеры обязаны быть чисты.
+	for _, lv := range cs.fires {
 		for _, c := range m.Colliders {
 			if c.Kind == "floor" {
 				continue
 			}
 			if boxesOverlap(lv.box, aabb{vec3(c.Min), vec3(c.Max)}) {
-				t.Fatalf("lava %s intersects %s collider %v..%v", lv.id, c.Kind, c.Min, c.Max)
+				t.Fatalf("fire %s intersects %s collider %v..%v", lv.id, c.Kind, c.Min, c.Max)
 			}
 		}
 	}

@@ -53,8 +53,9 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   antivirus: 'ANTIVIRUS — УСТАНОВКА TROJAN ОТБИТА',
 }
 
-// Только сетевые устройства: лава (M4 §14.6) — не девайс, в деку не попадает,
-// поэтому в словаре её подписи нет (тип CyberKind это и сторожит).
+// Только сетевые устройства: fire (M4 §14.6.1) — не девайс, в деку не попадает
+// (его контроллер — клапан), поэтому в словаре подписи fire нет (тип CyberKind
+// это и сторожит).
 const KIND_LABEL: Readonly<Record<CyberKind, string>> = {
   terminal: 'ТЕРМИНАЛ',
   radio: 'РАДИО-ТОЧКА',
@@ -63,6 +64,7 @@ const KIND_LABEL: Readonly<Record<CyberKind, string>> = {
   camera: 'КАМЕРА',
   cable: 'КАБЕЛЬ',
   gas: 'ГАЗ',
+  valve: 'КЛАПАН',
 }
 
 const PROG_LABEL: Readonly<Record<string, string>> = {
@@ -93,6 +95,8 @@ const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
   cam: 'camera',
   gas: 'gas', // M4 §14.2: фильтр палитры по kind и по-русски
   газ: 'gas',
+  valve: 'valve', // M4 §14.6.1: водяной клапан
+  клапан: 'valve',
 }
 
 /** Кандидат слэш-палитры: устройство или программа. */
@@ -223,7 +227,7 @@ export class HackView {
   }
   /** Обнаруженные устройства живут между джек-инами (туман войны — свои знания). */
   private devices = new Map<string, ScanDevice>()
-  /** open-состояния дверей и газовых клапанов из снапа (M4: общий механизм). */
+  /** open-состояния дверей, газовых и водяных клапанов из снапа (общий механизм). */
   private readonly valveOpen = new Map<string, boolean>()
   private target: string | null = null
   private vulned = new Map<string, true>()
@@ -267,9 +271,9 @@ export class HackView {
   private sparkRefs: SparkRef[] = []
   private progLists: HTMLElement[] = []
   private netmapBoxes: HTMLElement[] = []
-  /** Табы управляемых устройств (двери + газовые клапаны): точечное обновление
+  /** Табы управляемых устройств (двери + газ/вода клапаны): точечное обновление
    *  статуса/кнопки без перестройки DOM. kind нужен для подписи статуса. */
-  private doorRefs: { dev: string; kind: 'door' | 'gas'; status: HTMLElement; btn: HTMLButtonElement }[] = []
+  private doorRefs: { dev: string; kind: 'door' | 'gas' | 'valve'; status: HTMLElement; btn: HTMLButtonElement }[] = []
   private camRefs: { dev: string; list: HTMLElement; time: HTMLElement; count: HTMLElement }[] = []
   private radarRefs: { dev: string; list: HTMLElement; count: HTMLElement }[] = []
 
@@ -461,8 +465,9 @@ export class HackView {
   updateProps(props: readonly SnapProp[]): void {
     let changed = false
     for (const p of props) {
-      // газ (M4 §14.2) — то же поле open («клапан открыт»), тот же таб-панель
-      if ((p.kind !== 'door' && p.kind !== 'gas') || p.open === undefined) continue
+      // газ (M4 §14.2) и водяной клапан (§14.6.1) — то же поле open,
+      // тот же механизм таб-панели, что у двери
+      if ((p.kind !== 'door' && p.kind !== 'gas' && p.kind !== 'valve') || p.open === undefined) continue
       if (this.valveOpen.get(p.id) !== p.open) {
         this.valveOpen.set(p.id, p.open)
         changed = true
@@ -567,7 +572,7 @@ export class HackView {
       const pane0 = this.panes[this.activePane]
       const tab0 = this.tabs.find((t) => t.key === pane0?.tabKey)
       const dev0 = tab0?.dev !== null && tab0?.dev !== undefined ? this.devices.get(tab0.dev) : undefined
-      if (dev0 !== undefined && (dev0.kind === 'door' || dev0.kind === 'gas') && dev0.owner === this.myId) {
+      if (dev0 !== undefined && (dev0.kind === 'door' || dev0.kind === 'gas' || dev0.kind === 'valve') && dev0.owner === this.myId) {
         e.preventDefault()
         this.deps.send({ t: 'ctrl', dev: dev0.id, action: 'toggle' })
       }
@@ -1168,9 +1173,10 @@ export class HackView {
       body.append(txt('div', 'hv-dim', `${dev.toUpperCase()} БОЛЬШЕ НЕ В СЕТИ — ПЕРЕСКАН [1]`))
       return
     }
-    // Газ (M4 §14.2) — то же управляемое устройство, что дверь: общий UX-панель
-    // (статус + TOGGLE + подсказка про trojan), только подпись статуса другая.
-    if (d.kind === 'door' || d.kind === 'gas') {
+    // Газ (M4 §14.2) и водяной клапан (§14.6.1) — те же управляемые устройства,
+    // что дверь: общий UX-панель (статус + TOGGLE + подсказка про trojan),
+    // подпись статуса выбирается в updateDoorStates по kind.
+    if (d.kind === 'door' || d.kind === 'gas' || d.kind === 'valve') {
       const wrap = el('div', 'door-ui')
       const status = el('div', 'door-status')
       wrap.append(status)
@@ -1317,9 +1323,15 @@ export class HackView {
   private updateDoorStates(): void {
     for (const ref of this.doorRefs) {
       const open = this.valveOpen.get(ref.dev) ?? false
-      // газ (M4 §14.2): та же панель, другие подписи — «КЛАПАН: ОТКРЫТ/ЗАКРЫТ»
+      // газ (M4 §14.2) / вода (§14.6.1): та же панель, свои подписи статуса
       ref.status.textContent =
-        ref.kind === 'gas' ? `КЛАПАН: ${open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}` : open ? 'ОТКРЫТА' : 'ЗАКРЫТА'
+        ref.kind === 'gas'
+          ? `КЛАПАН: ${open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}`
+          : ref.kind === 'valve'
+            ? `ВОДА: ${open ? 'ИДЁТ' : 'ЗАКРЫТА'}`
+            : open
+              ? 'ОТКРЫТА'
+              : 'ЗАКРЫТА'
       ref.status.classList.toggle('open', open)
       ref.status.classList.toggle('closed', !open)
       // Обрыв кабеля отрезает и управление (контр-хакинг §6): узел без связей

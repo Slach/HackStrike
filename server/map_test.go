@@ -79,85 +79,140 @@ func TestMapGasValidation(t *testing.T) {
 	}
 }
 
-// lavaMapJSON — базовая мини-карта для валидации kind `lava` (§14.6).
-func lavaMapJSON(prop string) string {
-	return `{"name":"l","bounds":[40,16,40],
+// fireMapJSON — базовая мини-карта для валидации kind `fire`/`valve`
+// (§14.6.1); s1 — switch-якорь сети.
+func fireMapJSON(prop string) string {
+	return `{"name":"f","bounds":[40,16,40],
 	 "colliders":[{"min":[0,0,0],"max":[40,1,40],"kind":"floor"},
 	              {"min":[0,1,37],"max":[0.7,1.5,39],"kind":"stair"}],
 	 "spawns":{"0":[[5,1,5]],"1":[[35,1,35]]},
-	 "props":[{"kind":"switch","id":"s1","pos":[5,1,15]},` + prop + `]}`
+	 "props":[{"kind":"switch","id":"s1","pos":[5,1,15]},
+	          {"kind":"valve","id":"v1","pos":[10,1,15],"to":"s1"},` + prop + `]}`
 }
 
-// §14.6: kind `lava` — физическая ловушка без сети: size [w,h,d] > 0
-// обязателен, `to`/`from` запрещены (не устройство); кабель к лаве недопустим.
-// m1 несёт ровно 3 лужи, зеркальная пара lv1/lv2 — точное отражение x′=64−x.
-func TestMapLavaValidation(t *testing.T) {
-	if _, err := parseGameMap([]byte(lavaMapJSON(
-		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4]}`))); err != nil {
-		t.Fatalf("valid lava must parse: %v", err)
+// §14.6.1 (ревизия v1): kind `fire` — стихия: size [w,h,d] > 0 обязателен,
+// to → существующий valve, from запрещён; кабель к огню недопустим.
+// kind `valve` — сетевой контроллер: to → существующий switch.
+// m1 несёт ровно 3 полосы lv1/lv2/lv3 — вытянутые у wifi-точек (z-зеркало)
+// и lv3 в data-отсеке, каждая с ссылкой на свой клапан v1/v2/v3.
+func TestMapFireValidation(t *testing.T) {
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"v1"}`))); err != nil {
+		t.Fatalf("valid fire must parse: %v", err)
 	}
-	if _, err := parseGameMap([]byte(lavaMapJSON(
-		`{"kind":"lava","id":"lv1","pos":[20,1.15,20]}`))); err == nil ||
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20]}`))); err == nil ||
 		!strings.Contains(err.Error(), "size") {
-		t.Fatalf("lava without size must be rejected, got %v", err)
+		t.Fatalf("fire without size must be rejected, got %v", err)
 	}
-	if _, err := parseGameMap([]byte(lavaMapJSON(
-		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0,4]}`))); err == nil ||
-		!strings.Contains(err.Error(), "size") {
-		t.Fatalf("lava with zero size component must be rejected, got %v", err)
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4]}`))); err == nil ||
+		!strings.Contains(err.Error(), "valve") {
+		t.Fatalf("fire without to→valve must be rejected, got %v", err)
 	}
-	if _, err := parseGameMap([]byte(lavaMapJSON(
-		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"s1"}`))); err == nil ||
-		!strings.Contains(err.Error(), "to/from") {
-		t.Fatalf("lava with to must be rejected as non-network, got %v", err)
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"s1"}`))); err == nil ||
+		!strings.Contains(err.Error(), "valve") {
+		t.Fatalf("fire to→switch must be rejected (valve only), got %v", err)
 	}
-	if _, err := parseGameMap([]byte(lavaMapJSON(
-		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"from":"s1"}`))); err == nil ||
-		!strings.Contains(err.Error(), "to/from") {
-		t.Fatalf("lava with from must be rejected as non-network, got %v", err)
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"nope"}`))); err == nil ||
+		!strings.Contains(err.Error(), "valve") {
+		t.Fatalf("fire to→missing must be rejected, got %v", err)
 	}
-	// Кабель к лаве — endpoint не устройство: ребро запрещено.
-	if _, err := parseGameMap([]byte(lavaMapJSON(
-		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4]},` +
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"v1","from":"s1"}`))); err == nil ||
+		!strings.Contains(err.Error(), "from") {
+		t.Fatalf("fire with from must be rejected as non-network, got %v", err)
+	}
+	// Кабель к огню — endpoint не устройство: ребро запрещено.
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"v1"},` +
 			`{"kind":"cable","id":"c9","from":"s1","to":"lv1"}`))); err == nil {
-		t.Fatalf("cable to lava must be rejected (not a network device)")
+		t.Fatalf("cable to fire must be rejected (not a network device)")
+	}
+	// Клапан: to → только switch.
+	if _, err := parseGameMap([]byte(fireMapJSON(
+		`{"kind":"fire","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"v1"},
+		 {"kind":"valve","id":"v2","pos":[11,1,15],"to":"v1"}`))); err == nil ||
+		!strings.Contains(err.Error(), "switch") {
+		t.Fatalf("valve to→valve must be rejected, got %v", err)
 	}
 
 	m := mustParseEmbeddedMap(t)
-	lv := map[string]mapProp{}
-	lavas := 0
+	fi := map[string]mapProp{}
+	fires := 0
 	for _, p := range m.props {
-		if p.Kind == "lava" {
-			lavas++
-			lv[p.ID] = p
+		if p.Kind == "fire" {
+			fires++
+			fi[p.ID] = p
 		}
 	}
-	if lavas != 3 || len(lv) != 3 {
-		t.Fatalf("m1 must carry exactly 3 lava pools lv1..lv3 (§14.6), got %d", lavas)
+	if fires != 3 || len(fi) != 3 {
+		t.Fatalf("m1 must carry exactly 3 fire strips lv1..lv3 (§14.6.1), got %d", fires)
 	}
-	a, b, c := lv["lv1"], lv["lv2"], lv["lv3"]
+	a, b, c := fi["lv1"], fi["lv2"], fi["lv3"]
 	if a.ID != "lv1" || b.ID != "lv2" || c.ID != "lv3" {
-		t.Fatalf("m1 lava ids must be lv1/lv2/lv3, got %v", lv)
+		t.Fatalf("m1 fire ids must be lv1/lv2/lv3, got %v", fi)
 	}
-	// Зеркальная пара 1-го этажа: x′ = 64−x, size и z идентичны (§8-симметрия).
-	if b.Pos[0] != 64-a.Pos[0] || b.Pos[1] != a.Pos[1] || b.Pos[2] != a.Pos[2] ||
+	// Полосы у wifi-точек: z-зеркальная пара r1/r2 (z′=64−z), x/size идентичны
+	// (решение владельца: у спавнов слишком хардкор — огонь теперь у радио).
+	if b.Pos[2] != 64-a.Pos[2] || b.Pos[0] != a.Pos[0] || b.Pos[1] != a.Pos[1] ||
 		b.Size != a.Size {
-		t.Fatalf("lv2 must mirror lv1 across x=32 exactly: lv1=%v lv2=%v", a, b)
+		t.Fatalf("lv2 must mirror lv1 across z=32 exactly: lv1=%v lv2=%v", a, b)
 	}
-	// Лужи стоят НА плите: нижняя грань пола 1 этажа = 1.0, террасы = 8.0
+	// Вытянутость: полосы 1 этажа длинные (E-W), lv3 осталась точечной 4×4.
+	if a.Size[0] < 8 {
+		t.Fatalf("ground strips must be elongated (owner rev), got %v", a.Size)
+	}
+	// Лужи стоят НА плите: низ пола 1 этажа = 1.0, террасы = 8.0
 	// (float-допуск: 1.15−0.3/2 не ровно 1.0 в двоичной арифметике).
 	for _, p := range []mapProp{a, b} {
 		if d := math.Abs(p.Pos[1] - p.Size[1]/2 - 1.0); d > 1e-9 {
-			t.Fatalf("ground pool %s must sit on floor top y=1, got bottom %v", p.ID, p.Pos[1]-p.Size[1]/2)
+			t.Fatalf("ground strip %s must sit on floor top y=1, got bottom %v", p.ID, p.Pos[1]-p.Size[1]/2)
 		}
 	}
 	if d := math.Abs(c.Pos[1] - c.Size[1]/2 - 8.0); d > 1e-9 {
-		t.Fatalf("terrace pool lv3 must sit on slab top y=8, got bottom %v", c.Pos[1]-c.Size[1]/2)
+		t.Fatalf("terrace strip lv3 must sit on slab top y=8, got bottom %v", c.Pos[1]-c.Size[1]/2)
 	}
-	// Ни одна лужа не пересекает не-floor коллайдер (пол под лужей — опора,
-	// пересечение ожидаемо; boundary-touch не считается, boxesOverlap строгая).
+	// Каждая полоса ссылается на свой клапан; клапаны — на s1/s2/s3.
+	want := map[string]string{"lv1": "v1", "lv2": "v2", "lv3": "v3"}
+	for id, v := range want {
+		if fi[id].To != v {
+			t.Fatalf("fire %s must reference valve %s, got %q", id, v, fi[id].To)
+		}
+	}
+	valves := map[string]string{}
 	for _, p := range m.props {
-		if p.Kind != "lava" {
+		if p.Kind == "valve" {
+			valves[p.ID] = p.To
+		}
+	}
+	if len(valves) != 3 || valves["v1"] != "s1" || valves["v2"] != "s2" || valves["v3"] != "s3" {
+		t.Fatalf("m1 valves v1..v3 must bind s1/s2/s3, got %v", valves)
+	}
+	// Огонь далеко от спавнов (решение владельца: у спавнов слишком хардкор).
+	for _, p := range m.props {
+		if p.Kind != "fire" {
+			continue
+		}
+		box := aabb{
+			min: vec3{p.Pos[0] - p.Size[0]/2, p.Pos[1] - p.Size[1]/2, p.Pos[2] - p.Size[2]/2},
+			max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1]/2, p.Pos[2] + p.Size[2]/2},
+		}
+		for _, team := range []int{0, 1} {
+			for _, sp := range m.teamSpawns(team) {
+				if boxOverlapPoint(box, vec3(sp), 4.0) {
+					t.Fatalf("fire %s within 4 m of spawn %v (owner: not hardcore)", p.ID, sp)
+				}
+			}
+		}
+	}
+	// Ни одна полоса не пересекает не-floor коллайдер (пол под полосой —
+	// опора, пересечение ожидаемо; boundary-touch не считается, boxesOverlap
+	// строгая).
+	for _, p := range m.props {
+		if p.Kind != "fire" {
 			continue
 		}
 		box := aabb{
@@ -169,10 +224,17 @@ func TestMapLavaValidation(t *testing.T) {
 				continue
 			}
 			if boxesOverlap(box, aabb{vec3(c.Min), vec3(c.Max)}) {
-				t.Fatalf("lava %s intersects %s collider %v..%v", p.ID, c.Kind, c.Min, c.Max)
+				t.Fatalf("fire %s intersects %s collider %v..%v", p.ID, c.Kind, c.Min, c.Max)
 			}
 		}
 	}
+}
+
+// boxOverlapPoint — AABB против точки с допуском pad по всем осям.
+func boxOverlapPoint(b aabb, p vec3, pad float64) bool {
+	return p[0] >= b.min[0]-pad && p[0] <= b.max[0]+pad &&
+		p[1] >= b.min[1]-pad && p[1] <= b.max[1]+pad &&
+		p[2] >= b.min[2]-pad && p[2] <= b.max[2]+pad
 }
 
 // TestMapStairsAutostepable — все ступени не выше 0.5 (autostep 0.55).

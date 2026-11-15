@@ -27,13 +27,14 @@ export type ClientMessage =
   | { t: 'run'; prog: RunProg; dev?: string }
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
-// 'lava' — статическая физическая ловушка (ГДД §14.6): приезжает только из
+// 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'lava'
+// 'valve' — водяной клапан: сетевой кибер-контроллер огня (по образцу газа).
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve'
 
-/** Сетевые устройства — всё, что бывает в scan/деке. Лава вычтена по построению:
- *  она не сканируется и не взламывается (§14.6), и в типе деки её быть не может. */
-export type CyberKind = Exclude<PropKind, 'lava'>
+/** Сетевые устройства — всё, что бывает в scan/деке. Fire вычтен по построению:
+ *  он не сканируется и не взламывается (§14.6.1) — управляют огнём через valve. */
+export type CyberKind = Exclude<PropKind, 'fire'>
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
  *  the server sent them, so an absent "open" means "keep the last
@@ -44,7 +45,7 @@ export interface SnapProp {
   x?: number
   y?: number
   z?: number
-  open?: boolean // door / gas valve (M4 §14.3)
+  open?: boolean // door / gas valve (M4 §14.3) / water valve (§14.6.1)
   radius?: number // radio
   owner?: number // camera (M3 §13.7): LED-индикатор владения; отсутствует = нейтральная
 }
@@ -52,7 +53,7 @@ export interface SnapProp {
 /** Device discovered by portscan (GDD §12.5 "scan"). */
 export interface ScanDevice {
   id: string
-  kind: CyberKind // lava здесь быть не может: не сетевое устройство (§14.6)
+  kind: CyberKind // fire здесь быть не может: не сетевое устройство (§14.6.1)
   x: number
   y: number
   z: number
@@ -176,10 +177,10 @@ export interface GameSocketHandlers {
 }
 
 const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
-// lava включён в whitelist: map props парсятся через parseMapProps (props.ts),
-// а в snap.props/scan лава по построению не появляется — parseProp просто
-// принимает kind, состояния у неё нет (ГДД §14.6).
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'lava']
+// Полный whitelist: map props парсятся через parseMapProps (props.ts);
+// fire в snap.props/scan по построению не появляется — parseProp просто
+// принимает kind, собственного состояния у него нет (ГДД §14.6.1).
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve']
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
@@ -255,10 +256,10 @@ function parseDevice(v: unknown): ScanDevice | null {
   if (typeof v !== 'object' || v === null) return null
   const p = v as Record<string, unknown>
   const id = str(p.id)
-  // Лава не сканируется (§14.6): физическая ловушка отсечена и типом, и здесь
-  // — scan-протокол её никогда не несёт.
+  // Fire не сканируется (§14.6.1): урон-ландшафт отсечён и типом, и здесь —
+  // scan-протокол его никогда не несёт; valve — обычное устройство.
   const pk = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
-  const kind = pk !== null && pk !== 'lava' ? pk : null
+  const kind = pk !== null && pk !== 'fire' ? pk : null
   if (id === null || kind === null) return null
   const dev: ScanDevice = {
     id,

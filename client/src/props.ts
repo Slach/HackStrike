@@ -1,10 +1,10 @@
 // M2 cyber props (GDD §12.3 / §12.6): terminals, radio points, switches,
-// doors and cables + M4 gas traps (§14.2) + lava pools (§14.6). Geometry is built from the map
-// data (карта — данные), live state (door/gas-valve open) arrives via
-// snap.props. Collisions
+// doors and cables + M4 gas traps (§14.2) + fire pools with water valves
+// (§14.6.1, ревизия v1). Geometry is built from the map data (карта — данные),
+// live state (door/gas/water-valve open) arrives via snap.props. Collisions
 // are server-side — the door swing here is purely cosmetic, and the cables
-// are visual only (collisions and cable cuts are server-side). Gas DoT is
-// server-side too; the client only renders valve/telegraph/active states.
+// are visual only (collisions and cable cuts are server-side). Gas DoT and
+// fire damage are server-side too; the client only renders states.
 
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import type { LinesMesh } from '@babylonjs/core/Meshes/linesMesh'
@@ -30,11 +30,13 @@ const GAS_FILL_ACTIVE = new Color3(120 / 255, 1, 80 / 255) // rgba(120,255,80) �
 const GAS_FRAME_IDLE = new Color3(55 / 255, 1, 155 / 255)
 const GAS_FRAME_TELEGRAPH = new Color3(1, 210 / 255, 55 / 255) // #ffd237 — палитровая жёлтая
 const GAS_FRAME_ACTIVE = new Color3(125 / 255, 1, 80 / 255) // #7dff50
-// Лава (M4 §14.6): физическая ловушка-ландшафт, не устройство. Пул — тонкий
-// бокс с эмиссивным оранжевым; «кипение» — дешёвая пульсация яркости 0.6 Гц.
-const LAVA_DEFAULT_SIZE: readonly [number, number, number] = [4, 0.3, 4] // фолбэк по m1: size обязателен на сервере
-const LAVA_BASE = new Color3(1, 106 / 255, 46 / 255) // #ff6a2e — базовое свечение, масштабируется пульсацией
-const LAVA_PULSE_HZ = 0.6
+// Огонь (M4 §14.6.1, ревизия v1): урон-ландшафт с водяным контроллером.
+// Горящая полоса — эмиссивный оранжевый; «кипение» — дешёвая пульсация 0.6 Гц.
+// Потушенная (valve open) — тёмная, полупрозрачная, без пульсации.
+const FIRE_DEFAULT_SIZE: readonly [number, number, number] = [4, 0.3, 4] // фолбэк по m1: size обязателен на сервере
+const FIRE_BASE = new Color3(1, 106 / 255, 46 / 255) // #ff6a2e — базовое свечение, масштабируется пульсацией
+const FIRE_PULSE_HZ = 0.6
+const FIRE_OUT = new Color3(26 / 255, 35 / 255, 42 / 255) // #1a232a — потушенная полоса
 
 export interface MapProp {
   kind: PropKind
@@ -44,9 +46,11 @@ export interface MapProp {
   size: [number, number, number]
   axis: 'x' | 'z'
   points: [number, number, number][]
+  /** fire → id своего водяного клапана; valve → switch в сети (§14.6.1). */
+  to: string | null
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'lava']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -71,10 +75,11 @@ function parseMapProps(raw: readonly unknown[]): MapProp[] {
       id,
       pos,
       radius: typeof r.radius === 'number' && r.radius > 0 ? r.radius : DEFAULT_RADIO_RANGE,
-      // у газа и лавы свои фолбэк-размеры: карта обязана нести size (map_test),
-      // но дверь-дефолт дал бы плоский блин вместо камеры и стойку вместо лужи
-      size: tuple3(r.size) ?? (kind === 'gas' ? [...GAS_DEFAULT_SIZE] : kind === 'lava' ? [...LAVA_DEFAULT_SIZE] : [...DOOR_DEFAULT_SIZE]),
+      // у газа и огня свои фолбэк-размеры: карта обязана нести size (map_test),
+      // но дверь-дефолт дал бы плоский блин вместо камеры и стойку вместо полосы
+      size: tuple3(r.size) ?? (kind === 'gas' ? [...GAS_DEFAULT_SIZE] : kind === 'fire' ? [...FIRE_DEFAULT_SIZE] : [...DOOR_DEFAULT_SIZE]),
       axis: r.axis === 'z' ? 'z' : 'x',
+      to: typeof r.to === 'string' && r.to.length > 0 ? r.to : null,
       points: Array.isArray(r.points)
         ? r.points.flatMap((p): [number, number, number][] => {
             const t = tuple3(p)
@@ -142,18 +147,30 @@ interface GasView {
   armedAt: number // ms производительного времени последнего наблюдаемого 0→1; 0 = не было
 }
 
-/** Лава (M4 §14.6): физическая ловушка-ландшафт, НЕ устройство. Состояния в
- *  снапе нет (всегда активна), в scan/деке не появляется — view минимальный:
- *  меш+материал ради дешёвой пульсации яркости в tick(). AABB нужен для ховера. */
-interface LavaView {
+/** Огонь (M4 §14.6.1, ревизия v1): урон-ландшафт, НЕ устройство — в scan/деке
+ *  не появляется. Контроллер — водяной клапан: его snap-состояние open
+ *  перекрашивает связанную полосу (to = id клапана из /api/map). */
+interface FireView {
   id: string
   x: number
-  y: number // центр AABB — из pos пропа (низ лужи стоит на плите)
+  y: number // центр AABB — из pos пропа (низ полосы стоит на плите)
   z: number
   w: number
   h: number
   d: number
-  mat: StandardMaterial // эмиссив масштабируется в tick()
+  mat: StandardMaterial // эмиссив/альфа переключаются при смене состояния
+  valveId: string | null
+  open: boolean // true = вода идёт = полоса потушена
+}
+
+/** Водяной клапан (§14.6.1): компактный проп с трубой к потолку. Сеть и
+ *  таб-управление — в hackview (CyberKind); здесь только геометрия/ховер. */
+interface ValveView {
+  id: string
+  x: number
+  z: number
+  y: number
+  open: boolean
 }
 
 export class PropsView {
@@ -164,7 +181,8 @@ export class PropsView {
   private readonly cables = new Map<string, CableView>()
   private readonly cameras = new Map<string, CameraView>()
   private readonly gases = new Map<string, GasView>()
-  private readonly lavas = new Map<string, LavaView>()
+  private readonly fires = new Map<string, FireView>()
+  private readonly valves = new Map<string, ValveView>()
   private readonly mats: Record<string, StandardMaterial>
   private miniCache: MiniProp[] = []
   /** Владелец камеры — своя команда или чужая (ставит main.ts: знает myId и
@@ -224,8 +242,11 @@ export class PropsView {
         case 'gas':
           view.buildGas(prop.id, prop.pos, prop.size)
           break
-        case 'lava':
-          view.buildLava(prop.id, prop.pos, prop.size)
+        case 'fire':
+          view.buildFire(prop.id, prop.pos, prop.size, prop.to)
+          break
+        case 'valve':
+          view.buildValve(prop.id, prop.pos)
           break
       }
     }
@@ -406,21 +427,55 @@ export class PropsView {
     }
   }
 
-  /** Лава (M4 §14.6): тонкий светящийся пул на плите. Никакого состояния —
-   *  строится один раз из map props; урон/смерть — на сервере (invariant 1). */
-  private buildLava(id: string, pos: readonly [number, number, number], size: readonly [number, number, number]): void {
+  /** Огонь (M4 §14.6.1): тонкая горящая полоса на плите. Состояние приходит
+   *  через snap-пропс клапана (paintFire) — при билде всегда горит (серверный
+   *  default open=false); урон/смерть — на сервере (invariant 1). */
+  private buildFire(id: string, pos: readonly [number, number, number], size: readonly [number, number, number], valveId: string | null): void {
     const [w, h, d] = size
-    const mat = new StandardMaterial(`mat.prop.${id}.lava`, this.scene)
+    const mat = new StandardMaterial(`mat.prop.${id}.fire`, this.scene)
     mat.disableLighting = true
-    mat.emissiveColor = LAVA_BASE.clone() // clone: tick() мутирует цвет на месте, база общая
+    mat.emissiveColor = FIRE_BASE.clone() // clone: tick() мутирует цвет на месте, база общая
     mat.diffuseColor = Color3.Black()
     mat.specularColor = Color3.Black()
-    mat.alpha = 0.92 // лёгкая прозрачность: пол под лужей читается, край телеграфа виден
-    const pool = MeshBuilder.CreateBox(`prop.${id}.lava`, { width: w, height: h, depth: d }, this.scene)
+    mat.alpha = 0.92 // лёгкая прозрачность: пол под полосой читается, край телеграфа виден
+    const pool = MeshBuilder.CreateBox(`prop.${id}.fire`, { width: w, height: h, depth: d }, this.scene)
     pool.position.set(pos[0], pos[1], pos[2])
     pool.material = mat
     pool.isPickable = false // ховер-метка — через AABB в propAt, не пикинг меша
-    this.lavas.set(id, { id, x: pos[0], y: pos[1], z: pos[2], w, h, d, mat })
+    this.fires.set(id, { id, x: pos[0], y: pos[1], z: pos[2], w, h, d, mat, valveId, open: false })
+  }
+
+  /** Состояние клапана → материалы связанной полосы огня: горит — оранжевый
+   *  (пульсация в tick()), потушен — тёмный + alpha ~0.35, без пульсации.
+   *  Мир — общий телеграф (§14.6.1): burn-состояние видно всем без скана. */
+  private paintFire(f: FireView): void {
+    if (f.open) {
+      f.mat.emissiveColor = FIRE_OUT
+      f.mat.alpha = 0.35
+    } else {
+      f.mat.emissiveColor = FIRE_BASE.clone()
+      f.mat.alpha = 0.92
+    }
+  }
+
+  /** Водяной клапан (§14.6.1): кабина-бокс + вертикальная труба к потолку +
+   *  вентиль-головка. LED-акцент как у switch'а (сеть та же). */
+  private buildValve(id: string, pos: readonly [number, number, number]): void {
+    const cab = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.5, height: 0.85, depth: 0.3 }, this.scene)
+    cab.position.set(pos[0], pos[1] + 0.425, pos[2])
+    cab.material = this.mats.body
+    cab.isPickable = false
+    // труба «к потолку»: карта не несёт высоту потолка — тянем до 6 м над
+    // полом (h=5.15 хватает для обоих этажей m1), лишнее скроется геометрией
+    const pipe = MeshBuilder.CreateCylinder(`prop.${id}.pipe`, { diameter: 0.14, height: 5.15 }, this.scene)
+    pipe.position.set(pos[0], pos[1] + 0.85 + 5.15 / 2, pos[2])
+    pipe.material = this.mats.body
+    pipe.isPickable = false
+    const head = MeshBuilder.CreateCylinder(`prop.${id}.head`, { diameter: 0.42, height: 0.08 }, this.scene)
+    head.position.set(pos[0], pos[1] + 1.05, pos[2])
+    head.material = this.mats.led
+    head.isPickable = false
+    this.valves.set(id, { id, x: pos[0], y: pos[1], z: pos[2], open: false })
   }
 
   private buildCable(id: string, points: readonly [number, number, number][]): void {
@@ -510,6 +565,27 @@ export class PropsView {
           }
           break
         }
+        case 'valve': {
+          // Клапан (§14.6.1) — как дверь/газ: open из снапа; смена open
+          // перекрашивает полосы огня, привязанные к нему полем to.
+          if (p.x === undefined || p.y === undefined || p.z === undefined) break
+          let valve = this.valves.get(p.id)
+          if (valve === undefined) {
+            this.buildValve(p.id, [p.x, p.y, p.z])
+            valve = this.valves.get(p.id)
+            dirty = true
+          }
+          if (valve !== undefined && p.open !== undefined && valve.open !== p.open) {
+            valve.open = p.open
+            for (const f of this.fires.values()) {
+              if (f.valveId === p.id && f.open !== p.open) {
+                f.open = p.open
+                this.paintFire(f)
+              }
+            }
+          }
+          break
+        }
       }
     }
     if (dirty) this.rebuildMini()
@@ -538,8 +614,11 @@ export class PropsView {
     for (const g of this.gases.values()) {
       boxes.push({ label: `ГАЗ ${g.id.toUpperCase()} — КЛАПАН ${g.open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}`, min: [g.x - g.w / 2, g.y - g.h / 2, g.z - g.d / 2], max: [g.x + g.w / 2, g.y + g.h / 2, g.z + g.d / 2] })
     }
-    for (const l of this.lavas.values()) {
-      boxes.push({ label: `ЛАВА ${l.id.toUpperCase()}`, min: [l.x - l.w / 2, l.y - l.h / 2, l.z - l.d / 2], max: [l.x + l.w / 2, l.y + l.h / 2, l.z + l.d / 2] })
+    for (const f of this.fires.values()) {
+      boxes.push({ label: `ОГОНЬ ${f.id.toUpperCase()} — ${f.open ? 'ПОТУШЕН' : 'ГОРИТ'}`, min: [f.x - f.w / 2, f.y - f.h / 2, f.z - f.d / 2], max: [f.x + f.w / 2, f.y + f.h / 2, f.z + f.d / 2] })
+    }
+    for (const v of this.valves.values()) {
+      boxes.push({ label: `КЛАПАН ${v.id.toUpperCase()} — ВОДА ${v.open ? 'ИДЁТ' : 'ЗАКРЫТА'}`, min: [v.x - 0.5, v.y, v.z - 0.5], max: [v.x + 0.5, v.y + 1.3, v.z + 0.5] })
     }
     for (const c of this.cameras.values()) {
       const state =
@@ -609,12 +688,13 @@ export class PropsView {
       const now = performance.now()
       for (const g of this.gases.values()) this.paintGas(g, now)
     }
-    // лава: дешёвое «кипение» — пульсация эмиссива 0.9..1.1 на ~0.6 Гц
-    // (ГДД §14.6). Одна фаза на все пулы: это ambient-телеграф, не состояние.
-    if (this.lavas.size > 0) {
-      const k = 1 + 0.1 * Math.sin((performance.now() / 1000) * Math.PI * 2 * LAVA_PULSE_HZ)
-      for (const l of this.lavas.values()) {
-        l.mat.emissiveColor.copyFromFloats(LAVA_BASE.r * k, LAVA_BASE.g * k, LAVA_BASE.b * k)
+    // огонь: дешёвое «кипение» — пульсация эмиссива 0.9..1.1 на ~0.6 Гц
+    // (ГДД §14.6.1). Только горящие полосы; потушенные стоят тёмными.
+    if (this.fires.size > 0) {
+      const k = 1 + 0.1 * Math.sin((performance.now() / 1000) * Math.PI * 2 * FIRE_PULSE_HZ)
+      for (const f of this.fires.values()) {
+        if (f.open) continue
+        f.mat.emissiveColor.copyFromFloats(FIRE_BASE.r * k, FIRE_BASE.g * k, FIRE_BASE.b * k)
       }
     }
   }
@@ -669,6 +749,7 @@ export class PropsView {
     if (this.radios.has(id)) return 'radio'
     if (this.switches.has(id)) return 'switch'
     if (this.doors.has(id)) return 'door'
+    if (this.valves.has(id)) return 'valve'
     return null
   }
 
@@ -678,7 +759,7 @@ export class PropsView {
 
   private known(id: string): boolean {
     return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id) ||
-      this.cameras.has(id) || this.gases.has(id) || this.lavas.has(id)
+      this.cameras.has(id) || this.gases.has(id) || this.fires.has(id) || this.valves.has(id)
   }
 
   private rebuildMini(): void {
@@ -693,8 +774,14 @@ export class PropsView {
     for (const g of this.gases.values()) {
       out.push({ x: g.x, z: g.z, kind: 'gas', open: g.open })
     }
-    // Лава сюда НЕ попадает (ГДД §14.6): статический ландшафт-опасность, не
-    // устройство — миникарта рисует только сеть и управляемые пропсы.
+    // Огонь — ландшафт-опасность, но его burn-состояние полезно на миникарте
+    // (§14.6.1: «burn-состояние пула видно всем»); клапан — обычный девайс.
+    for (const f of this.fires.values()) {
+      out.push({ x: f.x, z: f.z, kind: 'fire', open: f.open })
+    }
+    for (const v of this.valves.values()) {
+      out.push({ x: v.x, z: v.z, kind: 'valve', open: v.open })
+    }
     this.miniCache = out
   }
 }

@@ -52,10 +52,10 @@ type world struct {
 	// невалидным после close→open (телеграф рестартит).
 	gasDebt map[gasDebtKey]float64
 
-	// lavaDebt — накопленный float-долг урона лавы (§14.6): ключ — (пул,
+	// fireDebt — накопленный float-долг урона огня (§14.6.1): ключ — (пул,
 	// игрок). Лава без arm-цикла, поэтому ключ проще газового (без счётчика
 	// взвода); списания — целыми очками, не зависят от тик-рейта.
-	lavaDebt map[lavaDebtKey]float64
+	fireDebt map[fireDebtKey]float64
 }
 
 // gasDebtKey — ключ накопленного долга: gasArmCount растёт на каждое
@@ -66,9 +66,9 @@ type gasDebtKey struct {
 	pl  uint64
 }
 
-// lavaDebtKey — ключ долга лавы (§14.6): пулы lv1..lv3 не пересекаются с
+// fireDebtKey — ключ долга огня (§14.6.1): полосы не пересекаются с
 // газовыми id, отдельная карта чище, чем общий ключ.
-type lavaDebtKey struct {
+type fireDebtKey struct {
 	pool string
 	pl   uint64
 }
@@ -101,7 +101,7 @@ func newWorld(m *gameMap) *world {
 		matchLen:  matchDuration,
 		now:       time.Now,
 		gasDebt:   make(map[gasDebtKey]float64),
-		lavaDebt:  make(map[lavaDebtKey]float64),
+		fireDebt:  make(map[fireDebtKey]float64),
 	}
 }
 
@@ -357,7 +357,7 @@ func (w *world) simulateTick() {
 		w.interactTick(pl)
 	}
 	w.gasTick(tickDT)  // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
-	w.lavaTick(tickDT) // §14.6: DoT лавовых луж (сразу за газом, тот же порядок)
+	w.fireTick(tickDT) // §14.6.1: DoT огня (сразу за газом, тот же порядок)
 	w.matchCheck()
 	w.rebalanceTeams()
 	w.deckStatusTick()

@@ -45,8 +45,8 @@ const (
 	gasDPS       = 8.0                     // HP/с
 	gasTelegraph = 1500 * time.Millisecond // мигание перед первым уроном
 
-	// M4 объект 2 «пол-лава» (§14.6, числа v0): постоянный DoT внутри AABB
-	// лужи, без телеграфа и сетевого цикла — лава «ландшафт», не устройство.
+	// M4 объект 2 «пол-лава» → огонь (§14.6.1, ревизия v1): постоянный DoT
+	// внутри AABB полосы, без телеграфа; горит пока водяной клапан закрыт.
 	lavaDPS = 25.0 // HP/с
 )
 
@@ -60,6 +60,7 @@ var deviceStats = map[string]struct {
 	"switch":   {cpu: 0.2, npu: 0, net: 100, ram: 1},
 	"door":     {cpu: 0.2, npu: 0, net: 100, ram: 1},
 	"gas":      {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §14.2: клапан — контроллер, как дверь
+	"valve":    {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §14.6.1: водяной клапан — контроллер, как газовый
 	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §13.7: сенсор, как switch
 }
 
@@ -111,12 +112,13 @@ type cable struct {
 	wireless bool // радио-аплинк: на карте рисуется пунктиром
 }
 
-// lavaPool — пол-лава (§14.6): НЕ сетевое устройство — ни owner/vuln, ни
-// графа, ни snap-динамики (лава всегда активна, состояние не меняется).
-// Только AABB, по которому lavaTick считает урон.
-type lavaPool struct {
-	id  string
-	box aabb
+// firePool — полоса огня (§14.6.1): НЕ сетевое устройство — ни owner/vuln,
+// ни графа. AABB для fireTick + ссылка на водяной клапан: его open тушит
+// пул (state виден всем через snap.props клапана).
+type firePool struct {
+	id    string
+	box   aabb
+	valve *device
 }
 
 // cyberState — граф сети; часть world.
@@ -127,7 +129,7 @@ type cyberState struct {
 	doors   []*device
 	gases   []*device   // §14.2: газовые ловушки (DoT-объёмы)
 	cameras []*device   // §13.7: сенсоры наблюдения (лента владельцу)
-	lavas   []*lavaPool // §14.6: лавовые лужи — вне графа, вне сканов, вне снапа
+	fires   []*firePool // §14.6.1: полосы огня — вне графа и сканов; горение = valve.open==false
 }
 
 // buildCyber — устройства и кабели из пропсов карты. Радио-точка — точка
@@ -140,11 +142,11 @@ func buildCyber(m *gameMap) *cyberState {
 		if p.Kind == "cable" {
 			continue
 		}
-		if p.Kind == "lava" {
-			// §14.6: лава — физическая ловушка, не устройство: мимо device,
-			// cs.order, графа и снапа. pos — центр объёма по всем осям
-			// (конвенция газа).
-			cs.lavas = append(cs.lavas, &lavaPool{
+		if p.Kind == "fire" {
+			// §14.6.1: огонь — стихия, не устройство: мимо device, cs.order,
+			// графа. pos — центр объёма по всем осям (конвенция газа); клапан
+			// присоединяется вторым проходом (fire идёт раньше valve в props).
+			cs.fires = append(cs.fires, &firePool{
 				id: p.ID,
 				box: aabb{
 					min: vec3{p.Pos[0] - p.Size[0]/2, p.Pos[1] - p.Size[1]/2, p.Pos[2] - p.Size[2]/2},
@@ -185,6 +187,18 @@ func buildCyber(m *gameMap) *cyberState {
 		}
 		cs.devices[d.id] = d
 		cs.order = append(cs.order, d.id)
+	}
+	// Второй проход: огонь ссылается на свой клапан (§14.6.1) — клапаны уже
+	// в cs.devices (валидация карты гарантирует существование).
+	for _, p := range m.props {
+		if p.Kind != "fire" {
+			continue
+		}
+		for _, f := range cs.fires {
+			if f.id == p.ID {
+				f.valve = cs.devices[p.To]
+			}
+		}
 	}
 	for _, p := range m.props {
 		if p.Kind != "cable" {
@@ -552,7 +566,7 @@ func (w *world) handleCtrl(pl *player, msg message) {
 		return
 	}
 	dev, ok := w.cyber.devices[str(msg, "dev")]
-	if !ok || (dev.kind != "door" && dev.kind != "gas") || dev.owner != pl.id {
+	if !ok || (dev.kind != "door" && dev.kind != "gas" && dev.kind != "valve") || dev.owner != pl.id {
 		w.denied(pl, "not_owner")
 		return
 	}
@@ -990,26 +1004,29 @@ func (w *world) gasTick(dt float64) {
 	}
 }
 
-// lavaTick — §14.6: DoT лавовых луж, комната-горутина, сразу после gasTick.
-// Ключевое отличие от газа: лава — физическая ловушка без сети, всегда
-// активна, без телеграфа и arm-цикла. Игрок «в лаве», если его AABB ног
-// (playerBoxAt) пересекает объём пула по всем трём осям — с пола 1-го этажа
-// лужу террасы не «задеть» и наоборот. Шаг урона — как у газа: float-долг на
-// (пул, игрок), целые списания envDamage(owner=0) — килл чисто средовой
-// («ЛОВУШКА», счёт не двигается). Первый тик в пуле только сеет долг.
-func (w *world) lavaTick(dt float64) {
-	if len(w.cyber.lavas) == 0 {
+// fireTick — §14.6.1: DoT огненных полос, комната-горутина, сразу после
+// gasTick. Ревизия v1: полоса горит только пока её водяной клапан закрыт
+// (open=true — вода идёт, пул потушен); остальная механика v0 без изменений:
+// без телеграфа, игрок «в огне», если его AABB ног (playerBoxAt) пересекает
+// объём по всем трём осям (этажи не смешиваются). Float-долг на (пул,
+// игрок), целые списания envDamage(owner=0) — килл чисто средовой
+// («ЛОВУШКА», счёт не двигается). Первый тик в полосе только сеет долг.
+func (w *world) fireTick(dt float64) {
+	if len(w.cyber.fires) == 0 {
 		return
 	}
-	for _, lv := range w.cyber.lavas {
+	for _, lv := range w.cyber.fires {
+		if lv.valve != nil && lv.valve.open {
+			continue // вода идёт — полоса потушена (§14.6.1)
+		}
 		for _, pl := range w.players {
 			if !pl.alive || !boxesOverlap(playerBoxAt(pl.pos), lv.box) {
 				continue
 			}
-			key := lavaDebtKey{pool: lv.id, pl: pl.id}
-			debt, ok := w.lavaDebt[key]
-			if !ok { // свежий ключ: первый тик внутри лужи не начисляет
-				w.lavaDebt[key] = lavaDPS * dt
+			key := fireDebtKey{pool: lv.id, pl: pl.id}
+			debt, ok := w.fireDebt[key]
+			if !ok { // свежий ключ: первый тик внутри полосы не начисляет
+				w.fireDebt[key] = lavaDPS * dt
 				continue
 			}
 			debt += lavaDPS * dt
@@ -1018,7 +1035,7 @@ func (w *world) lavaTick(dt float64) {
 				debt -= float64(whole)
 				w.envDamage(pl, whole, 0) // owner=0: нейтральная среда (§14.6)
 			}
-			w.lavaDebt[key] = debt
+			w.fireDebt[key] = debt
 		}
 	}
 }
@@ -1033,7 +1050,7 @@ func (cs *cyberState) snapProps() []any {
 			"x": round3(d.pos[0]), "y": round3(d.pos[1]), "z": round3(d.pos[2]),
 		}
 		switch d.kind {
-		case "door", "gas": // §14.2: газ несёт open (клапан), как дверь
+		case "door", "gas", "valve": // §14.2/§14.6.1: клапаны несут open, как дверь
 			m["open"] = d.open
 		case "radio":
 			m["radius"] = d.radius
