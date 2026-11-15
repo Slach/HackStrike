@@ -680,15 +680,18 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	w := newWorld(m)
 	cs := w.cyber
 
-	// M4-объект 1: +1 устройство (газ g1) и +1 кабель c8 (g1—s2, «короткий
-	// кабель» клапана к контроллеру — как d2 через c5).
-	if len(cs.order) != 11 || len(cs.cables) != 10 || len(cs.doors) != 2 || len(cs.gases) != 1 {
-		t.Fatalf("m1 M2+M3+M4 props: want 11 devices / 8 cables + 2 radio uplinks / 2 doors / 1 gas, got %d/%d/%d/%d",
+	// M4-объект 1: +1 устройство (газ g1) и +1 кабель c8. M4-объект 2 (§14.4):
+	// кибер-слой 2 этажа — +5 устройств (s3, t3, d3, cam3, cam4) и +5 кабелей
+	// (c9 стояк s2—s3, c10 s3—d3, c11 t3—s3, c12 s3—cam3, c13 s3—cam4).
+	if len(cs.order) != 16 || len(cs.cables) != 15 || len(cs.doors) != 3 || len(cs.gases) != 1 {
+		t.Fatalf("m1 M2+M3+M4 props: want 16 devices / 13 cables + 2 radio uplinks / 3 doors / 1 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
+	// 2 этаж в графе через стояк c9 s2—s3.
 	reach := cs.reachable("t1")
-	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "g1", "r1", "r2", "cam1", "cam2"} {
+	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "g1", "r1", "r2", "cam1", "cam2",
+		"s3", "t3", "d3", "cam3", "cam4"} {
 		if !reach[id] {
 			t.Fatalf("%s must be reachable from t1 on m1 (радио — через аплинк)", id)
 		}
@@ -714,12 +717,64 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	}
 	for _, team := range []int{0, 1} {
 		for _, s := range m.teamSpawns(team) {
-			for _, id := range []string{"t1", "t2"} {
+			// t3 — точка входа 2 этажа: спавны на первом (y=1), тривиально
+			// далеко, но фиксируем инвариант «не на спавне» (§8).
+			for _, id := range []string{"t1", "t2", "t3"} {
 				if cs.devices[id].pos.sub(vec3(s)).length() <= jackTerminalRadius {
 					t.Fatalf("spawn %v inside jack-in radius of %s", s, id)
 				}
 			}
 		}
+	}
+}
+
+// M4 §14.4: кибер-слой 2 этажа на встроенной карте. Достижим в графе от t1
+// через стояк c9 s2—s3; прогрессивный portscan от t1 (hop1 s1 → hop2 s2,d1,
+// r1,cam1 → hop3 s3,t2,d2,cam2,g1 → hop4 t3,d3,cam3,cam4) открывает 2 этаж;
+// d3 достижима (reachableFor, §13.5) с точки входа t3 и перехватывается с неё
+// trojan'ом — т.е. валидация достижимости handleRun/handleCtrl пройдена.
+func TestEmbeddedMapCyberFloor2(t *testing.T) {
+	m := mustParseEmbeddedMap(t)
+	w := newWorld(m)
+
+	// Стояк: 2 этаж в едином графе с нижним сегментом.
+	if !w.cyber.reachable("t1")["s3"] {
+		t.Fatalf("s3 must be reachable from t1 via the s2—s3 trunk cable")
+	}
+
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	for i := 0; i < 4; i++ { // hop3 открывает s3, hop4 — t3 (т.е. «3+» хопов)
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	if !h.scanned["s3"] || !h.scanned["t3"] {
+		t.Fatalf("progressive portscans must discover the second floor: scanned=%v", h.scanned)
+	}
+
+	// Переход на точку входа 2 этажа: джек-аут, джек-ин у t3 (стоя на плите
+	// террасы y=8), дверь data-отсека достижима от неё.
+	w.handleMessage(h, message{"t": "jackout"})
+	jackAt(w, h, "t3")
+	if !h.jacked || h.jackHost.id != "t3" {
+		t.Fatalf("hacker must be able to jack into the second-floor entry t3")
+	}
+	if !w.reachableFor("t3", h)["d3"] {
+		t.Fatalf("d3 must be reachable for the hacker from the t3 entry")
+	}
+
+	// Trojan на d3 с t3: handleRun валидирует scanned+reachableFor — too_far
+	// здесь означал бы, что BFS от t3 не видит дверь.
+	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "d3"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "d3"})
+	if w.cyber.devices["d3"].owner != h.id {
+		t.Fatalf("d3 captured from t3 must end owned by h, owner=%v", w.cyber.devices["d3"].owner)
+	}
+	// Toggle владеемой двери из деки — проходит (не denied) и открывает.
+	w.handleMessage(h, message{"t": "ctrl", "dev": "d3", "action": "toggle"})
+	assertDenied(t, w, h, "") // no denial in the queue
+	if !w.cyber.devices["d3"].open {
+		t.Fatalf("ctrl toggle from t3 must open d3")
 	}
 }
 
