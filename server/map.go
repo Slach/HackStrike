@@ -40,9 +40,9 @@ type mapProp struct {
 	ID     string       `json:"id"`
 	Pos    [3]float64   `json:"pos"`
 	Radius float64      `json:"radius"` // radio
-	Size   [3]float64   `json:"size"`   // door
+	Size   [3]float64   `json:"size"`   // door, gas (§14.2)
 	Axis   string       `json:"axis"`   // door
-	To     string       `json:"to"`     // door → switch
+	To     string       `json:"to"`     // door|gas → switch
 	From   string       `json:"from"`   // cable
 	Points [][3]float64 `json:"points"` // cable
 }
@@ -76,7 +76,7 @@ func (m *gameMap) parseProps() error {
 			return fmt.Errorf("map: prop %d: %w", i, err)
 		}
 		switch p.Kind {
-		case "terminal", "radio", "switch", "door", "camera", "cable":
+		case "terminal", "radio", "switch", "door", "gas", "camera", "cable":
 		default:
 			return fmt.Errorf("map: prop %d: unknown kind %q", i, p.Kind)
 		}
@@ -161,6 +161,18 @@ func (m *gameMap) validateProps() error {
 			}
 			if kinds[p.To] != "switch" {
 				return fmt.Errorf("map: door %s must reference a switch via \"to\", got %q", p.ID, p.To)
+			}
+		case "gas":
+			// §14.2: газовая ловушка — объём-ловушка: size [w,h,d] обязателен,
+			// to → switch (клапан — сетевое устройство, как дверь). Axis не
+			// нужен: ориентация объёма не влияет ни на что на сервере.
+			for ax := 0; ax < 3; ax++ {
+				if !(p.Size[ax] > 0) || math.IsNaN(p.Size[ax]) {
+					return fmt.Errorf("map: gas %s bad size %v", p.ID, p.Size)
+				}
+			}
+			if kinds[p.To] != "switch" {
+				return fmt.Errorf("map: gas %s must reference a switch via \"to\", got %q", p.ID, p.To)
 			}
 		case "cable":
 			if p.From == p.To || kinds[p.From] == "" || kinds[p.To] == "" ||

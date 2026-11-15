@@ -104,9 +104,9 @@ func TestFireBodyParts(t *testing.T) {
 	victim.pos = vec3{0, 1, 8} // стоит на том же полу, ноги y=1
 
 	cases := []struct {
-		name  string
-		aimY  float64
-		want  bool
+		name string
+		aimY float64
+		want bool
 	}{
 		{"ноги (y+0.3)", 1 + 0.3, true},
 		{"центр (y+0.9)", 1 + 0.9, true},

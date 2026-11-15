@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -28,6 +30,52 @@ func TestMapParsesAndSpawnsExist(t *testing.T) {
 				t.Fatalf("spawn team %d [%d] %v intersects geometry", team, i, s)
 			}
 		}
+	}
+}
+
+// §14.2: kind `gas` — валидация как у двери: size [w,h,d] > 0 обязателен,
+// to → существующий switch; карта m1 содержит ровно один газовый проп.
+func TestMapGasValidation(t *testing.T) {
+	const base = `{"name":"g","bounds":[40,8,40],
+	 "colliders":[{"min":[0,0,0],"max":[40,1,40],"kind":"floor"},
+	              {"min":[0,1,37],"max":[0.7,1.5,39],"kind":"stair"}],
+	 "spawns":{"0":[[5,1,5]],"1":[[35,1,35]]},
+	 "props":[{"kind":"switch","id":"s1","pos":[5,1,15]},%s]}`
+
+	if _, err := parseGameMap([]byte(fmt.Sprintf(base,
+		`{"kind":"gas","id":"g1","pos":[20,1.5,20],"size":[6,3,6],"to":"s1"}`))); err != nil {
+		t.Fatalf("valid gas must parse: %v", err)
+	}
+	if _, err := parseGameMap([]byte(fmt.Sprintf(base,
+		`{"kind":"gas","id":"g1","pos":[20,1.5,20],"to":"s1"}`))); err == nil ||
+		!strings.Contains(err.Error(), "size") {
+		t.Fatalf("gas without size must be rejected, got %v", err)
+	}
+	if _, err := parseGameMap([]byte(fmt.Sprintf(base,
+		`{"kind":"gas","id":"g1","pos":[20,1.5,20],"size":[6,3,0],"to":"s1"}`))); err == nil ||
+		!strings.Contains(err.Error(), "size") {
+		t.Fatalf("gas with zero component must be rejected, got %v", err)
+	}
+	if _, err := parseGameMap([]byte(fmt.Sprintf(base,
+		`{"kind":"gas","id":"g1","pos":[20,1.5,20],"size":[6,3,6],"to":"nope"}`))); err == nil ||
+		!strings.Contains(err.Error(), "switch") {
+		t.Fatalf("gas to→missing must be rejected, got %v", err)
+	}
+	if _, err := parseGameMap([]byte(fmt.Sprintf(base,
+		`{"kind":"gas","id":"g1","pos":[20,1.5,20],"size":[6,3,6]}`))); err == nil ||
+		!strings.Contains(err.Error(), "switch") {
+		t.Fatalf("gas without to must be rejected, got %v", err)
+	}
+
+	m := mustParseEmbeddedMap(t)
+	gases := 0
+	for _, p := range m.props {
+		if p.Kind == "gas" {
+			gases++
+		}
+	}
+	if gases != 1 {
+		t.Fatalf("m1 must carry exactly one gas chamber (§14.2), got %d", gases)
 	}
 }
 

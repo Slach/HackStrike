@@ -1,10 +1,13 @@
 // M2 cyber props (GDD §12.3 / §12.6): terminals, radio points, switches,
-// doors and cables. Geometry is built from the map data (карта — данные),
-// live state (door open) arrives via snap.props. Collisions
+// doors and cables + M4 gas traps (§14.2). Geometry is built from the map
+// data (карта — данные), live state (door/gas-valve open) arrives via
+// snap.props. Collisions
 // are server-side — the door swing here is purely cosmetic, and the cables
-// are visual only (collisions and cable cuts are server-side).
+// are visual only (collisions and cable cuts are server-side). Gas DoT is
+// server-side too; the client only renders valve/telegraph/active states.
 
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
+import type { LinesMesh } from '@babylonjs/core/Meshes/linesMesh'
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
 import { TransformNode } from '@babylonjs/core/Meshes/transformNode'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
@@ -19,6 +22,14 @@ const TERMINAL_RANGE = 2 // м, GDD §12.1
 const DEFAULT_RADIO_RANGE = 8
 const DOOR_SWING_S = 0.3 // GDD §12.6: ~0.3 с на открытие
 const DOOR_DEFAULT_SIZE: readonly [number, number, number] = [1.6, 2.4, 0.16]
+const GAS_DEFAULT_SIZE: readonly [number, number, number] = [8, 3, 8] // фолбэк для газа, приехавшего только из снапа
+const GAS_TELEGRAPH_S = 1.5 // ГДД §14.2: жёлтое мигание каркаса перед первым уроном
+// Цвета газа по состояниям (ГДД §14.2): тусклый объём, жёлтый телеграф, активный газ.
+const GAS_FILL_IDLE = new Color3(55 / 255, 1, 155 / 255) // rgba(55,255,155) — закрытый клапан
+const GAS_FILL_ACTIVE = new Color3(120 / 255, 1, 80 / 255) // rgba(120,255,80) — газ идёт
+const GAS_FRAME_IDLE = new Color3(55 / 255, 1, 155 / 255)
+const GAS_FRAME_TELEGRAPH = new Color3(1, 210 / 255, 55 / 255) // #ffd237 — палитровая жёлтая
+const GAS_FRAME_ACTIVE = new Color3(125 / 255, 1, 80 / 255) // #7dff50
 
 export interface MapProp {
   kind: PropKind
@@ -30,7 +41,7 @@ export interface MapProp {
   points: [number, number, number][]
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -55,7 +66,9 @@ function parseMapProps(raw: readonly unknown[]): MapProp[] {
       id,
       pos,
       radius: typeof r.radius === 'number' && r.radius > 0 ? r.radius : DEFAULT_RADIO_RANGE,
-      size: tuple3(r.size) ?? [...DOOR_DEFAULT_SIZE],
+      // у газа свой фолбэк-размер: карта обязана нести size (map_test), но
+      // дверь-дефолт дал бы плоский блин вместо камеры
+      size: tuple3(r.size) ?? (kind === 'gas' ? [...GAS_DEFAULT_SIZE] : [...DOOR_DEFAULT_SIZE]),
       axis: r.axis === 'z' ? 'z' : 'x',
       points: Array.isArray(r.points)
         ? r.points.flatMap((p): [number, number, number][] => {
@@ -104,6 +117,26 @@ interface CameraView {
   owner: number | null
 }
 
+/** Газ (M4 §14.2): ловушка-объём с AABB как у двери. Клиент рисует только
+ *  последствия из снапа (invariant 1): закрытый клапан — тусклый каркас,
+ *  телеграф — дискретное жёлтое мигание каркаса, активный газ — плотный fill.
+ *  Телеграф считаем сами от момента наблюдения flip 0→1 (визуал, точность
+ *  долей секунды не нужна — сервер урон тоже не синхронизирует с кадром). */
+interface GasView {
+  id: string
+  x: number
+  y: number // центр AABB — из pos пропа
+  z: number
+  w: number
+  h: number
+  d: number
+  fill: Mesh
+  fillMat: StandardMaterial // динамический, как LED камеры: цвет/альфа по состоянию
+  frame: LinesMesh
+  open: boolean
+  armedAt: number // ms производительного времени последнего наблюдаемого 0→1; 0 = не было
+}
+
 export class PropsView {
   private readonly terminals = new Map<string, SimpleProp>()
   private readonly radios = new Map<string, SimpleProp>()
@@ -111,6 +144,7 @@ export class PropsView {
   private readonly doors = new Map<string, DoorView>()
   private readonly cables = new Map<string, CableView>()
   private readonly cameras = new Map<string, CameraView>()
+  private readonly gases = new Map<string, GasView>()
   private readonly mats: Record<string, StandardMaterial>
   private miniCache: MiniProp[] = []
   /** Владелец камеры — своя команда или чужая (ставит main.ts: знает myId и
@@ -166,6 +200,9 @@ export class PropsView {
           break
         case 'camera':
           view.buildCamera(prop.id, prop.pos)
+          break
+        case 'gas':
+          view.buildGas(prop.id, prop.pos, prop.size)
           break
       }
     }
@@ -282,6 +319,70 @@ export class PropsView {
       this.ownerState(cam.owner) === 'own' ? new Color3(0.22, 1.0, 0.61) : new Color3(1.0, 0.3, 0.82)
   }
 
+  /** Газ (M4 §14.2): AABB-объём ловушки — полупрозрачный fill + каркас из
+   *  рёбер. Материал fill'а динамический (цвет/альфа по состоянию из снапа),
+   *  каркас — LinesMesh: у него свой цвет без освещения, телеграф-мигание
+   *  дешёвое. Клиент никогда не решает «идёт газ» — только рисует open. */
+  private buildGas(id: string, pos: readonly [number, number, number], size: readonly [number, number, number]): void {
+    const [w, h, d] = size
+    const fillMat = new StandardMaterial(`mat.prop.${id}.gas`, this.scene)
+    fillMat.disableLighting = true
+    fillMat.emissiveColor = GAS_FILL_IDLE
+    fillMat.alpha = 0.06
+    fillMat.specularColor = Color3.Black()
+    const fill = MeshBuilder.CreateBox(`prop.${id}`, { width: w, height: h, depth: d }, this.scene)
+    fill.position.set(pos[0], pos[1], pos[2])
+    fill.material = fillMat
+    fill.isPickable = false
+    // каркас — 12 рёбер коробки; линии рисуем явно, enableEdgesRendering на
+    // прозрачном боксе дал бы зет-артефакты поверх самого fill'а
+    const hx = w / 2
+    const hy = h / 2
+    const hz = d / 2
+    const v = (sx: number, sy: number, sz: number): Vector3 =>
+      new Vector3(pos[0] + sx * hx, pos[1] + sy * hy, pos[2] + sz * hz)
+    const corners = [
+      v(-1, -1, -1), v(1, -1, -1), v(1, -1, 1), v(-1, -1, 1),
+      v(-1, 1, -1), v(1, 1, -1), v(1, 1, 1), v(-1, 1, 1),
+    ]
+    const edges: [Vector3, Vector3][] = []
+    for (const [a, b] of [
+      [0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4], [0, 4], [1, 5], [2, 6], [3, 7],
+    ] as const) {
+      edges.push([corners[a], corners[b]])
+    }
+    const frame = MeshBuilder.CreateLineSystem(`prop.${id}.frame`, { lines: edges }, this.scene)
+    frame.color = GAS_FRAME_IDLE
+    frame.alpha = 0.35
+    frame.isPickable = false
+    const gas: GasView = { id, x: pos[0], y: pos[1], z: pos[2], w, h, d, fill, fillMat, frame, open: false, armedAt: 0 }
+    this.gases.set(id, gas)
+    this.paintGas(gas, 0)
+  }
+
+  /** Состояние → материалы газа. now — производительное время (мс), от него
+   *  считаются телеграф и пульсация; дискретное мигание ~4 Гц (ГДД §14.2). */
+  private paintGas(g: GasView, now: number): void {
+    const telegraph = g.open && g.armedAt > 0 && now - g.armedAt < GAS_TELEGRAPH_S * 1000
+    if (!g.open) {
+      g.fillMat.emissiveColor = GAS_FILL_IDLE
+      g.fillMat.alpha = 0.06
+      g.frame.color = GAS_FRAME_IDLE
+      g.frame.alpha = 0.35
+    } else if (telegraph) {
+      // жёлтое мигание каркаса; fill пока остаётся тусклым — «газ ещё не пошёл»
+      g.fillMat.emissiveColor = GAS_FILL_IDLE
+      g.fillMat.alpha = 0.06
+      g.frame.color = GAS_FRAME_TELEGRAPH
+      g.frame.alpha = Math.floor(now / 125) % 2 === 0 ? 0.95 : 0.15 // ~4 Гц
+    } else {
+      g.fillMat.emissiveColor = GAS_FILL_ACTIVE
+      g.fillMat.alpha = 0.25 + 0.06 * Math.sin(now / 260) // лёгкая пульсация плотности
+      g.frame.color = GAS_FRAME_ACTIVE
+      g.frame.alpha = 0.85
+    }
+  }
+
   private buildCable(id: string, points: readonly [number, number, number][]): void {
     if (points.length < 2) return
     const cable: CableView = { id, path: points.map((p) => new Vector3(...p)), meshes: [] }
@@ -331,6 +432,29 @@ export class PropsView {
           dirty = true
           break
         }
+        case 'gas': {
+          const gas = this.gases.get(p.id)
+          if (gas !== undefined) {
+            if (p.open !== undefined && gas.open !== p.open) {
+              // телеграф считаем от момента наблюдения flip'а 0→1 (ГДД §14.2,
+              // п.4: точность долей секунды не нужна, серверный armAt неsync'ится)
+              if (p.open) gas.armedAt = performance.now()
+              gas.open = p.open
+              dirty = true
+            }
+          } else if (p.x !== undefined && p.y !== undefined && p.z !== undefined) {
+            this.buildGas(p.id, [p.x, p.y, p.z], [...GAS_DEFAULT_SIZE])
+            // газ мог приехать уже с открытым клапаном (проп создался позже
+            // взвода) — состояние ставим сразу, иначе каркас соврёт до первого flip
+            const created = this.gases.get(p.id)
+            if (created !== undefined && p.open === true) {
+              created.open = true
+              created.armedAt = performance.now()
+            }
+            dirty = true
+          }
+          break
+        }
         case 'camera': {
           if (p.x === undefined || p.y === undefined || p.z === undefined) break
           const cam = this.cameras.get(p.id)
@@ -370,6 +494,9 @@ export class PropsView {
     }
     for (const s of this.switches.values()) {
       boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, 1, s.z - 0.5], max: [s.x + 0.5, 1.9, s.z + 0.5] })
+    }
+    for (const g of this.gases.values()) {
+      boxes.push({ label: `ГАЗ ${g.id.toUpperCase()} — КЛАПАН ${g.open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}`, min: [g.x - g.w / 2, g.y - g.h / 2, g.z - g.d / 2], max: [g.x + g.w / 2, g.y + g.h / 2, g.z + g.d / 2] })
     }
     for (const c of this.cameras.values()) {
       const state =
@@ -434,6 +561,11 @@ export class PropsView {
       // выезд вверх: центр полотна поднимается на высоту двери
       d.pivot.position.y = d.baseY + d.h * d.angle
     }
+    // газ: телеграф/пульсация считаются от производительного времени кадра
+    if (this.gases.size > 0) {
+      const now = performance.now()
+      for (const g of this.gases.values()) this.paintGas(g, now)
+    }
   }
 
   /** Ближайшая точка джек-ина для хакера (терминал 2 м / радио 8 м, GDD §12.1). */
@@ -495,7 +627,7 @@ export class PropsView {
 
   private known(id: string): boolean {
     return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id) ||
-      this.cameras.has(id)
+      this.cameras.has(id) || this.gases.has(id)
   }
 
   private rebuildMini(): void {
@@ -506,6 +638,9 @@ export class PropsView {
     for (const c of this.cameras.values()) out.push({ x: c.x, z: c.z, kind: 'camera' })
     for (const d of this.doors.values()) {
       out.push({ x: d.x, z: d.z, kind: 'door', open: d.open, axis: d.axis, len: d.len })
+    }
+    for (const g of this.gases.values()) {
+      out.push({ x: g.x, z: g.z, kind: 'gas', open: g.open })
     }
     this.miniCache = out
   }

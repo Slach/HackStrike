@@ -27,7 +27,7 @@ export type ClientMessage =
   | { t: 'run'; prog: RunProg; dev?: string }
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable'
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas'
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
  *  the server sent them, so an absent "open" means "keep the last
@@ -38,7 +38,7 @@ export interface SnapProp {
   x?: number
   y?: number
   z?: number
-  open?: boolean // door
+  open?: boolean // door / gas valve (M4 §14.3)
   radius?: number // radio
   owner?: number // camera (M3 §13.7): LED-индикатор владения; отсутствует = нейтральная
 }
@@ -136,6 +136,7 @@ export type ServerMessage =
   | ({ t: 'snap' } & Snapshot)
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
   | { t: 'death'; by: number; respawnAt: number }
+  | { t: 'envkill'; victim: number } // M4 (GDD §14.3): broadcast, killfeed «ЛОВУШКА» всем
   | { t: 'matchend'; winner: number; scores: [number, number] }
   | { t: 'pong'; c: number; s: number; tick: number }
   // M2 (GDD §12.5)
@@ -169,7 +170,7 @@ export interface GameSocketHandlers {
 }
 
 const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas']
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
@@ -231,7 +232,9 @@ function parseProp(v: unknown): SnapProp | null {
     prop.y = y
     prop.z = z
   }
+  // gas (M4 §14.3) arrives as open:0|1, door as open:true/false — accept both.
   if (typeof p.open === 'boolean') prop.open = p.open
+  else if (p.open === 0 || p.open === 1) prop.open = p.open === 1
   const radius = num(p.radius, Number.NaN)
   if (Number.isFinite(radius) && radius > 0) prop.radius = radius
   const owner = num(p.owner, Number.NaN)
@@ -343,6 +346,11 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     }
     case 'death':
       return { t: 'death', by: num(m.by, -1), respawnAt: num(m.respawnAt, 0) }
+    case 'envkill': {
+      const victim = num(m.victim, -1)
+      if (victim < 0) return null
+      return { t: 'envkill', victim }
+    }
     case 'matchend':
       // Not spelled out in GDD §9.2 yet: accepted minimally, winner -1 = draw.
       return {

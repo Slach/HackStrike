@@ -38,6 +38,7 @@ const SNIPER_ZOOM_RANGE = 35 // дальше — зум не включаетс�
 type SnapMsg = Extract<ServerMessage, { t: 'snap' }>
 type ShotMsg = Extract<ServerMessage, { t: 'shot' }>
 type DeathMsg = Extract<ServerMessage, { t: 'death' }>
+type EnvKillMsg = Extract<ServerMessage, { t: 'envkill' }>
 type EndMsg = Extract<ServerMessage, { t: 'matchend' }>
 type JackinMsg = Extract<ServerMessage, { t: 'jackin' }>
 
@@ -72,10 +73,15 @@ const prevAlive = new Map<number, boolean>()
 const lastHits = new Map<number, { by: number; at: number }>()
 const debugShots: ShotMsg[] = [] // ring buffer behind window.__hs for e2e probes
 let lastMyHp = -1
+/** Смерть от среды (M4 §14.3): envkill(broadcast) рисует киллфид «ЛОВУШКА» и
+ *  ставит штамп на жертву — последующий alive→dead переход снапа того же id
+ *  молча подавляется (иначе дубль/`???`). */
+const envKillAt = new Map<number, number>()
 
 function resetSession(): void {
   playing = false
   myId = null
+  envKillAt.clear()
   lastMyHp = -1
   buffer.clear()
   views.clear()
@@ -162,18 +168,25 @@ function handleSnap(snap: SnapMsg): void {
   for (const p of snap.players) {
     const prev = prevAlive.get(p.id)
     if (prev === true && !p.alive) {
-      const hit = lastHits.get(p.id)
-      const fresh = hit !== undefined && performance.now() - hit.at <= KILLFEED_ATTRIBUTION_MS
-      const killerId = fresh ? hit.by : -1
-      const killer = killerId >= 0 ? latestMeta.get(killerId)?.name ?? `#${killerId}` : '???'
-      const killerTeam = killerId >= 0 ? latestMeta.get(killerId)?.team ?? 0 : 0
-      hud.killfeed(killer, killerTeam, p.name, p.team)
+      const env = envKillAt.get(p.id)
+      if (env !== undefined && performance.now() - env <= KILLFEED_ATTRIBUTION_MS) {
+        envKillAt.delete(p.id) // киллфид «ЛОВУШКА» уже выведен по envkill
+      } else {
+        const hit = lastHits.get(p.id)
+        const fresh = hit !== undefined && performance.now() - hit.at <= KILLFEED_ATTRIBUTION_MS
+        const killerId = fresh ? hit.by : -1
+        const killer = killerId >= 0 ? latestMeta.get(killerId)?.name ?? `#${killerId}` : '???'
+        const killerTeam = killerId >= 0 ? latestMeta.get(killerId)?.team ?? 0 : 0
+        hud.killfeed(killer, killerTeam, p.name, p.team)
+      }
     }
     prevAlive.set(p.id, p.alive)
   }
   for (const id of [...prevAlive.keys()]) {
     if (!latestMeta.has(id)) prevAlive.delete(id)
   }
+  const now = performance.now()
+  for (const [id, at] of envKillAt) if (now - at > KILLFEED_ATTRIBUTION_MS) envKillAt.delete(id)
 
   // Respawn confirmed by the server → drop the death overlay.
   if (me?.alive === true) hud.hideDeath()
@@ -184,10 +197,24 @@ function handleSnap(snap: SnapMsg): void {
   lastTimeLeft = snap.timeLeft
 }
 
+function handleEnvKill(msg: EnvKillMsg): void {
+  // §14.3: broadcast убийства средой — киллфид «ЛОВУШКА» всем, имя/команда из
+  // meta последнего снапа. Штамп подавляет переходной дубль в handleSnap.
+  envKillAt.set(msg.victim, performance.now())
+  const v = latestMeta.get(msg.victim)
+  if (v) hud.killfeedEnv(v.name, v.team)
+}
+
 function handleDeath(msg: DeathMsg): void {
-  const killer =
-    msg.by >= 0 ? latestMeta.get(msg.by)?.name ?? `#${msg.by}` : '???'
-  hud.showDeath(killer, msg.respawnAt)
+  // by=0 — среда/ловушка (M4 §14.3): убийства нет в счётчике, имя стрелявшего
+  // не подставляем (киллфид рисует envkill). Отсутствующее by (parse → -1) —
+  // старое поведение '???'.
+  if (msg.by === 0) {
+    hud.showDeath('ЛОВУШКА', msg.respawnAt)
+  } else {
+    const killer = msg.by >= 0 ? latestMeta.get(msg.by)?.name ?? `#${msg.by}` : '???'
+    hud.showDeath(killer, msg.respawnAt)
+  }
   autofire.reset()
   hackviewOff(false) // сервер джек-аутит сам; оверлей гасим сразу (ГДД §12.1)
 }
@@ -228,6 +255,9 @@ const sock = new GameSocket({
         break
       case 'death':
         handleDeath(msg)
+        break
+      case 'envkill':
+        handleEnvKill(msg)
         break
       case 'matchend':
         handleEnd(msg)

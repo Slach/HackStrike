@@ -22,8 +22,8 @@ var classes = map[string]classStats{
 	"assault": {hp: 125, speed: 6.5, weapon: weapon{name: "ar", damage: 10, interval: time.Second / 8}},
 	"heavy":   {hp: 200, speed: 4.5, weapon: weapon{name: "minigun", damage: 7, interval: time.Second / 12}},
 	// hacker (§3.3): дефолт — пистолет; нож — переключение (Q, M2): melee
-// 1.8 м, 60 урона, 1.2 с, перерубает кабели (§12.1).
-"hacker": {hp: 100, speed: 6.0, weapon: weapon{name: "pistol", damage: 18, interval: time.Second / 3}},
+	// 1.8 м, 60 урона, 1.2 с, перерубает кабели (§12.1).
+	"hacker": {hp: 100, speed: 6.0, weapon: weapon{name: "pistol", damage: 18, interval: time.Second / 3}},
 }
 
 const defaultClass = "assault"

@@ -8,6 +8,7 @@ package main
 import (
 	"log"
 	"math"
+	"time"
 )
 
 // M2-константы (§12.1–§12.4; менять только через ГДД).
@@ -26,11 +27,11 @@ const (
 	firewallWork  = 1.5 // §13.5: активный фильтр — дороже watcher'а, дешевле trojan'а
 	antivirusWork = 1.5 // §13.6: активная защита — тот же ярус, что firewall
 
-	camVisionRadius = 12.0 // §13.7: зона видимости камеры, м (радиус + LOS)
+	camVisionRadius = 12.0         // §13.7: зона видимости камеры, м (радиус + LOS)
 	camFeedEvery    = tickRate / 2 // лента камеры 2 Гц (§13.7: 0.5–1 с достаточно)
 	camBodyHeight   = 0.9          // центр корпуса игрока от ног (цель LOS-луча)
 
-	watcherLogCap  = 20      // §13.1 №1: ёмкость ring-buffer журнала событий
+	watcherLogCap  = 20       // §13.1 №1: ёмкость ring-buffer журнала событий
 	radarFeedEvery = tickRate // §13.1 №3: радар-срез 1 Гц (аналог camFeedTick)
 
 	deckStatusEvery = tickRate / 2 // статус деки 2 Гц (§12.5)
@@ -38,6 +39,11 @@ const (
 	// progNetMbps — «поток» одной активной программы для графика netLoad
 	// (чисто отображение: 10 Мбит/с × N / канал точки входа).
 	progNetMbps = 10.0
+
+	// M4 объект 1 «газовая камера» (§14.2, числа v0): DoT внутри AABB газа,
+	// пока клапан открыт; телеграф перед первым уроном после взвода.
+	gasDPS       = 8.0                     // HP/с
+	gasTelegraph = 1500 * time.Millisecond // мигание перед первым уроном
 )
 
 // deviceStats — железо устройств по kind (§12.2).
@@ -49,6 +55,7 @@ var deviceStats = map[string]struct {
 	"radio":    {cpu: 0.1, npu: 0, net: 20, ram: 1},
 	"switch":   {cpu: 0.2, npu: 0, net: 100, ram: 1},
 	"door":     {cpu: 0.2, npu: 0, net: 100, ram: 1},
+	"gas":      {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §14.2: клапан — контроллер, как дверь
 	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §13.7: сенсор, как switch
 }
 
@@ -56,17 +63,19 @@ var deviceStats = map[string]struct {
 // (последний trojan), vulnedBy и open у дверей.
 type device struct {
 	id      string
-	kind    string // terminal|radio|switch|door|camera
+	kind    string // terminal|radio|switch|door|gas|camera
 	pos     vec3
 	radius  float64 // радио
 	cpu     float64
 	npu     float64
 	ram     int
 	netMbps float64
-	box     aabb // дверь: AABB-коллайдер (open отключает)
+	box     aabb // дверь/газ: AABB объёма пропа
 
 	owner       uint64          // владелец trojan (0 = нейтральное)
-	open        bool            // дверь: стартует закрытой
+	open        bool            // дверь/газ (§14.2): стартует закрытой
+	gasArmAt    time.Time       // газ (§14.2): момент последнего взвода клапана; нулевой = не взведён
+	gasArmCount uint64          // газ: счётчик взводов для ключа накопленного долга (resync-устойчив)
 	vulnedBy    map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
 	watcherBy   map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
 	firewalled  uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
@@ -104,6 +113,7 @@ type cyberState struct {
 	order   []string // порядок карты: стабильные снапшоты/сканы
 	cables  []*cable
 	doors   []*device
+	gases   []*device // §14.2: газовые ловушки (DoT-объёмы)
 	cameras []*device // §13.7: сенсоры наблюдения (лента владельцу)
 }
 
@@ -134,6 +144,15 @@ func buildCyber(m *gameMap) *cyberState {
 				max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1], p.Pos[2] + p.Size[2]/2},
 			}
 			cs.doors = append(cs.doors, d)
+		}
+		if d.kind == "gas" {
+			// §14.2: pos — центр объёма по всем осям (в отличие от двери, у
+			// которой pos — низ панели): gas pos y=1.5, size y=3 → 0..3.
+			d.box = aabb{
+				min: vec3{p.Pos[0] - p.Size[0]/2, p.Pos[1] - p.Size[1]/2, p.Pos[2] - p.Size[2]/2},
+				max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1]/2, p.Pos[2] + p.Size[2]/2},
+			}
+			cs.gases = append(cs.gases, d)
 		}
 		if d.kind == "camera" {
 			cs.cameras = append(cs.cameras, d)
@@ -494,9 +513,10 @@ func (w *world) handleRun(pl *player, msg message) {
 	log.Printf("room: player %d run %s %s", pl.id, prog, devID)
 }
 
-// handleCtrl — {"t":"ctrl"} (§12.5): toggle двери. Только владелец trojan,
-// лично и из hacker view (джекнутый), и пока дверь достижима от точки
-// входа — перерубленный кабель отрезает и управление (контр-хакинг §6).
+// handleCtrl — {"t":"ctrl"} (§12.5): toggle двери; §14.2 — тот же контроллер
+// у газа (вентиль). Только владелец trojan, лично и из hacker view
+// (джекнутый), и пока устройство достижимо от точки входа — перерубленный
+// кабель отрезает и управление (контр-хакинг §6).
 func (w *world) handleCtrl(pl *player, msg message) {
 	if !pl.alive {
 		return
@@ -506,7 +526,7 @@ func (w *world) handleCtrl(pl *player, msg message) {
 		return
 	}
 	dev, ok := w.cyber.devices[str(msg, "dev")]
-	if !ok || dev.kind != "door" || dev.owner != pl.id {
+	if !ok || (dev.kind != "door" && dev.kind != "gas") || dev.owner != pl.id {
 		w.denied(pl, "not_owner")
 		return
 	}
@@ -518,6 +538,16 @@ func (w *world) handleCtrl(pl *player, msg message) {
 		return
 	}
 	dev.open = !dev.open // snap.props разнесёт всем (§12.5)
+	if dev.kind == "gas" {
+		// §14.2: взвод ставит телеграф-таймер и обнуляет накопленный долг
+		// (close→open рестартит телеграф); снятие гасит мгновенно.
+		if dev.open {
+			dev.gasArmAt = w.now()
+			dev.gasArmCount++
+		} else {
+			dev.gasArmAt = time.Time{}
+		}
+	}
 	log.Printf("room: player %d ctrl %s -> open=%v", pl.id, dev.id, dev.open)
 }
 
@@ -895,6 +925,45 @@ func (w *world) radarFeedTick() {
 	}
 }
 
+// gasTick — §14.2: DoT газовых ловушек, комната-горутина, после cyberTick,
+// до broadcastSnap. Для каждого газа с открытым вентилем: пока идёт
+// телеграф (первые gasTelegraph после взвода) — урона нет; иначе каждый
+// живой игрок, чей AABB пересекает объём пропа, копит float-долг, и при
+// переполнении получает урон целыми очками (FF ON, мёртвым — ничего). Долг
+// сбрасывается при смене момента взвода (close→open рестартит телеграф).
+func (w *world) gasTick(dt float64) {
+	if len(w.cyber.gases) == 0 {
+		return
+	}
+	now := w.now()
+	for _, g := range w.cyber.gases {
+		if !g.open {
+			continue
+		}
+		if g.gasArmAt.IsZero() || now.Sub(g.gasArmAt) < gasTelegraph {
+			continue
+		}
+		for _, pl := range w.players {
+			if !pl.alive || !boxesOverlap(playerBoxAt(pl.pos), g.box) {
+				continue
+			}
+			key := gasDebtKey{dev: g.id, arm: g.gasArmCount, pl: pl.id}
+			debt, ok := w.gasDebt[key]
+			if !ok { // свежий ключ: первый тик внутри объёма не начисляет — долг с нуля
+				w.gasDebt[key] = gasDPS * dt
+				continue
+			}
+			debt += gasDPS * dt
+			whole := int(debt)
+			if whole > 0 {
+				debt -= float64(whole)
+				w.envDamage(pl, whole)
+			}
+			w.gasDebt[key] = debt
+		}
+	}
+}
+
 // snapProps — динамическое состояние пропсов для снапа (§12.5), всем.
 func (cs *cyberState) snapProps() []any {
 	props := make([]any, 0, len(cs.order)+len(cs.cables))
@@ -905,7 +974,7 @@ func (cs *cyberState) snapProps() []any {
 			"x": round3(d.pos[0]), "y": round3(d.pos[1]), "z": round3(d.pos[2]),
 		}
 		switch d.kind {
-		case "door":
+		case "door", "gas": // §14.2: газ несёт open (клапан), как дверь
 			m["open"] = d.open
 		case "radio":
 			m["radius"] = d.radius

@@ -680,21 +680,36 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	w := newWorld(m)
 	cs := w.cyber
 
-	if len(cs.order) != 10 || len(cs.cables) != 9 || len(cs.doors) != 2 {
-		t.Fatalf("m1 M2+M3 props: want 10 devices / 7 cables + 2 radio uplinks / 2 doors, got %d/%d/%d",
-			len(cs.order), len(cs.cables), len(cs.doors))
+	// M4-объект 1: +1 устройство (газ g1) и +1 кабель c8 (g1—s2, «короткий
+	// кабель» клапана к контроллеру — как d2 через c5).
+	if len(cs.order) != 11 || len(cs.cables) != 10 || len(cs.doors) != 2 || len(cs.gases) != 1 {
+		t.Fatalf("m1 M2+M3+M4 props: want 11 devices / 8 cables + 2 radio uplinks / 2 doors / 1 gas, got %d/%d/%d/%d",
+			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
 	reach := cs.reachable("t1")
-	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "r1", "r2", "cam1", "cam2"} {
+	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "g1", "r1", "r2", "cam1", "cam2"} {
 		if !reach[id] {
 			t.Fatalf("%s must be reachable from t1 on m1 (радио — через аплинк)", id)
 		}
 	}
-	// Двери стоят в проходах (не пересекают стены) и вне джек-ин радиусов спавнов.
+	// Двери и газ стоят в проходах/комнатах (не пересекают стены) и вне
+	// джек-ин радиусов спавнов. Газ по определению наполняет комнату от пола
+	// (min y=0) — пересечение с floor допустимо и ожидаемо, поэтому для газа
+	// проверяем только нe-floor коллайдеры.
 	for _, d := range cs.doors {
 		if m.overlapsAny(d.box) {
 			t.Fatalf("door %s intersects static geometry", d.id)
+		}
+	}
+	for _, g := range cs.gases {
+		for _, c := range m.Colliders {
+			if c.Kind == "floor" {
+				continue
+			}
+			if boxesOverlap(g.box, aabb{vec3(c.Min), vec3(c.Max)}) {
+				t.Fatalf("gas %s intersects %s collider %v..%v", g.id, c.Kind, c.Min, c.Max)
+			}
 		}
 	}
 	for _, team := range []int{0, 1} {

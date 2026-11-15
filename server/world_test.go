@@ -92,7 +92,6 @@ func TestRebalanceTeams(t *testing.T) {
 	}
 }
 
-
 // Имена уникальны: второй «Slach» становится «Slach-2»; после выхода имя
 // освобождается.
 func TestUniqueNames(t *testing.T) {

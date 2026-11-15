@@ -274,10 +274,33 @@ export class Hud {
   }
 
   killfeed(killer: string, killerTeam: number, victim: string, victimTeam: number): void {
+    this.pushKillfeedRow('kf', `t${killerTeam}`, killer, victim, victimTeam)
+  }
+
+  /** Смерть от ловушки/среды (M4 §14.2): «ЛОВУШКА» вместо имени — убийства
+   *  нет (FF ON, счёт не двигается), строка ядовито-зелёная, жертва — своим. */
+  killfeedEnv(victim: string, victimTeam: number): void {
+    this.pushKillfeedRow('kf env', 'env', 'ЛОВУШКА', victim, victimTeam, '#7dff50')
+  }
+
+  private pushKillfeedRow(
+    rowCls: string,
+    killerCls: string,
+    killer: string,
+    victim: string,
+    victimTeam: number,
+    killerColor?: string,
+  ): void {
     const row = document.createElement('div')
-    row.className = 'kf'
+    row.className = rowCls
     const k = document.createElement('span')
-    k.className = `t${killerTeam}`
+    k.className = killerCls
+    if (killerColor !== undefined) {
+      // inline: таблица стилей живёт в index.html (вне src/), а газ без
+      // акцентного цвета сливался бы с обычным киллфидом
+      k.style.color = killerColor
+      k.style.textShadow = '0 0 8px rgba(125, 255, 80, 0.6)'
+    }
     k.textContent = killer
     const arrow = document.createElement('span')
     arrow.className = 'arrow'

@@ -19,7 +19,7 @@ export interface MiniSelf {
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas'
 
 export interface MiniProp {
   x: number
@@ -188,6 +188,22 @@ export class Minimap {
         ctx.fillStyle = 'rgba(120,230,255,0.9)'
         ctx.beginPath()
         ctx.arc(x, y, 1.4, 0, Math.PI * 2)
+        ctx.fill()
+      } else if (p.kind === 'gas') {
+        // газ (M4 §14.2): ромб с точкой — форма switch'а, цвет состояния:
+        // закрытый клапан тусклый, открытый (газ идёт) яркий ядовито-зелёный
+        const open = p.open === true
+        ctx.strokeStyle = open ? '#7dff50' : '#2b7a4b'
+        ctx.beginPath()
+        ctx.moveTo(x, y - 4.5)
+        ctx.lineTo(x + 4.5, y)
+        ctx.lineTo(x, y + 4.5)
+        ctx.lineTo(x - 4.5, y)
+        ctx.closePath()
+        ctx.stroke()
+        ctx.fillStyle = open ? '#7dff50' : '#2b7a4b'
+        ctx.beginPath()
+        ctx.arc(x, y, 1.2, 0, Math.PI * 2)
         ctx.fill()
       } else {
         // switch: ромб

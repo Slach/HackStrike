@@ -55,6 +55,7 @@ const KIND_LABEL: Readonly<Record<PropKind, string>> = {
   door: 'ДВЕРЬ',
   camera: 'КАМЕРА',
   cable: 'КАБЕЛЬ',
+  gas: 'ГАЗ',
 }
 
 const PROG_LABEL: Readonly<Record<string, string>> = {
@@ -83,6 +84,8 @@ const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
   switch: 'switch',
   door: 'door',
   cam: 'camera',
+  gas: 'gas', // M4 §14.2: фильтр палитры по kind и по-русски
+  газ: 'gas',
 }
 
 /** Кандидат слэш-палитры: устройство или программа. */
@@ -213,7 +216,8 @@ export class HackView {
   }
   /** Обнаруженные устройства живут между джек-инами (туман войны — свои знания). */
   private devices = new Map<string, ScanDevice>()
-  private readonly doorOpen = new Map<string, boolean>()
+  /** open-состояния дверей и газовых клапанов из снапа (M4: общий механизм). */
+  private readonly valveOpen = new Map<string, boolean>()
   private target: string | null = null
   private vulned = new Map<string, true>()
   /** Устройства с моим watcher-триггером (M3 §13.1) — для ореола на карте. */
@@ -256,7 +260,9 @@ export class HackView {
   private sparkRefs: SparkRef[] = []
   private progLists: HTMLElement[] = []
   private netmapBoxes: HTMLElement[] = []
-  private doorRefs: { dev: string; status: HTMLElement; btn: HTMLButtonElement }[] = []
+  /** Табы управляемых устройств (двери + газовые клапаны): точечное обновление
+   *  статуса/кнопки без перестройки DOM. kind нужен для подписи статуса. */
+  private doorRefs: { dev: string; kind: 'door' | 'gas'; status: HTMLElement; btn: HTMLButtonElement }[] = []
   private camRefs: { dev: string; list: HTMLElement; time: HTMLElement; count: HTMLElement }[] = []
   private radarRefs: { dev: string; list: HTMLElement; count: HTMLElement }[] = []
 
@@ -435,13 +441,14 @@ export class HackView {
     this.schedule(() => this.updateRadar())
   }
 
-  /** Состояние дверей из snap.props (без перестройки DOM). */
+  /** Состояние дверей/газовых клапанов из snap.props (без перестройки DOM). */
   updateProps(props: readonly SnapProp[]): void {
     let changed = false
     for (const p of props) {
-      if (p.kind !== 'door' || p.open === undefined) continue
-      if (this.doorOpen.get(p.id) !== p.open) {
-        this.doorOpen.set(p.id, p.open)
+      // газ (M4 §14.2) — то же поле open («клапан открыт»), тот же таб-панель
+      if ((p.kind !== 'door' && p.kind !== 'gas') || p.open === undefined) continue
+      if (this.valveOpen.get(p.id) !== p.open) {
+        this.valveOpen.set(p.id, p.open)
         changed = true
       }
     }
@@ -538,12 +545,13 @@ export class HackView {
       return
     }
     // ПРОБЕЛЬ на табе двери-владения = TOGGLE (плейтест M3) — как кнопка,
-    // но с клавиатуры. Сервер валидирует ctrl, это только UX.
+    // но с клавиатуры. Сервер валидирует ctrl, это только UX. Газ (M4 §14.2)
+    // — то же правило: взвод клапана пробелом на своём табе газа.
     if (e.code === 'Space') {
       const pane0 = this.panes[this.activePane]
       const tab0 = this.tabs.find((t) => t.key === pane0?.tabKey)
       const dev0 = tab0?.dev !== null && tab0?.dev !== undefined ? this.devices.get(tab0.dev) : undefined
-      if (dev0 !== undefined && dev0.kind === 'door' && dev0.owner === this.myId) {
+      if (dev0 !== undefined && (dev0.kind === 'door' || dev0.kind === 'gas') && dev0.owner === this.myId) {
         e.preventDefault()
         this.deps.send({ t: 'ctrl', dev: dev0.id, action: 'toggle' })
       }
@@ -1103,7 +1111,9 @@ export class HackView {
       body.append(txt('div', 'hv-dim', `${dev.toUpperCase()} БОЛЬШЕ НЕ В СЕТИ — ПЕРЕСКАН [1]`))
       return
     }
-    if (d.kind === 'door') {
+    // Газ (M4 §14.2) — то же управляемое устройство, что дверь: общий UX-панель
+    // (статус + TOGGLE + подсказка про trojan), только подпись статуса другая.
+    if (d.kind === 'door' || d.kind === 'gas') {
       const wrap = el('div', 'door-ui')
       const status = el('div', 'door-status')
       wrap.append(status)
@@ -1117,7 +1127,7 @@ export class HackView {
         wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] ТРОЯН'))
       }
       body.append(wrap)
-      this.doorRefs.push({ dev, status, btn })
+      this.doorRefs.push({ dev, kind: d.kind, status, btn })
       this.appendWatchPanel(body, dev, d)
       return
     }
@@ -1248,8 +1258,10 @@ export class HackView {
 
   private updateDoorStates(): void {
     for (const ref of this.doorRefs) {
-      const open = this.doorOpen.get(ref.dev) ?? false
-      ref.status.textContent = open ? 'ОТКРЫТА' : 'ЗАКРЫТА'
+      const open = this.valveOpen.get(ref.dev) ?? false
+      // газ (M4 §14.2): та же панель, другие подписи — «КЛАПАН: ОТКРЫТ/ЗАКРЫТ»
+      ref.status.textContent =
+        ref.kind === 'gas' ? `КЛАПАН: ${open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}` : open ? 'ОТКРЫТА' : 'ЗАКРЫТА'
       ref.status.classList.toggle('open', open)
       ref.status.classList.toggle('closed', !open)
       // Обрыв кабеля отрезает и управление (контр-хакинг §6): узел без связей

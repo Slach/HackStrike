@@ -158,3 +158,26 @@ func (w *world) damage(shooter, victim *player, dmg int) bool {
 	w.scores[shooter.team]++
 	return true
 }
+
+// envDamage — урон от среды (§14.2): газовая ловушка (и будущая лава).
+// Копия damage без стрелка: hp → смерть → respawnAt +5 с + авто-джек-аут
+// (хакер в газе сгорел в meatspace) + death by=0 жертве + broadcast envkill
+// (killfeed «ЛОВУШКА» всем: death исторически приватен, §14.3); счёт команд
+// НЕ растёт, shot-сообщения нет.
+// Возвращает true, если жертва умерла.
+func (w *world) envDamage(victim *player, dmg int) bool {
+	if !victim.alive {
+		return false
+	}
+	victim.hp -= dmg
+	if victim.hp > 0 {
+		return false
+	}
+	victim.hp = 0
+	victim.alive = false
+	victim.respawnAt = w.now().Add(respawnDelay)
+	w.jackout(victim)
+	w.sendTo(victim.id, message{"t": "death", "by": uint64(0), "respawnAt": victim.respawnAt.UnixMilli()})
+	w.broadcast(message{"t": "envkill", "victim": victim.id})
+	return true
+}

@@ -45,6 +45,20 @@ type world struct {
 	// sessions — отключившиеся игроки по имени: F5/обрыв не должен
 	// телепортировать домой и сбрасывать захваты (плейтест M2).
 	sessions map[string]*session
+
+	// gasDebt — накопленный float-долг урона газа (§14.2): ключ — (устройство,
+	// счётчик взвода, игрок). Урон начисляется целыми очками при переполнении
+	// долга, не зависит от тик-рейта; gasArmCount в ключе делает долг
+	// невалидным после close→open (телеграф рестартит).
+	gasDebt map[gasDebtKey]float64
+}
+
+// gasDebtKey — ключ накопленного долга: gasArmCount растёт на каждое
+// взведение клапана, поэтому после close→open старый долг не переиспользуется.
+type gasDebtKey struct {
+	dev string
+	arm uint64
+	pl  uint64
 }
 
 // sessionTTL — сколько ждём вернувшегося игрока.
@@ -74,6 +88,7 @@ func newWorld(m *gameMap) *world {
 		fragLimit: fragLimit,
 		matchLen:  matchDuration,
 		now:       time.Now,
+		gasDebt:   make(map[gasDebtKey]float64),
 	}
 }
 
@@ -328,6 +343,7 @@ func (w *world) simulateTick() {
 		w.cyberTick(pl, tickDT)
 		w.interactTick(pl)
 	}
+	w.gasTick(tickDT) // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
 	w.matchCheck()
 	w.rebalanceTeams()
 	w.deckStatusTick()
