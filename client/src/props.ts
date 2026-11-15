@@ -487,18 +487,22 @@ export class PropsView {
     this.tryValvePipe(id)
   }
 
-  /** Труба клапана → полоса (§14.6.1, ревебр owner: клапаны на потолке,
-   *  трубы прямые, приглушённо-синие): ОДИН прямой сегмент от клапана до
-   *  центра полосы, без ломаных. Идемпотентна — вызывается и из buildValve,
-   *  и из buildFire (кто вторым узнал про обе половины, тот и построил). */
+  /** Труба клапана → полоса (§14.6.1, ревебр owner «вертикально спускаться
+   *  по стене, потом по полу»): от потолочного клапана строго вниз вдоль
+   *  стены (x,z клапана = прижаты к стене в карте), затем по полу до центра
+   *  своей полосы. Приглушённый синий (mats.pipe). Идемпотентна — вызывается
+   *  и из buildValve, и из buildFire (кто вторым узнал про обе половины,
+   *  тот и построил). */
   private tryValvePipe(id: string): void {
     const v = this.valves.get(id)
     if (v === undefined || v.pipeBuilt) return
     const fire = [...this.fires.values()].find((f) => f.valveId === id)
     if (fire === undefined) return
+    const floorY = fire.y - fire.h / 2 // верх плиты, на которой стоит полоса
     const path = [
-      new Vector3(v.x, v.y, v.z),
-      new Vector3(fire.x, fire.y, fire.z),
+      new Vector3(v.x, v.y, v.z), // из потолочного клапана
+      new Vector3(v.x, floorY, v.z), // строго вниз вдоль стены
+      new Vector3(fire.x, floorY, fire.z), // по полу до центра полосы
     ]
     const pipe = MeshBuilder.CreateTube(`prop.${id}.pipe`, { path, radius: 0.09 }, this.scene)
     pipe.material = this.mats.pipe
