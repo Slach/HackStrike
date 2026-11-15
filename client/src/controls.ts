@@ -17,6 +17,9 @@ export class Controls {
   frozen = false
   /** Optional inverted vertical look (settings checkbox, GDD §3.2). */
   invertY = false
+  /** Пользовательский множитель чувствительности взгляда, 0.3..3.0
+   *  (экран настроек §15.5): и мышью, и тач-прицелом — look() общий путь. */
+  sensScale = 1
   readonly keys: KeysState = { w: 0, a: 0, s: 0, d: 0, interact: 0 }
 
   constructor(private canvas: HTMLCanvasElement) {
@@ -51,14 +54,15 @@ export class Controls {
    *  (movementX/Y) и touch-круга прицела (mobile.ts, ГДД §15.1). */
   look(dxPx: number, dyPx: number): void {
     if (this.frozen) return
-    this.yaw += dxPx * SENS_RAD_PER_PX
+    const sens = SENS_RAD_PER_PX * this.sensScale
+    this.yaw += dxPx * sens
     if (this.yaw > Math.PI) this.yaw -= TAU
     else if (this.yaw < -Math.PI) this.yaw += TAU
     // Wire pitch is positive-up (GDD §9.2) and dy is positive DOWN — subtract,
     // or every shot sent to the server aims vertically mirrored while the
     // local camera still feels fine. invertY flips only the local feel; the
     // wire value stays in convention.
-    const dy = (this.invertY ? dyPx : -dyPx) * SENS_RAD_PER_PX
+    const dy = (this.invertY ? dyPx : -dyPx) * sens
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + dy))
   }
 

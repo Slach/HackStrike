@@ -427,6 +427,9 @@ window.addEventListener('keydown', (e) => {
   if (playing && myCls === 'hacker') cyberMapOn = !cyberMapOn
 })
 
+hud.onSensScale = (k) => {
+  controls.sensScale = Math.max(0.3, Math.min(3, k))
+}
 hud.onJoin = (name, cls, team) => {
   myCls = cls
   controls.invertY = hud.invertYOn // settings checkbox on the join screen

@@ -4,7 +4,7 @@
 
 import { CLASSES } from './classes'
 import type { Cls, NetStats, SnapPlayer } from './net'
-import { IS_TOUCH, setLookScale } from './mobile'
+import { IS_TOUCH } from './mobile'
 
 const TEAM_LABEL = ['ЦИАНОВЫЕ', 'МАДЖЕНТОВЫЕ'] as const
 const KILLFEED_ROWS = 5
@@ -50,6 +50,9 @@ function buildCards(container: HTMLElement, initial: Cls, onPick: (cls: Cls) => 
 export class Hud {
   onJoin: (name: string, cls: Cls, team: number) => void = () => {}
   onRespawn: (cls: Cls) => void = () => {}
+  /** Пользовательский масштаб чувствительности взгляда (§15.5); main вешает
+   *  на controls.sensScale. Вызывается при инициализации и на каждый input. */
+  onSensScale: (k: number) => void = () => {}
 
   private joinCls: Cls = 'assault'
   private joinTeam = -1 // -1 = авто-баланс; выбор хранится в localStorage
@@ -68,6 +71,9 @@ export class Hud {
     invertY: byId<HTMLInputElement>('invertY'),
     lookSens: byId<HTMLInputElement>('lookSens'),
     lookSensVal: byId('lookSensVal'),
+    settingsBtn: byId('settingsBtn'),
+    settings: byId('joinSettings'),
+    settingsClose: byId('settingsClose'),
     deploy: byId<HTMLButtonElement>('deployBtn'),
     joinStatus: byId('joinStatus'),
     joinCards: byId('joinCards'),
@@ -127,10 +133,22 @@ export class Hud {
     const applySens = (): void => {
       localStorage.setItem('hs.lookSens', this.el.lookSens.value)
       this.el.lookSensVal.textContent = `${this.lookScale.toFixed(1)}×`
-      if (IS_TOUCH) setLookScale(this.lookScale)
+      this.onSensScale(this.lookScale)
     }
     applySens()
     this.el.lookSens.addEventListener('input', applySens)
+    // Единый экран настроек (§15.5): кнопка под ДЕПЛОЕМ → модалка; клик по
+    // затемнению и ESC закрывают. Одна механика на desktop и touch.
+    this.el.settingsBtn.addEventListener('click', () => this.el.settings.classList.remove('hidden'))
+    this.el.settingsClose.addEventListener('click', () => this.el.settings.classList.add('hidden'))
+    this.el.settings.addEventListener('click', (e) => {
+      if (e.target === this.el.settings) this.el.settings.classList.add('hidden')
+    })
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.el.settings.classList.contains('hidden')) {
+        this.el.settings.classList.add('hidden')
+      }
+    })
     for (const btn of this.el.teamSeg.querySelectorAll<HTMLButtonElement>('.segBtn')) {
       if (Number(btn.dataset.team) === Number(localStorage.getItem('hs.team'))) {
         this.joinTeam = Number(btn.dataset.team)

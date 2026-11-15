@@ -81,12 +81,6 @@ export function startKeyboardTracker(): void {
 // §15.5) — 0.0096 рад/px против 0.0022 у мыши. Сверху пользовательский
 // множитель слайдера настроек (0.3×…3.0×, §15.5).
 const LOOK_BASE = 0.0096 / 0.0022
-let lookScale = 1
-
-/** Пользовательская чувствительность тач-прицела (hud-слайдер, §15.5). */
-export function setLookScale(k: number): void {
-  lookScale = Math.max(0.3, Math.min(3, k))
-}
 // Мёртвая зона крестовины (~18% радиуса): центр — нейтраль, чтобы смена
 // направления на проходе пальца через центр не дёргала тело.
 const PAD_DEAD = 0.18
@@ -248,9 +242,10 @@ export class TouchOverlay {
 
   private readonly onLookMove = (e: PointerEvent): void => {
     if (e.pointerId !== this.lookId) return
-    const gain = LOOK_BASE * lookScale
-    const dx = (e.clientX - this.lookX) * gain
-    const dy = (e.clientY - this.lookY) * gain
+    // Пиксели пальца → «мышинные» пиксели (×LOOK_BASE); пользовательский
+    // множитель слайдера применяется один раз в controls.look (§15.5).
+    const dx = (e.clientX - this.lookX) * LOOK_BASE
+    const dy = (e.clientY - this.lookY) * LOOK_BASE
     this.lookX = e.clientX
     this.lookY = e.clientY
     this.controls.look(dx, dy)
