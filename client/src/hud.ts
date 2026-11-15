@@ -21,6 +21,7 @@ function buildCards(container: HTMLElement, initial: Cls, onPick: (cls: Cls) => 
   for (const def of CLASSES) {
     const card = document.createElement('div')
     card.className = 'card' + (def.key === initial ? ' selected' : '')
+    card.dataset.cls = def.key // предвыбор на death-оверлее (§15.5)
     const name = document.createElement('div')
     name.className = 'card-name'
     name.textContent = def.label
@@ -115,28 +116,31 @@ export class Hud {
     return this.el.invertY.checked
   }
 
-  /** Множитель чувствительности тач-прицела (0.3..3.0, слайдер §15.5). */
+  /** Множитель чувствительности взгляда (0.3..4.0, слайдер §15.5). */
   get lookScale(): number {
-    return Number(this.el.lookSens.value) / 100
+    return Math.min(4, Math.max(0.3, Number(this.el.lookSens.value) / 100))
+  }
+
+  /** Персист + live-применение слайдера (§15.5). В конструкторе колбэк
+   *  main.ts ещё не назначен (он ниже по файлу) и sensScale бы молча
+   *  остался 1 при загруженной из localStorage сенсе — отсюда повторный
+   *  вызов из main после wiring и из deploy() на каждом заходе. */
+  reapplySens(): void {
+    const saved = Number(localStorage.getItem('hs.lookSens'))
+    if (Number.isFinite(saved) && saved >= 30 && saved <= 400) {
+      this.el.lookSens.value = String(saved)
+    }
+    localStorage.setItem('hs.lookSens', this.el.lookSens.value)
+    this.el.lookSensVal.textContent = `${this.lookScale.toFixed(1)}×`
+    this.onSensScale(this.lookScale)
   }
 
   constructor() {
     buildCards(this.el.joinCards, this.joinCls, (c) => (this.joinCls = c))
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
     this.el.invertY.checked = localStorage.getItem('hs.invertY') === '1'
-    // Слайдер сенсы тач-прицела (§15.5): персист + live-применение; на
-    // десктопе блок .setRow скрыт CSS, персист всё равно безвреден.
-    const savedSens = Number(localStorage.getItem('hs.lookSens'))
-    if (Number.isFinite(savedSens) && savedSens >= 30 && savedSens <= 300) {
-      this.el.lookSens.value = String(savedSens)
-    }
-    const applySens = (): void => {
-      localStorage.setItem('hs.lookSens', this.el.lookSens.value)
-      this.el.lookSensVal.textContent = `${this.lookScale.toFixed(1)}×`
-      this.onSensScale(this.lookScale)
-    }
-    applySens()
-    this.el.lookSens.addEventListener('input', applySens)
+    this.reapplySens()
+    this.el.lookSens.addEventListener('input', () => this.reapplySens())
     // Единый экран настроек (§15.5): кнопка под ДЕПЛОЕМ → модалка; клик по
     // затемнению и ESC закрывают. Одна механика на desktop и touch.
     this.el.settingsBtn.addEventListener('click', () => this.el.settings.classList.remove('hidden'))
@@ -189,6 +193,7 @@ export class Hud {
   }
 
   private deploy(): void {
+    this.reapplySens() // гарантии нет, что wiring уже отработал — применяем на входе (§15.5)
     const name = this.el.name.value.trim() || 'hack'
     localStorage.setItem('hs.name', name) // не генерировать заново при каждом заходе
     this.onJoin(name, this.joinCls, this.joinTeam)
@@ -375,7 +380,16 @@ export class Hud {
     }, KILLFEED_FADE_MS)
   }
 
-  showDeath(killer: string, respawnAtMs: number): void {
+  showDeath(killer: string, respawnAtMs: number, lastCls?: Cls): void {
+    // На touch карточки смерти листать некогда (и непонятно, что они решают):
+    // предвыбираем текущий класс, иначе молча возрождаешься assault'ом и
+    // джек-ин «пропадает» (§15.5). Десктопное поведение не меняем.
+    if (IS_TOUCH && lastCls !== undefined) {
+      this.deathCls = lastCls
+      for (const c of this.el.deathCards.querySelectorAll<HTMLElement>('.card')) {
+        c.classList.toggle('selected', c.dataset.cls === lastCls)
+      }
+    }
     this.deathActive = true
     this.deathReady = false
     this.respawnAtMs = respawnAtMs

@@ -227,10 +227,10 @@ function handleDeath(msg: DeathMsg): void {
   // не подставляем (киллфид рисует envkill). Отсутствующее by (parse → -1) —
   // старое поведение '???'.
   if (msg.by === 0) {
-    hud.showDeath('ЛОВУШКА', msg.respawnAt)
+    hud.showDeath('ЛОВУШКА', msg.respawnAt, myCls)
   } else {
     const killer = msg.by >= 0 ? latestMeta.get(msg.by)?.name ?? `#${msg.by}` : '???'
-    hud.showDeath(killer, msg.respawnAt)
+    hud.showDeath(killer, msg.respawnAt, myCls)
   }
   autofire.reset()
   hackviewOff(false) // сервер джек-аутит сам; оверлей гасим сразу (ГДД §12.1)
@@ -428,8 +428,9 @@ window.addEventListener('keydown', (e) => {
 })
 
 hud.onSensScale = (k) => {
-  controls.sensScale = Math.max(0.3, Math.min(3, k))
+  controls.sensScale = Math.max(0.3, Math.min(4, k))
 }
+hud.reapplySens() // конструктор Hud отработал до этой строки — применяем заново (§15.5)
 hud.onJoin = (name, cls, team) => {
   myCls = cls
   controls.invertY = hud.invertYOn // settings checkbox on the join screen
