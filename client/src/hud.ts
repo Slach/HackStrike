@@ -21,9 +21,10 @@ function inviteText(url: string): string {
     '',
     'Командный кибер-FPS в браузере. BLACKHAT VS WHITEHAT.',
     '',
-    'Хакер коннектится через терминалы и радио-эфир и работает из кибер-деки:',
+    'Хакер коннектится по проводам и без — через терминалы и радио-эфир, работает из кибер-деки:',
     'открывает чужие двери, ворует камеры, перетыкает кабели, оставляет',
-    'ловушки в сети. Пока он в деке — тело стоит у терминала и беззащитно.',
+    'ловушки в сети. Пока он в деке — тело стоит у терминала и беззащитно,',
+    'кибердека нагревается от нагрузки, но его мысли быстры, чисты и хладнокровны.',
     '',
     'УБЕЙ ХАКЕРА ИЛИ УМРИ.',
     '',
@@ -36,6 +37,231 @@ function inviteText(url: string): string {
   ].join('\n')
 }
 
+/** Web Share Level 2 умеет отправлять файлы (QR-картинку) вместе с текстом —
+ *  на практике это touch-устройства; на десктопе шит бесполезен, там буфер. */
+function canShareFiles(): boolean {
+  if (typeof navigator.share !== 'function' || typeof navigator.canShare !== 'function') return false
+  const probe = new File([''], 'probe.png', { type: 'image/png' })
+  try {
+    return navigator.canShare({ files: [probe] })
+  } catch {
+    return false
+  }
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob === null) reject(new Error('hud: canvas toBlob failed'))
+      else resolve(blob)
+    }, 'image/png')
+  })
+}
+
+function selectInviteUrl(el: HTMLElement): void {
+  const range = document.createRange()
+  range.selectNodeContents(el)
+  const sel = window.getSelection()
+  sel?.removeAllRanges()
+  sel?.addRange(range)
+}
+
+/** Живой netmap-SVG → канвас: сериализуем клон с инжектом минимального
+ *  стиля (в DOM текст узлов красится CSS-классами, которых в файле нет).
+ *  Не получилось (шрифт/сериализация) — вернём null, заставка соберётся
+ *  с процедурной картой. */
+async function svgToCanvas(svg: SVGSVGElement): Promise<HTMLCanvasElement | null> {
+  try {
+    const clone = svg.cloneNode(true) as SVGSVGElement
+    const vb = svg.viewBox.baseVal
+    const W = vb.width || 480
+    const H = vb.height || 360
+    clone.setAttribute('width', String(W))
+    clone.setAttribute('height', String(H))
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    const st = document.createElementNS('http://www.w3.org/2000/svg', 'style')
+    st.textContent =
+      'text{font-family:ui-monospace,Menlo,monospace}.svg-label-plate{fill:rgba(0,24,12,0.7)}'
+    clone.prepend(st)
+    const url =
+      'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clone))
+    const img = new Image()
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve()
+      img.onerror = () => reject(new Error('hud: svg raster failed'))
+      img.src = url
+    })
+    const c = document.createElement('canvas')
+    c.width = W
+    c.height = H
+    const ctx = c.getContext('2d')
+    if (ctx === null) return null
+    ctx.fillStyle = '#041008'
+    ctx.fillRect(0, 0, W, H)
+    ctx.drawImage(img, 0, 0)
+    return c
+  } catch {
+    return null
+  }
+}
+
+/** Процедурная «карта сети»: тёмный фон, сетка, цепочка узлов в цветах
+ *  владельцев. Масштаб узлов/сетки привязан к размеру холста — на большой
+ *  заставке узлы крупные, а не точечки. Fallback, когда дека ещё ни разу
+ *  не открывалась и живого netmap-SVG не существует (join-экран). */
+function proceduralNetmap(w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement('canvas')
+  c.width = w
+  c.height = h
+  const ctx = c.getContext('2d')
+  if (ctx === null) throw new Error('hud: 2d context unavailable')
+  ctx.fillStyle = '#041008'
+  ctx.fillRect(0, 0, w, h)
+  const grid = Math.max(40, Math.round(w / 20))
+  ctx.strokeStyle = 'rgba(55, 255, 155, 0.08)'
+  for (let x = 0; x < w; x += grid) {
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, h)
+    ctx.stroke()
+  }
+  for (let y = 0; y < h; y += grid) {
+    ctx.beginPath()
+    ctx.moveTo(0, y)
+    ctx.lineTo(w, y)
+    ctx.stroke()
+  }
+  const colors = ['#37ff9b', '#ff59c7', '#37d6ff']
+  let seed = 42
+  const rnd = (): number => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff
+    return seed / 0x7fffffff
+  }
+  const count = Math.max(10, Math.round((w * h) / 40000))
+  const radius = Math.max(9, Math.round(w / 70))
+  const pts = Array.from({ length: count }, () => ({
+    x: radius * 3 + rnd() * (w - radius * 6),
+    y: radius * 2 + rnd() * (h - radius * 4),
+  }))
+  ctx.strokeStyle = 'rgba(55, 255, 155, 0.45)'
+  ctx.lineWidth = Math.max(2, radius / 4)
+  for (let i = 1; i < pts.length; i++) {
+    ctx.beginPath()
+    ctx.moveTo(pts[i - 1].x, pts[i - 1].y)
+    ctx.lineTo(pts[i].x, pts[i].y)
+    ctx.stroke()
+  }
+  pts.forEach((p, i) => {
+    ctx.fillStyle = colors[i % colors.length]
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, radius, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(55, 255, 155, 0.8)'
+    ctx.lineWidth = 2
+    ctx.stroke()
+  })
+  ctx.lineWidth = 1
+  return c
+}
+
+function drawCover(ctx: CanvasRenderingContext2D, img: CanvasImageSource, w: number, h: number): void {
+  const iw = 'width' in img ? Number(img.width) : 0
+  const ih = 'height' in img ? Number(img.height) : 0
+  if (iw <= 0 || ih <= 0) return
+  const s = Math.max(w / iw, h / ih)
+  ctx.drawImage(img, (w - iw * s) / 2, (h - ih * s) / 2, iw * s, ih * s)
+}
+
+const INVITE_GREEN = '#00ff9c'
+const MONO_FONT = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+
+/** Заставка приглашения (генерится один раз, §15.5): крупный процедурный
+ *  нетмап на весь холст как задник, поверх — скриншот meatview (если есть)
+ *  и вставка hackview в рамке, титул и лозунг по центру. Ничего не дублируем:
+ *  если скриншота нет — задник остаётся единственным фоном. */
+function composeSplash(
+  meat: HTMLCanvasElement | null,
+  hack: HTMLCanvasElement | null,
+  url: string,
+): HTMLCanvasElement {
+  const W = 960
+  const H = 540
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = H
+  const ctx = c.getContext('2d')
+  if (ctx === null) throw new Error('hud: 2d context unavailable')
+  // Задник — процедурный нетмап на весь холст (узлы крупные, см. выше)
+  drawCover(ctx, proceduralNetmap(W, H), W, H)
+  // Скриншот meatview поверх — с затемнением, чтобы задник проступал
+  if (meat !== null) {
+    ctx.globalAlpha = 0.85
+    drawCover(ctx, meat, W, H)
+    ctx.globalAlpha = 1
+  }
+  // Вставка hackview (живой netmap) в рамке, справа снизу — сверху место
+  // под титульный блок
+  if (hack !== null) {
+    const pw = Math.round(W * 0.38)
+    const ph = Math.round((hack.height * pw) / hack.width)
+    const px = W - pw - 28
+    const py = H - ph - 28
+    ctx.save()
+    ctx.strokeStyle = 'rgba(55, 255, 155, 0.6)'
+    ctx.lineWidth = 2
+    ctx.shadowColor = 'rgba(55, 255, 155, 0.4)'
+    ctx.shadowBlur = 12
+    ctx.strokeRect(px - 1, py - 1, pw + 2, ph + 2)
+    ctx.restore()
+    ctx.drawImage(hack, 0, 0, hack.width, hack.height, px, py, pw, ph)
+  }
+  ctx.fillStyle = 'rgba(2, 10, 6, 0.45)'
+  ctx.fillRect(0, 0, W, H)
+  // Титульный блок — сверху, а не по центру
+  ctx.textAlign = 'center'
+  ctx.shadowColor = 'rgba(55, 255, 155, 0.8)'
+  ctx.shadowBlur = 28
+  ctx.fillStyle = INVITE_GREEN
+  ctx.font = `bold 72px ${MONO_FONT}`
+  ctx.fillText('HACKSTRIKE', W / 2, 118)
+  ctx.font = `bold 24px ${MONO_FONT}`
+  ctx.fillText('ХАКНИ ИЛИ УМРИ · УБЕЙ ХАКЕРА ИЛИ УМРИ', W / 2, 172)
+  ctx.shadowBlur = 0
+  ctx.fillStyle = 'rgba(190, 255, 225, 0.9)'
+  ctx.font = `bold 18px ${MONO_FONT}`
+  ctx.fillText(url, W / 2, 214)
+  return c
+}
+
+/** Десктопная версия: заставка + текст приглашения зелёным одной картинкой.
+ *  Telegram Desktop при вставке берёт из буфера что-то одно, поэтому текст
+ *  запекаем в саму картинку. */
+function composeSplashText(splash: HTMLCanvasElement, url: string): HTMLCanvasElement {
+  const wrap = 60
+  const lines: string[] = []
+  for (const raw of inviteText(url).split('\n')) {
+    if (raw === '') lines.push(' ')
+    for (let i = 0; i < raw.length; i += wrap) lines.push(raw.slice(i, i + wrap))
+  }
+  const W = 1000
+  const pad = 32
+  const lh = 30
+  const top = Math.round((splash.height * W) / splash.width)
+  const c = document.createElement('canvas')
+  c.width = W
+  c.height = top + pad + lines.length * lh + pad
+  const ctx = c.getContext('2d')
+  if (ctx === null) throw new Error('hud: 2d context unavailable')
+  ctx.fillStyle = '#041008'
+  ctx.fillRect(0, 0, W, c.height)
+  ctx.drawImage(splash, 0, 0, W, top)
+  ctx.font = `bold 19px ${MONO_FONT}`
+  ctx.fillStyle = INVITE_GREEN
+  ctx.textAlign = 'center'
+  lines.forEach((line, i) => ctx.fillText(line, W / 2, top + pad + lh * (i + 1) - 8))
+  return c
+}
+
 function byId<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id)
   if (e === null) throw new Error(`hud: missing #${id}`)
@@ -43,10 +269,14 @@ function byId<T extends HTMLElement>(id: string): T {
 }
 
 function buildCards(container: HTMLElement, initial: Cls, onPick: (cls: Cls) => void): void {
-  for (const def of CLASSES) {
+  CLASSES.forEach((def, i) => {
     const card = document.createElement('div')
     card.className = 'card' + (def.key === initial ? ' selected' : '')
     card.dataset.cls = def.key // предвыбор на death-оверлее (§15.5)
+    // Хоткей выбора (десктоп): цифра 1..4 в углу, клик обрабатывает keydown
+    const key = document.createElement('div')
+    key.className = 'card-key'
+    key.textContent = String(i + 1)
     const name = document.createElement('div')
     name.className = 'card-name'
     name.textContent = def.label
@@ -63,19 +293,21 @@ function buildCards(container: HTMLElement, initial: Cls, onPick: (cls: Cls) => 
     const note = document.createElement('div')
     note.className = 'card-note'
     note.textContent = def.note
-    card.append(name, weapon, stats, note)
+    card.append(key, name, weapon, stats, note)
     card.addEventListener('click', () => {
       container.querySelectorAll('.card').forEach((c) => c.classList.remove('selected'))
       card.classList.add('selected')
       onPick(def.key)
     })
     container.append(card)
-  }
+  })
 }
 
 export class Hud {
   onJoin: (name: string, cls: Cls, team: number) => void = () => {}
   onRespawn: (cls: Cls) => void = () => {}
+  /** Меню паузы (§15.5): «вернуться в бой» — клик по кнопке или фону окна. */
+  onResume: () => void = () => {}
   /** Пользовательский масштаб чувствительности взгляда (§15.5); main вешает
    *  на controls.sensScale. Вызывается при инициализации и на каждый input. */
   onSensScale: (k: number) => void = () => {}
@@ -86,6 +318,10 @@ export class Hud {
   private mapReady = false
   /** Экран загрузки жив до первого «карта построена» (§15.5). */
   private loadVisible = true
+  // Invite-заставка (§15.5): собирается один раз при первом открытии модалки
+  private splash: HTMLCanvasElement | null = null
+  private splashText: HTMLCanvasElement | null = null
+  private splashPromise: Promise<void> | null = null
   private respawnAtMs = 0
   private deathActive = false
   private deathReady = false
@@ -103,6 +339,7 @@ export class Hud {
     settings: byId('joinSettings'),
     settingsClose: byId('settingsClose'),
     deploy: byId<HTMLButtonElement>('deployBtn'),
+    resume: byId<HTMLButtonElement>('resumeBtn'),
     joinStatus: byId('joinStatus'),
     joinCards: byId('joinCards'),
     loading: byId('loadingScreen'),
@@ -111,8 +348,14 @@ export class Hud {
     inviteBtn: byId('inviteBtn'),
     invite: byId('joinInvite'),
     inviteQr: byId<HTMLCanvasElement>('inviteQr'),
+    inviteGallery: byId('inviteGallery'),
+    invSlideQr: byId('invSlideQr'),
+    inviteShotImg: byId<HTMLImageElement>('inviteShotImg'),
+    inviteSplashText: byId<HTMLImageElement>('inviteSplashText'),
     inviteUrl: byId('inviteUrl'),
     inviteCopy: byId<HTMLButtonElement>('inviteCopy'),
+    inviteShare: byId<HTMLButtonElement>('inviteShare'),
+    inviteQrCopy: byId<HTMLButtonElement>('inviteQrCopy'),
     inviteClose: byId('inviteClose'),
     death: byId('deathOverlay'),
     deathTitle: byId('deathTitle'),
@@ -189,6 +432,14 @@ export class Hud {
         this.el.settings.classList.add('hidden')
         this.el.invite.classList.add('hidden')
       }
+      // Хоткеи классов 1..4 (десктоп): кликаем карточку на видимом наборе —
+      // join до деплоя, death-оверлей после гибели. Порядок = CLASSES.
+      const idx = ['1', '2', '3', '4'].indexOf(e.key)
+      if (idx === -1) return
+      const cont =
+        !this.el.join.classList.contains('hidden') ? this.el.joinCards : this.el.deathCards
+      if (cont.classList.contains('hidden')) return
+      cont.querySelectorAll<HTMLElement>('.card')[idx]?.click()
     })
     // Приглашение (§15.5): QR + ссылка на текущий origin. URL считаем на
     // момент открытия — стенд может переехать между открытиями (zrok и т.п.).
@@ -198,7 +449,49 @@ export class Hud {
       QRCode.toCanvas(this.el.inviteQr, url, { width: 180, margin: 1 }).catch((err) => {
         console.warn('hud: qr render failed', err)
       })
+      // Мобила = тач + Web Share Level 2 с файлами: там свайп-галерея
+      // QR ↔ заставка и «поделиться». Десктопный Chrome тоже умеет share —
+      // поэтому тач-проверка обязательна, иначе на десктопе лезет не тот UI.
+      const mobile = navigator.maxTouchPoints > 0 && canShareFiles()
+      this.el.inviteShare.classList.toggle('hidden', !mobile)
+      this.el.inviteQrCopy.classList.toggle('hidden', mobile)
+      this.el.inviteGallery.classList.toggle('hidden', !mobile)
+      this.el.inviteSplashText.classList.toggle('hidden', mobile)
       this.el.invite.classList.remove('hidden')
+      void this.ensureSplash()
+    })
+    this.el.inviteShare.addEventListener('click', () => {
+      const url = this.el.inviteUrl.textContent
+      this.ensureSplash()
+        .then(() => {
+          if (this.splash === null) throw new Error('hud: splash not ready')
+          return canvasToBlob(this.splash)
+        })
+        .then((blob) => {
+          const file = new File([blob], 'hackstrike-invite.png', { type: 'image/png' })
+          return navigator.share({ files: [file], text: inviteText(url), title: 'HACKSTRIKE' })
+        })
+        .catch((err) => console.warn('hud: share failed', err))
+    })
+    this.el.inviteQrCopy.addEventListener('click', () => {
+      const done = (): void => {
+        this.el.inviteQrCopy.textContent = 'СКОПИРОВАНО ✓'
+        window.setTimeout(() => {
+          this.el.inviteQrCopy.textContent = 'КОПИРОВАТЬ КАРТИНКУ'
+        }, 1500)
+      }
+      this.ensureSplash()
+        .then(() => {
+          if (this.splashText === null) throw new Error('hud: splash not ready')
+          return canvasToBlob(this.splashText)
+        })
+        .then((blob) => navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]))
+        .then(done)
+        .catch(() => {
+          // Fallback на http/старых браузерах: картинку в буфер не положить —
+          // просто выделяем ссылку, чтобы юзер скопировал её вручную.
+          selectInviteUrl(this.el.inviteUrl)
+        })
     })
     this.el.inviteClose.addEventListener('click', () => this.el.invite.classList.add('hidden'))
     this.el.invite.addEventListener('click', (e) => {
@@ -218,11 +511,7 @@ export class Hud {
         .catch(() => {
           // Fallback (clipboard API запрещён на http-стендах): выделение —
           // копирование вручную через контекстное меню.
-          const range = document.createRange()
-          range.selectNodeContents(this.el.inviteUrl)
-          const sel = window.getSelection()
-          sel?.removeAllRanges()
-          sel?.addRange(range)
+          selectInviteUrl(this.el.inviteUrl)
         })
     })
     for (const btn of this.el.teamSeg.querySelectorAll<HTMLButtonElement>('.segBtn')) {
@@ -246,6 +535,11 @@ export class Hud {
       if (e.key === 'Enter') this.deploy()
     })
     this.el.deploy.addEventListener('click', () => this.deploy())
+    this.el.resume.addEventListener('click', () => this.onResume())
+    // Тап по фону join-окна = «вернуться в бой» (main решает, в меню ли мы)
+    this.el.join.addEventListener('click', (e) => {
+      if (e.target === this.el.join) this.onResume()
+    })
     // На touch [SPACE]-подсказка в лейбле — шум: кнопка и так тапается (§15.5)
     if (IS_TOUCH) this.el.respawn.textContent = 'РЕСПАУН'
     this.el.respawn.addEventListener('click', () => this.respawnNow())
@@ -289,7 +583,48 @@ export class Hud {
     this.el.join.classList.add('hidden')
   }
 
+  /** Меню паузы (§15.5): то же join-окно в середине матча. ДЕПЛОЙ скрыт —
+   *  повторный джойн из меню не нужен; вместо него «ВЕРНУТЬСЯ В БОЙ». */
+  showMenu(): void {
+    this.showJoin()
+    this.el.deploy.classList.add('hidden')
+    this.el.resume.classList.remove('hidden')
+  }
+
+  hideMenu(): void {
+    this.el.deploy.classList.remove('hidden')
+    this.el.resume.classList.add('hidden')
+    this.hideJoin()
+  }
+
+  joinVisible(): boolean {
+    return !this.el.join.classList.contains('hidden')
+  }
+
+  /** Игрок мёртв — death-оверлей показан; меню паузы поверх него не открываем. */
+  deathVisible(): boolean {
+    return !this.el.death.classList.contains('hidden')
+  }
+
   /** Стадия загрузки (§15.5): pct 0..100, пока экран не погашен — иначе noop. */
+  /** Заставка приглашения: один раз на сессию. Скриншоты meatview
+   *  (renderCanvas, preserveDrawingBuffer) и hackview (живой netmap-SVG,
+   *  если дека уже открывалась — иначе процедурная карта). */
+  private ensureSplash(): Promise<void> {
+    if (this.splashPromise !== null) return this.splashPromise
+    this.splashPromise = (async () => {
+      const url = this.el.inviteUrl.textContent || `${window.location.origin}/`
+      const meat = document.getElementById('renderCanvas') as HTMLCanvasElement | null
+      const svg = document.querySelector('.netmap-svg') as SVGSVGElement | null
+      const hack = svg !== null ? await svgToCanvas(svg) : null
+      this.splash = composeSplash(meat, hack, url)
+      this.splashText = composeSplashText(this.splash, url)
+      this.el.inviteShotImg.src = this.splash.toDataURL('image/png')
+      this.el.inviteSplashText.src = this.splashText.toDataURL('image/png')
+    })()
+    return this.splashPromise
+  }
+
   setLoading(pct: number, text?: string): void {
     if (!this.loadVisible) return
     this.el.loadFill.style.width = `${Math.max(0, Math.min(100, pct))}%`

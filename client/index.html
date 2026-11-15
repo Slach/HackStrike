@@ -522,6 +522,7 @@
         margin-bottom: 20px;
       }
       .card {
+        position: relative;
         background: rgba(2, 18, 10, 0.92);
         border: 1px solid var(--line);
         border-radius: 6px;
@@ -530,6 +531,22 @@
         text-align: left;
         transition: border-color 0.15s, box-shadow 0.15s;
         user-select: none;
+      }
+      /* Хоткей выбора класса (десктоп): цифра 1..4 в углу карточки */
+      .card-key {
+        position: absolute;
+        top: 5px;
+        right: 7px;
+        font-size: 11px;
+        line-height: 1;
+        color: var(--cy);
+        border: 1px solid rgba(55, 255, 155, 0.4);
+        border-radius: 4px;
+        padding: 3px 6px;
+        display: none;
+      }
+      body:not(.touch) .card-key {
+        display: block;
       }
       .card:hover {
         border-color: rgba(55, 255, 155, 0.85);
@@ -1873,11 +1890,105 @@
         user-select: all; /* выделение одним тапом — ручной fallback копирования */
       }
       #inviteQr {
-        align-self: center;
         border: 1px solid rgba(55, 255, 155, 0.35);
         border-radius: 6px;
         background: #dff;
         image-rendering: pixelated;
+      }
+      /* Свайп-галерея приглашения (мобила): QR ↔ заставка, snap по слайдам */
+      .inviteGallery {
+        display: flex;
+        width: 100%;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        border-radius: 6px;
+        scrollbar-width: none;
+      }
+      .inviteGallery::-webkit-scrollbar { display: none; }
+      .invSlide {
+        flex: 0 0 100%;
+        scroll-snap-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+      }
+      .invCap {
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: rgba(170, 255, 210, 0.55);
+      }
+      #inviteShotImg,
+      .inviteSplash {
+        width: 100%;
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 6px;
+        background: #041008;
+      }
+      /* Десктоп: invite-модалка во всю ширину (80% экрана), контент в две
+         колонки — медиа (галерея/заставка) слева, текст справа, кнопки внизу.
+         Мобила (body.touch) остаётся вертикальной, как .setPanel по умолчанию. */
+      body:not(.touch) #joinInvite .setPanel {
+        width: 80%;
+        display: grid;
+        grid-template-columns: minmax(300px, 0.9fr) 1.1fr;
+        grid-template-areas:
+          'head head'
+          'media text'
+          'btns btns';
+        align-items: center;
+        column-gap: 28px;
+      }
+      body:not(.touch) #joinInvite .setHead {
+        grid-area: head;
+      }
+      body:not(.touch) #joinInvite .inviteGallery,
+      body:not(.touch) #joinInvite .inviteSplash {
+        grid-area: media;
+        align-self: center;
+      }
+      body:not(.touch) #joinInvite .inviteSlogan,
+      body:not(.touch) #joinInvite .inviteRules,
+      body:not(.touch) #joinInvite .inviteUrl {
+        grid-area: text;
+        align-self: center;
+      }
+      body:not(.touch) #joinInvite .inviteRules {
+        text-align: left;
+        font-size: 13px;
+        line-height: 1.7;
+      }
+      body:not(.touch) #joinInvite .btnRow {
+        justify-content: center;
+      }
+      body:not(.touch) #joinInvite .invBtns {
+        grid-area: btns;
+      }
+      /* Кнопки invite — одного размера: тянутся поровну на всю строку.
+         Ширины не хватает (узкое окно) — переносятся вниз, каждая на всю
+         строку, т.е. вертикальный порядок. */
+      #joinInvite .invBtns {
+        flex-wrap: wrap;
+      }
+      #joinInvite .invBtns .btn {
+        flex: 1 1 auto;
+        min-width: 200px;
+        white-space: nowrap;
+      }
+      /* Кнопки join-экрана — то же выравнивание: поровну, перенос при узком
+         окне. .btn small (пригласить/настройки) подтягиваем к размеру ДЕПЛОЯ. */
+      .joinBtns {
+        flex-wrap: wrap;
+      }
+      .joinBtns .btn {
+        flex: 1 1 auto;
+        min-width: 180px;
+        white-space: nowrap;
+      }
+      body:not(.touch) .joinBtns .btn.small {
+        padding-top: 12px;
+        padding-bottom: 12px;
+        font-size: 13px;
       }
       /* Лозунги приглашения: агрессивный акцент, как лого на join */
       .inviteSlogan {
@@ -2076,8 +2187,9 @@
           <button type="button" data-team="0" class="segBtn t0">ЗЕЛЁНЫЕ</button>
           <button type="button" data-team="1" class="segBtn t1">РОЗОВЫЕ</button>
         </div>
-        <div class="btnRow">
+        <div class="btnRow joinBtns">
           <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
+          <button id="resumeBtn" class="btn hidden" type="button">ВЕРНУТЬСЯ В БОЙ</button>
           <button id="inviteBtn" class="btn small ghost" type="button">✉ ПРИГЛАСИТЬ</button>
           <button id="settingsBtn" class="btn small ghost" type="button">⚙ НАСТРОЙКИ</button>
         </div>
@@ -2088,19 +2200,37 @@
       <div id="joinInvite" class="settings hidden">
         <div class="setPanel">
           <div class="setHead">ПРИГЛАСИТЬ</div>
-          <canvas id="inviteQr" width="180" height="180"></canvas>
+          <!-- Мобила: свайп-галерея QR ↔ заставка. Десктоп: QR-слайд скрываем,
+               показываем заставку с запечённым текстом (inviteSplashText). -->
+          <div id="inviteGallery" class="inviteGallery">
+            <div class="invSlide" id="invSlideQr">
+              <canvas id="inviteQr" width="180" height="180"></canvas>
+              <div class="invCap">QR — НАВЕДИ КАМЕРУ</div>
+            </div>
+            <div class="invSlide">
+              <img id="inviteShotImg" alt="заставка HACKSTRIKE">
+              <div class="invCap">СВАЙП → ЗАСТАВКА</div>
+            </div>
+          </div>
+          <img id="inviteSplashText" class="inviteSplash hidden" alt="HACKSTRIKE — приглашение">
           <div class="inviteSlogan">«ХАКНИ ИЛИ УМРИ»<br />«УБЕЙ ХАКЕРА ИЛИ УМРИ»<br />«ЖИЗНЬ В ЭТОЙ ИГРЕ СЛИШКОМ КОРОТКА, НО ИНТЕРЕСНА»</div>
           <div class="inviteRules">
             Командный кибер-FPS в браузере: BLACKHAT VS WHITEHAT. Хакер
-            коннектится через терминалы и радио-эфир: из кибер-деки открывает
-            чужие двери, ворует камеры, перетыкает кабели, оставляет ловушки —
-            но тело его в этот момент беззащитно. Снайпер ваншотит, автоматчик
-            поливает, heavy не останавливается. Респавн 5 с, матч на счёт.
-            Ничего устанавливать не нужно.
+            коннектится по проводам и без — через терминалы и радио-эфир.
+            Из кибер-деки открывает чужие двери, ворует камеры, перетыкает
+            кабели, оставляет ловушки — но тело его в этот момент
+            беззащитно. Кибердека нагревается от нагрузки, но его мысли
+            быстры, чисты и хладнокровны. Снайпер ваншотит, автоматчик поливает, heavy не
+            останавливается. Респавн 5 с, матч на счёт. Ничего
+            устанавливать не нужно.
           </div>
           <div id="inviteUrl" class="inviteUrl"></div>
-          <button id="inviteCopy" class="btn small" type="button">СКОПИРОВАТЬ</button>
-          <button id="inviteClose" class="btn small ghost" type="button">ЗАКРЫТЬ</button>
+          <div class="btnRow invBtns">
+            <button id="inviteShare" class="btn small hidden" type="button">↗ ПОДЕЛИТЬСЯ</button>
+            <button id="inviteCopy" class="btn small" type="button">КОПИРОВАТЬ ТЕКСТ</button>
+            <button id="inviteQrCopy" class="btn small ghost" type="button">КОПИРОВАТЬ КАРТИНКУ</button>
+            <button id="inviteClose" class="btn small ghost" type="button">ЗАКРЫТЬ</button>
+          </div>
         </div>
       </div>
       <div id="joinSettings" class="settings hidden">

@@ -45,7 +45,9 @@ type EndMsg = Extract<ServerMessage, { t: 'matchend' }>
 type JackinMsg = Extract<ServerMessage, { t: 'jackin' }>
 
 const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement
-const engine = new Engine(canvas, true)
+// preserveDrawingBuffer — чтобы canvas можно было снимать в картинку
+// (скриншот meatview для invite-заставки, §15.5).
+const engine = new Engine(canvas, true, { preserveDrawingBuffer: true })
 const { scene, camera } = createScene(engine)
 
 const hud = new Hud()
@@ -466,6 +468,67 @@ const tryRelock = (e: Event) => {
 }
 document.addEventListener('mousedown', tryRelock)
 document.addEventListener('keydown', tryRelock)
+
+// Меню паузы (§15.5): в FPS-режиме клик мыши, тап по экрану или «~» открывает
+// join-окно (invite/settings/вернуться). «~» — тогл; закрытие — «~», кнопка
+// «ВЕРНУТЬСЯ В БОЙ» или тап по фону. Стрельбе не мешает: она авто (AutoFire),
+// mousedown свободен. Пока меню открыто — controls.frozen (тело не бегает).
+let menuOpen = false
+function gameMenu(open: boolean): void {
+  if (open === menuOpen) return
+  menuOpen = open
+  if (open) {
+    hud.showMenu()
+    controls.resetKeys()
+    controls.frozen = true
+    if (document.pointerLockElement !== null) document.exitPointerLock()
+  } else {
+    hud.hideMenu()
+    controls.frozen = false
+    controls.resetKeys()
+    if (playing && !hackview.active) controls.requestLock()
+  }
+}
+hud.onResume = () => {
+  if (menuOpen) gameMenu(false)
+}
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Backquote' || e.repeat || IS_TOUCH) return
+  if (e.target instanceof HTMLElement && e.target.closest('input') !== null) return
+  if (!playing) return
+  gameMenu(!menuOpen)
+})
+// Клик в FPS (курсор ещё захвачен) — открыть меню; мёртвым — death-оверлей,
+// не меню
+document.addEventListener('mousedown', () => {
+  if (!hud.deathVisible() && playing && !hackview.active && controls.locked) gameMenu(true)
+})
+// Тап (короткий, без движения) по игровому экрану на мобиле — то же самое
+let tapStart: { x: number; y: number; t: number } | null = null
+document.addEventListener(
+  'touchstart',
+  (e) => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0]
+      tapStart = { x: t.clientX, y: t.clientY, t: performance.now() }
+    } else tapStart = null
+  },
+  { capture: true },
+)
+document.addEventListener(
+  'touchend',
+  (e) => {
+    if (tapStart === null || e.changedTouches.length !== 1) return
+    const t = e.changedTouches[0]
+    const moved = Math.hypot(t.clientX - tapStart.x, t.clientY - tapStart.y)
+    const dt = performance.now() - tapStart.t
+    tapStart = null
+    if (moved > 12 || dt > 350) return // это был look-жест, не тап
+    if (isUiTarget(e)) return
+    if (!hud.deathVisible() && playing && !hackview.active && !menuOpen) gameMenu(true)
+  },
+  { capture: true },
+)
 
 // Map geometry comes only from the server (GDD invariant: карта — данные).
 hud.showJoin()
