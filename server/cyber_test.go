@@ -680,17 +680,18 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	w := newWorld(m)
 	cs := w.cyber
 
-	// M4-объект 1: +1 устройство (газ g1) и +1 кабель c8. M4-объект 2 (§14.4):
-	// кибер-слой 2 этажа — +5 устройств (s3, t3, d3, cam3, cam4) и +5 кабелей
-	// (c9 стояк s2—s3, c10 s3—d3, c11 t3—s3, c12 s3—cam3, c13 s3—cam4).
-	if len(cs.order) != 16 || len(cs.cables) != 15 || len(cs.doors) != 3 || len(cs.gases) != 1 {
-		t.Fatalf("m1 M2+M3+M4 props: want 16 devices / 13 cables + 2 radio uplinks / 3 doors / 1 gas, got %d/%d/%d/%d",
+	// M4-объект 1: газы g1/g2 (зеркальные крылья, кабели c8→s2, c14→s1).
+	// M4-объект 2 (§14.4): кибер-слой 2 этажа — +5 устройств (s3, t3, d3,
+	// cam3, cam4) и +5 кабелей (c9 стояк s2—s3, c10 s3—d3, c11 t3—s3,
+	// c12 s3—cam3, c13 s3—cam4).
+	if len(cs.order) != 17 || len(cs.cables) != 16 || len(cs.doors) != 3 || len(cs.gases) != 2 {
+		t.Fatalf("m1 M2+M3+M4 props: want 17 devices / 14 cables + 2 radio uplinks / 3 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
 	// 2 этаж в графе через стояк c9 s2—s3.
 	reach := cs.reachable("t1")
-	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "g1", "r1", "r2", "cam1", "cam2",
+	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "g1", "g2", "r1", "r2", "cam1", "cam2",
 		"s3", "t3", "d3", "cam3", "cam4"} {
 		if !reach[id] {
 			t.Fatalf("%s must be reachable from t1 on m1 (радио — через аплинк)", id)

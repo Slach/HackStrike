@@ -236,8 +236,8 @@ func TestGasDeathEnvKill(t *testing.T) {
 // объёма — «сам в свой газ» проверяется отдельным тестом.
 func TestGasKillScoresOwnerTeam(t *testing.T) {
 	w, clock := gasTestWorld(t)
-	h := w.addPlayer(1, "h", "hacker", -1)   // team 0, вне газы
-	v := w.addPlayer(2, "v", "assault", -1)  // team 1, 125 HP — жертва
+	h := w.addPlayer(1, "h", "hacker", -1)  // team 0, вне газы
+	v := w.addPlayer(2, "v", "assault", -1) // team 1, 125 HP — жертва
 	w.takeOut()
 	jackAt(w, h, "t1")
 	ownGas(t, w, h)
