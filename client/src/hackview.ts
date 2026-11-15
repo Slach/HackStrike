@@ -288,6 +288,8 @@ export class HackView {
     this._active = false
     this.menuOpen = false
     this.closePalette()
+    this.netmapZoom = 1 // зум карты не переживает сессию деки
+    this.netmapCenter = { x: 170, y: 125 }
     this.pendingJobs = []
     if (this.raf !== null) {
       window.cancelAnimationFrame(this.raf)
@@ -1244,7 +1246,73 @@ export class HackView {
     }
   }
 
-  /** SVG-карта сети: узлы = discovered устройства, цвет = владелец, клик = цель. */
+  /** SVG-карта сети: узлы = discovered устройства, цвет = владелец, клик = цель.
+   *  Зум (плейтест M3): колесо мыши и pinch-жест — масштаб к точке курсора,
+   *  двойной клик — сброс. Состояние общее для карты деки, живёт до деактивации. */
+  private netmapZoom = 1
+  private netmapCenter: { x: number; y: number } = { x: 170, y: 125 }
+  private pinchDist = 0
+
+  private applyNetmapZoom(svg: SVGElement): void {
+    const vw = 340 / this.netmapZoom
+    const vh = 250 / this.netmapZoom
+    svg.setAttribute('viewBox', `${this.netmapCenter.x - vw / 2} ${this.netmapCenter.y - vh / 2} ${vw} ${vh}`)
+  }
+
+  private netmapZoomAt(svg: SVGElement, clientX: number, clientY: number, factor: number): void {
+    // Точка курсора в координатах viewBox должна остаться на месте.
+    const rect = svg.getBoundingClientRect()
+    const vb = (svg as SVGSVGElement).viewBox.baseVal
+    const vx = vb.x + ((clientX - rect.left) / rect.width) * vb.width
+    const vy = vb.y + ((clientY - rect.top) / rect.height) * vb.height
+    const z = Math.min(5, Math.max(0.6, this.netmapZoom * factor))
+    const k = this.netmapZoom / z
+    this.netmapCenter.x = vx - (vx - this.netmapCenter.x) * k
+    this.netmapCenter.y = vy - (vy - this.netmapCenter.y) * k
+    this.netmapZoom = z
+    this.applyNetmapZoom(svg)
+  }
+
+  private netmapResetZoom(svg: SVGElement): void {
+    this.netmapZoom = 1
+    this.netmapCenter = { x: 170, y: 125 }
+    this.applyNetmapZoom(svg)
+  }
+
+  private attachNetmapZoom(svg: SVGElement): void {
+    svg.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      this.netmapZoomAt(svg, e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15)
+    }, { passive: false })
+    svg.addEventListener('dblclick', (e) => {
+      e.preventDefault()
+      this.netmapResetZoom(svg)
+    })
+    // Pinch: масштаб по отношению расстояний между пальцами.
+    svg.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault()
+        const [a, b] = [e.touches[0], e.touches[1]]
+        this.pinchDist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+      }
+    }, { passive: false })
+    svg.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && this.pinchDist > 0) {
+        e.preventDefault()
+        const [a, b] = [e.touches[0], e.touches[1]]
+        const dist = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+        const cx = (a.clientX + b.clientX) / 2
+        const cy = (a.clientY + b.clientY) / 2
+        this.netmapZoomAt(svg, cx, cy, dist / this.pinchDist)
+        this.pinchDist = dist
+      }
+    }, { passive: false })
+    svg.addEventListener('touchend', () => {
+      this.pinchDist = 0
+    })
+    this.applyNetmapZoom(svg)
+  }
+
   private buildNetmapSvg(): SVGElement {
     const W = 340
     const H = 250
@@ -1252,6 +1320,7 @@ export class HackView {
     const svg = svgEl('svg')
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
     svg.classList.add('netmap-svg')
+    this.attachNetmapZoom(svg)
 
     const nodes = [...this.devices.values()]
     const label = (x: number, y: number, text: string, cls: string): void => {
