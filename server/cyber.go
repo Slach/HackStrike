@@ -291,6 +291,19 @@ func (w *world) jackin(pl *player, dev *device) {
 		"host": dev.id,
 		"deck": message{"cpu": deckCPU, "npu": deckNPU, "ram": deckRAM, "net": dev.netMbps},
 	})
+	// Накопленные знания переживают jackout (сессия, §12.5): повторный вход
+	// сразу показывает карту сети и восстанавливает табы захваченных
+	// устройств (плейтест M3). Знания обрезаем по достижимости от новой
+	// точки входа — scan остаётся живым видом сети, а не архивом.
+	if pl.scanned != nil {
+		reach := w.cyber.reachable(dev.id)
+		for id := range pl.scanned {
+			if !reach[id] {
+				delete(pl.scanned, id)
+			}
+		}
+		w.sendScan(pl)
+	}
 	w.fireWatchers(dev, pl)
 }
 

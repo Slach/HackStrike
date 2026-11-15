@@ -1485,3 +1485,48 @@ func foePrepTrojanCam(t *testing.T, w *world, foe *player) []outMsg {
 	}
 	return w.takeOut()
 }
+
+// Плейтест M3: повторный джек-ин восстанавливает знания (scan при jackin,
+// §12.5) — табы захваченных устройств не теряются после jackout.
+func TestJackinResendsScan(t *testing.T) {
+	w, _ := cyberTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	jackAt(w, h, "t1")
+
+	// Раскрыли два хопа сети и захватили дверь.
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "d1"})
+
+	// jackout и повторный вход в ту же точку — scan приходит сразу, с
+	// владением: клиент восстановит таб устройства двери.
+	w.handleMessage(h, message{"t": "jackout"})
+	w.takeOut()
+	msgs := jackAt(w, h, "t1")
+	var scanSeen, doorOwned bool
+	for _, om := range msgs {
+		if om.msg["t"] != "scan" {
+			continue
+		}
+		scanSeen = true
+		for _, d := range om.msg["devices"].([]scanDevice) {
+			if d.ID == "d1" && d.Owner == h.id {
+				doorOwned = true
+			}
+		}
+	}
+	if !scanSeen || !doorOwned {
+		t.Fatalf("re-jackin must resend scan with ownership: scan=%v doorOwned=%v", scanSeen, doorOwned)
+	}
+
+	// А с нуля (новый игрок, знаний нет) — scan не приходит.
+	foe := w.addPlayer(2, "f", "hacker", -1)
+	w.takeOut()
+	for _, om := range jackAt(w, foe, "t2") {
+		if om.msg["t"] == "scan" {
+			t.Fatalf("fresh jackin must not send scan")
+		}
+	}
+}
