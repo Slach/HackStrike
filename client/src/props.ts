@@ -499,12 +499,13 @@ export class PropsView {
     const fire = [...this.fires.values()].find((f) => f.valveId === id)
     if (fire === undefined) return
     const floorY = fire.y - fire.h / 2 // верх плиты, на которой стоит полоса
-    const path = [
-      new Vector3(v.x, v.y, v.z), // из потолочного клапана
-      new Vector3(v.x, floorY, v.z), // строго вниз вдоль стены
-      new Vector3(fire.x, floorY, fire.z), // по полу до центра полосы
-    ]
-    const pipe = MeshBuilder.CreateTube(`prop.${id}.pipe`, { path, radius: 0.09 }, this.scene)
+    // Пол: прямоугольный излом (ревебр owner) — сначала вдоль стены по оси z
+    // до z полосы, затем поперёк по x к её центру. Для v3 (z совпадает)
+    // средняя точка вырождается — не добавляем её вовсе.
+    const pts = [new Vector3(v.x, v.y, v.z), new Vector3(v.x, floorY, v.z)]
+    if (Math.abs(v.z - fire.z) > 1e-6) pts.push(new Vector3(v.x, floorY, fire.z))
+    pts.push(new Vector3(fire.x, floorY, fire.z))
+    const pipe = MeshBuilder.CreateTube(`prop.${id}.pipe`, { path: pts, radius: 0.09 }, this.scene)
     pipe.material = this.mats.pipe
     pipe.isPickable = false
     v.pipeBuilt = true
