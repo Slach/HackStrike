@@ -10,6 +10,7 @@
 // changes); deck samples (2 Hz) and door states update existing nodes in
 // place, so a pending button click is never swallowed by a re-render.
 
+import { IS_TOUCH } from './mobile'
 import type {
   CamSeen,
   ClientMessage,
@@ -36,6 +37,9 @@ export interface HackViewDeps {
   teamOf: (playerId: number) => number | null
   /** Имя игрока по id (для журнала событий watcher'а, §13.1 №1); null — неизвестен. */
   nameOf: (playerId: number) => string | null
+  /** Джек-аут по тапу на touch (ГДД §15.2): на телефоне Ctrl/Cmd+ALT+DEL
+   *  физически недоступен, кнопка ВЫХОД в шапке дека — его touch-эквивалент. */
+  jackout: () => void
 }
 
 const DENIED_TEXT: Readonly<Record<string, string>> = {
@@ -724,6 +728,8 @@ export class HackView {
     input.className = 'hv-pal-input'
     input.autocomplete = 'off'
     input.spellcheck = false
+    // Enter на экранной клавиатуре = «Поиск» (запуск), не перевод строки (§15.2)
+    input.enterKeyHint = 'search'
     input.placeholder =
       mode === 'tab' ? 'фильтр устройства — напр. cam2, ENTER ОТКРЫТЬ ТАБ' : 'фильтр устройства + программа — напр. cam1 port'
     input.addEventListener('input', () => {
@@ -732,9 +738,22 @@ export class HackView {
     })
     const list = el('div', 'hv-pal-list')
     const hint = el('div', 'hv-pal-hint')
-    hint.textContent =
-      mode === 'tab' ? 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ENTER ОТКРЫТЬ ТАБ · ESC ЗАКРЫТЬ' : 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ЗАПУСК · ESC ЗАКРЫТЬ'
+    hint.textContent = IS_TOUCH
+      ? mode === 'tab'
+        ? 'ТАП ПО СТРОКЕ — ОТКРЫТЬ ТАБ · × ЗАКРЫТЬ'
+        : 'ТАП ПО СТРОКЕ — ЗАПУСК · ENTER ЗАПУСК · × ЗАКРЫТЬ'
+      : mode === 'tab'
+        ? 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ENTER ОТКРЫТЬ ТАБ · ESC ЗАКРЫТЬ'
+        : 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ЗАПУСК · ESC ЗАКРЫТЬ'
     wrap.append(input, list, hint)
+    if (IS_TOUCH) {
+      // На телефоне ESC нет — кнопка закрытия в строке подсказки (ГДД §15.2).
+      const x = el('button', 'hv-pal-x')
+      x.textContent = '×'
+      x.setAttribute('aria-label', 'закрыть')
+      x.addEventListener('click', () => this.closePalette())
+      hint.append(x)
+    }
     this.root.append(wrap)
     this.palette = { wrap, input, list }
     this.paletteSel = -1
@@ -745,6 +764,8 @@ export class HackView {
 
   private closePalette(): void {
     if (this.palette === null) return
+    // Touch: снять фокус, иначе экранная клавиатура останется висеть (§15.2).
+    this.palette.input.blur()
     this.palette.wrap.remove()
     this.palette = null
     this.paletteCands = []
@@ -812,6 +833,14 @@ export class HackView {
       const row = el('div', 'hv-pal-cand' + (i === this.paletteSel ? ' sel' : ''))
       row.append(txt('span', 'hv-pal-name', c.label))
       row.append(txt('span', 'hv-pal-hintc', c.hint))
+      if (IS_TOUCH) {
+        // Тап по кандидату = тот же Enter (ГДД §15.2): выделение ставим на него
+        // и запускаем — на телефоне Tab/↑↓ недоступны.
+        row.addEventListener('click', () => {
+          this.paletteSel = i
+          this.paletteRun()
+        })
+      }
       pal.list.append(row)
     })
     if (cands.length === 0) {
@@ -911,7 +940,7 @@ export class HackView {
         this.target = dev
         this.panes[this.activePane].tabKey = 'deck'
         this.closePalette()
-        this.toast(`ЦЕЛЬ: ${dev.toUpperCase()} — ХОТКЕИ 1–6`)
+        this.toast(`ЦЕЛЬ: ${dev.toUpperCase()} — ${IS_TOUCH ? 'КНОПКИ 1–6' : 'ХОТКЕИ 1–6'}`)
         this.schedule(() => this.render())
         return
       }
@@ -984,7 +1013,15 @@ export class HackView {
     head.append(txt('span', 'hv-title', 'HACKDECK'))
     head.append(txt('span', 'hv-host', hostLabel))
     head.append(txt('span', 'hv-net', `NET: ${this.netMbps} МБИТ`))
-    head.append(txt('span', 'hv-exit', 'ВЫХОД: CTRL/CMD+ALT+DEL'))
+    if (IS_TOUCH) {
+      // Джек-аут тапом: Ctrl/Cmd+ALT+DEL на телефоне недоступен (ГДД §15.2).
+      const exit = el('button', 'hv-btn hv-exit-btn')
+      exit.textContent = 'ВЫХОД'
+      exit.addEventListener('click', () => this.deps.jackout())
+      head.append(exit)
+    } else {
+      head.append(txt('span', 'hv-exit', 'ВЫХОД: CTRL/CMD+ALT+DEL'))
+    }
     main.append(head)
 
     const bar = el('div', 'hv-tabs')
@@ -1012,8 +1049,11 @@ export class HackView {
     main.append(grid)
 
     const foot = el('div', 'hv-foot')
-    foot.textContent =
-      'T ТАБ [ФИЛЬТР] · W ЗАКРЫТЬ · H/V СПЛИТ · F1..F9 ПЕРЕКЛЮЧИТЬ · 1–6 ПРОГРАММЫ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
+    // Хоткей-строка — клавиатурная; на touch она бессмысленна, подсказываем
+    // тап-жесты (ГДД §15.2).
+    foot.textContent = IS_TOUCH
+      ? 'ЧИБЫ — ТАБЫ · [ / ] ПАЛИТРА (ТАП ПО СТРОКЕ = ENTER) · ВЫХОД — КНОПКА СПРАВА'
+      : 'T ТАБ [ФИЛЬТР] · W ЗАКРЫТЬ · H/V СПЛИТ · F1..F9 ПЕРЕКЛЮЧИТЬ · 1–6 ПРОГРАММЫ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
     main.append(foot)
 
     if (this.menuOpen) main.append(this.buildMenu())
@@ -1080,6 +1120,11 @@ export class HackView {
       b.addEventListener('click', () => this.runProg(prog))
       run.append(b)
     }
+    // [ / ] — тап-эквивалент клавиши '/' (ГДД §15.2): на мобильнике хоткея нет.
+    const slash = el('button', 'hv-btn hv-btn-slash')
+    slash.textContent = '/ ПАЛИТРА'
+    slash.addEventListener('click', () => this.openPalette('run'))
+    run.append(slash)
     left.append(run)
 
     const right = el('div', 'deck-right')
@@ -1122,7 +1167,8 @@ export class HackView {
       wrap.append(status)
       wrap.append(txt('div', 'door-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)}`))
       const btn = el('button', 'hv-btn door-toggle')
-      btn.textContent = d.owner === this.myId ? 'TOGGLE [ПРОБЕЛ]' : 'TOGGLE'
+      // [ПРОБЕЛ] — подсказка клавиатуры; на touch кнопка тапается (§15.2)
+      btn.textContent = d.owner === this.myId && !IS_TOUCH ? 'TOGGLE [ПРОБЕЛ]' : 'TOGGLE'
       btn.disabled = d.owner !== this.myId // ctrl валидирует сервер, это только UX
       btn.addEventListener('click', () => this.deps.send({ t: 'ctrl', dev, action: 'toggle' }))
       wrap.append(btn)
@@ -1247,7 +1293,7 @@ export class HackView {
   private fillProgs(list: HTMLElement): void {
     list.replaceChildren()
     if (this.progs.length === 0) {
-      list.append(txt('div', 'hv-dim', 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4/5/6'))
+      list.append(txt('div', 'hv-dim', IS_TOUCH ? 'ПРОЦЕССОВ НЕТ — КНОПКИ 1–6' : 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4/5/6'))
       return
     }
     for (const p of this.progs) {

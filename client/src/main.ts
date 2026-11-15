@@ -28,6 +28,7 @@ import type { MiniCyberDev } from './minimap'
 import { PropsView } from './props'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
+import { IS_TOUCH, TouchOverlay, startKeyboardTracker } from './mobile'
 
 const RENDER_DELAY_MS = 100
 const INPUT_INTERVAL_MS = 1000 / 30
@@ -48,6 +49,15 @@ const { scene, camera } = createScene(engine)
 
 const hud = new Hud()
 const controls = new Controls(canvas)
+
+// Touch-оверлей meatview (ГДД §15.1) — только при детекте пальца: крестина
+// движения слева, круг прицела справа, ДЕЙСТВИЕ=Space. --kb для деки (§15.2).
+let touch: TouchOverlay | null = null
+if (IS_TOUCH) {
+  document.body.classList.add('touch')
+  startKeyboardTracker()
+  touch = new TouchOverlay(controls)
+}
 const views = new PlayerViews(scene)
 const buffer = new SnapshotBuffer()
 const autofire = new AutoFire()
@@ -222,6 +232,7 @@ function handleDeath(msg: DeathMsg): void {
   }
   autofire.reset()
   hackviewOff(false) // сервер джек-аутит сам; оверлей гасим сразу (ГДД §12.1)
+  touch?.reset() // мёртвое тело не должно «бежать» через удержанную крестину (§15.1)
 }
 
 function handleEnd(msg: EndMsg): void {
@@ -358,6 +369,11 @@ const hackview = new HackView({
   // Имя по id для журнала событий watcher'а (§13.1 №1): те же метаданные
   // снапа, что и для whoName в роутинге alert.
   nameOf: (playerId) => latestMeta.get(playerId)?.name ?? null,
+  // Тап-джек-аут на touch (ГДД §15.2): кнопка ВЫХОД в шапке дека.
+  jackout: () => {
+    sock.sendJackout()
+    hackviewOff(true)
+  },
 })
 
 function hackviewOn(msg: JackinMsg): void {
@@ -365,6 +381,7 @@ function hackviewOn(msg: JackinMsg): void {
   document.body.classList.add('hackmode') // прячет FPS-HUD (CSS)
   controls.frozen = true // взгляд и клавиши не меняют состояние тела
   controls.resetKeys()
+  touch?.reset() // крестина/прицел скрыты CSS — не оставляем «удержание» (§15.1)
   // Курсор нужен для кликов по WM (карта сети, кнопки); upon jackout
   // pointer lock запрашивается снова из keydown-жеста.
   if (document.pointerLockElement !== null) document.exitPointerLock()
@@ -376,6 +393,7 @@ function hackviewOff(relock: boolean): void {
   document.body.classList.remove('hackmode')
   controls.frozen = false
   controls.resetKeys()
+  touch?.reset()
   if (relock && playing) controls.requestLock()
 }
 
@@ -457,7 +475,11 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
 // Input stream to the server: ~30/s, latest keys + view angles. Пока хакер
 // в деке — тело стоит: ни input, ни fire не отправляем (ГДД §12.1).
 window.setInterval(() => {
-  if (playing && !hackview.active) sock.sendInput(controls.keys, controls.yaw, controls.pitch)
+  if (!playing || hackview.active) return
+  // Touch ДЕЙСТВИЕ — edge как у Space: 1 в ближайший тик (сервер видит rising
+  // edge interact); controls.keys.interact при этом остаётся 0 (§15.1).
+  if (touch !== null) controls.keys.interact = touch.consumeInteract()
+  sock.sendInput(controls.keys, controls.yaw, controls.pitch)
 }, INPUT_INTERVAL_MS)
 
 engine.runRenderLoop(() => {
@@ -539,7 +561,7 @@ engine.runRenderLoop(() => {
     alive &&
     !matchOver &&
     !hackview.active &&
-    controls.locked &&
+    (controls.locked || touch?.aiming === true) && // touch-гейт вместо pointer lock (§15.1)
     world !== null &&
     (myCls !== 'sniper' || scope.armed)
   ) {

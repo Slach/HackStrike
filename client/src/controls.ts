@@ -3,6 +3,7 @@
 // server-authoritative — keys are shipped to the server ~30/s by main.ts.
 
 import type { KeysState } from './net'
+import { IS_TOUCH as TOUCH } from './mobile'
 
 const SENS_RAD_PER_PX = 0.0022
 const PITCH_LIMIT = (89 * Math.PI) / 180
@@ -27,7 +28,7 @@ export class Controls {
   }
 
   requestLock(): void {
-    if (this.locked) return
+    if (this.locked || TOUCH) return // на touch lock недостижим: палец на круге прицела (§15.1)
     // Older browsers return undefined, newer a promise — handle both.
     const res = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined
     res?.catch(() => undefined)
@@ -43,14 +44,21 @@ export class Controls {
 
   private readonly onMouseMove = (e: MouseEvent): void => {
     if (!this.locked || this.frozen) return
-    this.yaw += e.movementX * SENS_RAD_PER_PX
+    this.look(e.movementX, e.movementY)
+  }
+
+  /** Сдвиг взгляда на дельту в «мышинных» пикселях. Общий путь для мыши
+   *  (movementX/Y) и touch-круга прицела (mobile.ts, ГДД §15.1). */
+  look(dxPx: number, dyPx: number): void {
+    if (this.frozen) return
+    this.yaw += dxPx * SENS_RAD_PER_PX
     if (this.yaw > Math.PI) this.yaw -= TAU
     else if (this.yaw < -Math.PI) this.yaw += TAU
-    // Wire pitch is positive-up (GDD §9.2) and movementY is positive when the
-    // mouse moves DOWN — subtract, or every shot sent to the server aims at a
-    // vertically mirrored direction while the local camera still feels fine.
-    // invertY flips only the local feel; the wire value stays in convention.
-    const dy = (this.invertY ? e.movementY : -e.movementY) * SENS_RAD_PER_PX
+    // Wire pitch is positive-up (GDD §9.2) and dy is positive DOWN — subtract,
+    // or every shot sent to the server aims vertically mirrored while the
+    // local camera still feels fine. invertY flips only the local feel; the
+    // wire value stays in convention.
+    const dy = (this.invertY ? dyPx : -dyPx) * SENS_RAD_PER_PX
     this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.pitch + dy))
   }
 

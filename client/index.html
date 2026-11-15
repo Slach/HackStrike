@@ -2,7 +2,7 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>HACKSTRIKE</title>
     <style>
       :root {
@@ -1442,6 +1442,150 @@
       }
       .hv-toast.fade {
         opacity: 0;
+      }
+
+      /* ── Мобильная адаптация (ГДД §15): оверлей meatview + touch-слой деки.
+         Всё под body.touch — класс вешает mobile.ts при детекте пальца;
+         на десктопе правила не применяются (нулевая регрессия). ── */
+      :root {
+        --kb: 0px; /* высота экранной клавиатуры: mobile.ts следит, CSS якорит палитру */
+      }
+      body.touch {
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+      }
+      #touchui {
+        position: fixed;
+        inset: 0;
+        z-index: 8; /* ниже hackmode-деки (10), но выше HUD (5): дека прячет оверлей собой */
+        pointer-events: none; /* зоны внутри включают сами */
+        display: none;
+      }
+      body.touch #touchui {
+        display: block;
+      }
+      body.hackmode #touchui {
+        display: none; /* в деке пальцы нужны WM (ГДД §12.1) */
+      }
+      .tc-pad {
+        position: absolute;
+        left: calc(12px + env(safe-area-inset-left));
+        bottom: calc(96px + env(safe-area-inset-bottom));
+        width: 148px;
+        height: 148px;
+        pointer-events: auto;
+        touch-action: none;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(2, 18, 10, 0.35), rgba(2, 18, 10, 0.6));
+        border: 1px solid rgba(55, 255, 155, 0.35);
+      }
+      .tc-seg {
+        position: absolute;
+        color: rgba(170, 255, 210, 0.55);
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .tc-seg.up { top: 6px; left: 0; right: 0; height: 40px; }
+      .tc-seg.down { bottom: 6px; left: 0; right: 0; height: 40px; }
+      .tc-seg.left { left: 6px; top: 0; bottom: 0; width: 40px; }
+      .tc-seg.right { right: 6px; top: 0; bottom: 0; width: 40px; }
+      .tc-seg.hot {
+        color: #37ff9b;
+        background: rgba(55, 255, 155, 0.16);
+      }
+      .tc-hub {
+        position: absolute;
+        left: 50%; top: 50%;
+        width: 30%; height: 30%;
+        transform: translate(-50%, -50%);
+        border: 1px solid rgba(55, 255, 155, 0.3);
+        border-radius: 50%;
+      }
+      .tc-right {
+        position: absolute;
+        right: calc(12px + env(safe-area-inset-right));
+        bottom: calc(104px + env(safe-area-inset-bottom));
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+      }
+      .tc-act {
+        pointer-events: auto;
+        touch-action: none;
+        width: 76px; height: 40px;
+        border-radius: 8px;
+        background: rgba(55, 255, 155, 0.1);
+        border: 1px solid rgba(55, 255, 155, 0.5);
+        color: #baffdd;
+        font: inherit;
+        font-size: 10px;
+        letter-spacing: 1px;
+      }
+      .tc-act:active { background: rgba(55, 255, 155, 0.35); }
+      .tc-look {
+        pointer-events: auto;
+        touch-action: none;
+        position: relative;
+        width: 148px; height: 148px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(2, 18, 10, 0.3), rgba(2, 18, 10, 0.55));
+      }
+      .tc-look-ring {
+        position: absolute;
+        inset: 10%;
+        border: 1px solid rgba(55, 255, 155, 0.4);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(170, 255, 210, 0.45);
+        font-size: 10px;
+        letter-spacing: 2px;
+      }
+      .tc-look.aiming { border-color: rgba(55, 255, 155, 0.9); }
+      .tc-look.aiming .tc-look-ring {
+        border-color: #37ff9b;
+        box-shadow: 0 0 18px rgba(55, 255, 155, 0.35);
+        color: #37ff9b;
+      }
+      /* Дека на тапе: палитра встаёт НАД экранной клавиатурой, а не у низа
+         дека под полем ввода как на десктопе (§15.2). */
+      body.touch .hv-palette {
+        bottom: calc(var(--kb) + env(safe-area-inset-bottom) + 10px);
+        width: min(560px, 94%);
+      }
+      body.touch .hv-pal-input {
+        font-size: 16px; /* <16px iOS зумит поле по фокусу */
+      }
+      body.touch .hv-pal-cand {
+        padding: 10px 8px; /* тап-таргет ≥40px */
+        cursor: pointer;
+      }
+      body.touch .hv-pal-cand:active { background: rgba(55, 255, 155, 0.25); }
+      body.touch .hv-pal-hint { display: flex; justify-content: space-between; align-items: center; }
+      .hv-pal-x {
+        background: none;
+        border: 1px solid rgba(55, 255, 155, 0.4);
+        color: #baffdd;
+        font: inherit;
+        min-width: 40px; min-height: 40px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      body.touch .hv-chip { padding: 9px 12px; } /* табы пальцем */
+      body.touch .hv-btn { padding: 11px 12px; }
+      .hv-exit-btn {
+        margin-left: auto;
+        background: rgba(255, 77, 210, 0.12);
+        border-color: rgba(255, 77, 210, 0.6);
+        color: #ffb3dd;
+        text-align: center;
+        letter-spacing: 2px;
       }
     </style>
   </head>
