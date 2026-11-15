@@ -1852,6 +1852,22 @@
         background: #dff;
         image-rendering: pixelated;
       }
+      /* Лозунги приглашения: агрессивный акцент, как лого на join */
+      .inviteSlogan {
+        font-size: 12px;
+        letter-spacing: 2px;
+        line-height: 1.8;
+        color: var(--ink);
+        text-shadow: 0 0 14px rgba(55, 255, 155, 0.55);
+        text-align: center;
+      }
+      /* Мини-правила: приглушённо, узкая колонка под QR */
+      .inviteRules {
+        font-size: 11px;
+        line-height: 1.6;
+        color: rgba(170, 255, 210, 0.6);
+        text-align: center;
+      }
 
 
       /* Mobile meatview HUD (ГДД §15.5): нижние углы эксклюзивны за tc-
@@ -2042,6 +2058,15 @@
         <div class="setPanel">
           <div class="setHead">ПРИГЛАСИТЬ</div>
           <canvas id="inviteQr" width="180" height="180"></canvas>
+          <div class="inviteSlogan">«ХАКНИ ИЛИ УМРИ»<br />«УБЕЙ ХАКЕРА ИЛИ УМРИ»<br />«ЖИЗНЬ В ЭТОЙ ИГРЕ СЛИШКОМ КОРОТКА, НО ИНТЕРЕСНА»</div>
+          <div class="inviteRules">
+            Командный кибер-FPS в браузере: BLACKHAT VS WHITEHAT. Хакер
+            коннектится через терминалы и радио-эфир: из кибер-деки открывает
+            чужие двери, ворует камеры, перетыкает кабели, оставляет ловушки —
+            но тело его в этот момент беззащитно. Снайпер ваншотит, автоматчик
+            поливает, heavy не останавливается. Респавн 5 с, матч на счёт.
+            Ничего устанавливать не нужно.
+          </div>
           <div id="inviteUrl" class="inviteUrl"></div>
           <button id="inviteCopy" class="btn small" type="button">СКОПИРОВАТЬ</button>
           <button id="inviteClose" class="btn small ghost" type="button">ЗАКРЫТЬ</button>

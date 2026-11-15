@@ -12,6 +12,30 @@ const KILLFEED_ROWS = 5
 const KILLFEED_FADE_MS = 4000
 const END_RESTART_MS = 10000
 
+/** Текст приглашения (§15.5): три лозунга владельца — каркас текста
+ *  (заголовок → разворот → финал), между ними — только реальные механики.
+ *  Один «скопировать» даёт готовое сообщение для мессенджера. */
+function inviteText(url: string): string {
+  return [
+    '⚔ HACKSTRIKE // ХАКНИ ИЛИ УМРИ',
+    '',
+    'Командный кибер-FPS в браузере. BLACKHAT VS WHITEHAT.',
+    '',
+    'Хакер коннектится через терминалы и радио-эфир и работает из кибер-деки:',
+    'открывает чужие двери, ворует камеры, перетыкает кабели, оставляет',
+    'ловушки в сети. Пока он в деке — тело стоит у терминала и беззащитно.',
+    '',
+    'УБЕЙ ХАКЕРА ИЛИ УМРИ.',
+    '',
+    'Снайпер ваншотит, автоматчик поливает свинцом, heavy не останавливается.',
+    'Жизнь здесь слишком коротка, но интересна — всего 5 секунд до респавна.',
+    'Матч на счёт, авторестарт.',
+    '',
+    'Ничего устанавливать не нужно: открыл ссылку — играешь.',
+    `▸ ${url}`,
+  ].join('\n')
+}
+
 function byId<T extends HTMLElement>(id: string): T {
   const e = document.getElementById(id)
   if (e === null) throw new Error(`hud: missing #${id}`)
@@ -189,7 +213,7 @@ export class Hud {
       }
       const url = this.el.inviteUrl.textContent
       navigator.clipboard
-        .writeText(url)
+        .writeText(inviteText(url))
         .then(done)
         .catch(() => {
           // Fallback (clipboard API запрещён на http-стендах): выделение —
