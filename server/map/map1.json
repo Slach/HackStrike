@@ -1087,7 +1087,7 @@
     1,
     6
    ],
-   "radius": 8
+   "radius": 20
   },
   {
    "kind": "radio",
@@ -1097,7 +1097,7 @@
     1,
     58
    ],
-   "radius": 8
+   "radius": 20
   },
   {
    "kind": "switch",
