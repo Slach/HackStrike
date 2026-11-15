@@ -324,6 +324,9 @@ window.addEventListener(
   (e) => {
     if (!hackview.active) return
     const triple = e.code === 'Delete' && e.altKey && (e.ctrlKey || e.metaKey)
+    // Палитра открыта: ESC/Backspace закрывают палитру (её хендлер),
+    // не деку. Тройка Ctrl/Cmd+Alt+Del выходит всегда.
+    if (hackview.isPaletteOpen && !triple) return
     if (e.code === 'Escape' || e.code === 'Backspace' || triple) {
       e.preventDefault()
       sock.sendJackout()

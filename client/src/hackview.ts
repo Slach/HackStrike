@@ -254,6 +254,11 @@ export class HackView {
     return this._active
   }
 
+  /** Палитра открыта: ESC/Backspace принадлежат ей (закрытие), не джек-ауту. */
+  get isPaletteOpen(): boolean {
+    return this.palette !== null
+  }
+
   setMyId(id: number | null): void {
     this.myId = id
   }
