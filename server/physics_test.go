@@ -117,7 +117,7 @@ func TestStepThreshold(t *testing.T) {
 // Встроенная карта: игрок поднимается по лестнице NW (ступени 0.5 м с y=1
 // до y=8) простым движением вперёд — autostep на каждой ступени.
 func TestClimbEmbeddedStaircase(t *testing.T) {
-	m, err := parseGameMap(map1JSON)
+	m, err := parseGameMap(h2dm1JSON)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestClimbEmbeddedStaircase(t *testing.T) {
 // Зеркальный (180°) подъём по SE-лестнице: до фикса карты её верхняя ступень
 // лежала в NE-углу, и лестница обрывалась на y=7.5.
 func TestClimbSEStaircase(t *testing.T) {
-	m, err := parseGameMap(map1JSON)
+	m, err := parseGameMap(h2dm1JSON)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestClimbSEStaircase(t *testing.T) {
 // Проходимость СВ-лестницы (M4/M5, развёртка карты): ступени 0.5 м, подъём
 // к -X (зеркало SE по z=32), проём в плите террасы x48.2..53.5/z2..4.
 func TestClimbNEStaircase(t *testing.T) {
-	m, err := parseGameMap(map1JSON)
+	m, err := parseGameMap(h2dm1JSON)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestClimbNEStaircase(t *testing.T) {
 // Проходимость ЮЗ-лестницы (зеркало NW по z=32): подъём к +X, проём
 // x10.5..15.8/z60..62.
 func TestClimbSWStaircase(t *testing.T) {
-	m, err := parseGameMap(map1JSON)
+	m, err := parseGameMap(h2dm1JSON)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}

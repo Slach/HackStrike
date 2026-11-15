@@ -26,8 +26,8 @@ func TestHTTPMapAndHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read body: %v", err)
 	}
-	if string(body) != string(map1JSON) {
-		t.Fatalf("/api/map body differs from embedded map (%d vs %d bytes)", len(body), len(map1JSON))
+	if string(body) != string(h2dm1JSON) {
+		t.Fatalf("/api/map body differs from embedded map (%d vs %d bytes)", len(body), len(h2dm1JSON))
 	}
 	if _, err := parseGameMap(body); err != nil {
 		t.Fatalf("served map must parse: %v", err)

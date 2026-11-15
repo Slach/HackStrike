@@ -8,8 +8,8 @@ import (
 	"strconv"
 )
 
-//go:embed map/map1.json
-var map1JSON []byte
+//go:embed map/h2dm1.json
+var h2dm1JSON []byte
 
 // collider — AABB-бокс геометрии карты. kind: floor | wall | stair
 // (stair — ступень высотой <=0.5, взбираемся autostep'ом).

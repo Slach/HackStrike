@@ -9,7 +9,7 @@ import (
 
 func mustParseEmbeddedMap(t *testing.T) *gameMap {
 	t.Helper()
-	m, err := parseGameMap(map1JSON)
+	m, err := parseGameMap(h2dm1JSON)
 	if err != nil {
 		t.Fatalf("parseGameMap(embedded): %v", err)
 	}
@@ -395,13 +395,13 @@ func indexOf(vals []float64, v float64) int {
 // при парсинге (§12.3).
 func TestAPIMapServesEmbedded(t *testing.T) {
 	m := mustParseEmbeddedMap(t)
-	if m.Name != "m1" || len(m.Colliders) == 0 {
+	if m.Name != "h2dm1" || len(m.Colliders) == 0 {
 		t.Fatalf("unexpected embedded map: %+v", m)
 	}
 	if len(m.Props) == 0 || len(m.props) != len(m.Props) {
 		t.Fatalf("M2 props must parse: raw=%d typed=%d", len(m.Props), len(m.props))
 	}
-	if len(map1JSON) == 0 {
+	if len(h2dm1JSON) == 0 {
 		t.Fatalf("embedded map bytes are empty")
 	}
 }

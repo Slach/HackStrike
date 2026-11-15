@@ -58,7 +58,7 @@ cd client && npm run dev                   # :5173, /ws и /api проксиру
    client-side prediction движения не делаем в MVP.
 5. **Wire protocol** — JSON, дискриминатор `"t"` (см. ГДД §9.2). Новые
    сообщения сначала в доку. Бинарный формат — потом, не сейчас.
-6. **Карта — данные**: `server/map/map1.json` (go:embed), раздаётся через
+6. **Карта — данные**: `server/map/h2dm1.json` (go:embed), раздаётся через
    `GET /api/map`; клиент геометрию не хардкодит.
 7. **UI-оверлеи — DOM** (HUD, hacker view), не Babylon GUI; рендер-канвас — Babylon.
 

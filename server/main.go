@@ -25,9 +25,9 @@ func main() {
 		os.Exit(runHealthcheck(*addr))
 	}
 
-	m, err := parseGameMap(map1JSON)
+	m, err := parseGameMap(h2dm1JSON)
 	if err != nil {
-		log.Fatalf("map: embedded map1.json is broken: %v", err)
+		log.Fatalf("map: embedded h2dm1.json is broken: %v", err)
 	}
 
 	r := newRoom(m)
@@ -52,7 +52,7 @@ func newHTTPMux(r *room) *http.ServeMux {
 	})
 	mux.HandleFunc("/api/map", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(map1JSON)
+		_, _ = w.Write(h2dm1JSON)
 	})
 	mux.HandleFunc("/ws", r.handleWS)
 	return mux
