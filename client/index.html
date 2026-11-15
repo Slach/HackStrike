@@ -1682,8 +1682,22 @@
       body.touch .hv-btn-slash { order: -1; }
       body.touch .hv-run { gap: 3px; }
       body.touch .hv-run .hv-btn { padding: 5px 8px; font-size: 10px; letter-spacing: 1px; }
-      /* список процессов тоже плотнее: на 390px по высоте каждый пикселя на вес */
-      body.touch .hv-progs { min-height: 0; gap: 2px; font-size: 10px; }
+      /* список процессов тоже плотнее: на 390px по высоте каждый пикселя на вес.
+         min-height:0 превращал бокс в сжимаемый: при 4–5 процессах строки
+         вылезали за него и перекрывали «/ ПАЛИТРА» (ревебр owner). Фикс:
+         потолок 92px + внутренняя прокрутка; при нехватке места бок сжимается
+         до пола в две строки — ряд кнопок с «/ ПАЛИТРА» важнее и должен быть
+         виден целиком; зазор до него — добавочные 10px padding'ом (§15.10) */
+      body.touch .hv-progs {
+        flex: 0 1 auto;
+        min-height: 44px; /* border-box: 10 padding + две видимые строки */
+        max-height: 92px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        gap: 2px;
+        font-size: 10px;
+        padding-bottom: 10px;
+      }
       @media (orientation: landscape) and (min-width: 600px) {
         /* 240px deck-left + 12px gap — старт колонки netmap */
         body.touch .hv-sparks { margin-left: 252px; }
