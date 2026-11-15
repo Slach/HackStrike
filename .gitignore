@@ -5,6 +5,7 @@
 .venv
 *.so
 node_modules/
+node_modules
 .vscode/
 .aider*
 .claude/
