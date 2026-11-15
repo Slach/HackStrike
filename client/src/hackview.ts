@@ -302,6 +302,15 @@ export class HackView {
     this.netMbps = msg.deck.net
     this.deckRam = msg.deck.ram > 0 ? msg.deck.ram : 4
     this.progs = []
+    // Дедупликаторы тостов-«находок» живут в синглтоне страницы и переживали
+    // смерть/реконнект: повторный vulnscan той же цели приходил как «не новое»
+    // и тост «УЯЗВИМОСТЬ НАЙДЕНА» глох — выглядело «vulnscan не находит»
+    // (баг-репорт владельца 2026-11-15; сервер флаг ставит «навсегда», §12.4).
+    // Каждая сессия деки заново анонсирует стоящие флаги после portscan.
+    this.vulned = new Map()
+    this.watched = new Map()
+    this.firewalled = new Map()
+    this.antivirused = new Map()
     this.hist.cpu.length = 0
     this.hist.npu.length = 0
     this.hist.ram.length = 0
