@@ -587,6 +587,10 @@ export class HackView {
     // но с клавиатуры. Сервер валидирует ctrl, это только UX. Газ (M4 §14.2)
     // — то же правило: взвод клапана пробелом на своём табе газа.
     if (e.code === 'Space') {
+      // Фокус на кнопке (линки, TOGGLE, табы) — Space отдаём браузеру:
+      // нативная активация кнопки; наш TOGGLE-пробел работает только без
+      // фокуса (клавиатурная навигация по линкам, плейтест M4).
+      if (document.activeElement instanceof HTMLButtonElement) return
       const pane0 = this.panes[this.activePane]
       const tab0 = this.tabs.find((t) => t.key === pane0?.tabKey)
       const dev0 = tab0?.dev !== null && tab0?.dev !== undefined ? this.devices.get(tab0.dev) : undefined
@@ -1134,6 +1138,10 @@ export class HackView {
 
   private render(): void {
     if (!this._active) return
+    // render() перестраивает DOM целиком — фокус с клавиатуры (линки ходятся
+    // табом/стрелками, плейтест M4) восстанавливаем по data-link чипу.
+    const refocusLink =
+      document.activeElement instanceof HTMLElement ? document.activeElement.dataset.link : undefined
     this.sparkRefs = []
     this.progLists = []
     this.netmapBoxes = []
@@ -1199,6 +1207,9 @@ export class HackView {
     this.updateNetmaps()
     this.updateCamFeeds()
     this.updateRadar()
+    if (refocusLink !== undefined) {
+      main.querySelector<HTMLElement>(`[data-link="${refocusLink}"]`)?.focus()
+    }
   }
 
   private buildPane(pane: Pane, index: number): HTMLElement {
@@ -1378,6 +1389,7 @@ export class HackView {
         }
         const chip = el('button', 'dev-link')
         chip.textContent = l.toUpperCase()
+        chip.dataset.link = l // для восстановления фокуса после render()
         chip.addEventListener('click', (e) => {
           e.stopPropagation()
           this.ensureTab(l, true)
@@ -1386,6 +1398,27 @@ export class HackView {
         })
         v.append(chip)
       }
+      // Клавиатура по линкам (плейтест M4): Tab фокусирует чип (нативно),
+      // стрелки ходят между чипами, Enter/Space открывают (нативный клик по
+      // button — Space до сюда доходит, т.к. onFocusButton в onKeyDown).
+      v.addEventListener('keydown', (e) => {
+        const chips = [...v.querySelectorAll<HTMLButtonElement>('button.dev-link')]
+        const i = chips.indexOf(document.activeElement as HTMLButtonElement)
+        if (i === -1) return
+        const step =
+          e.key === 'ArrowRight' || e.key === 'ArrowDown'
+            ? 1
+            : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+              ? -1
+              : e.key === 'Home'
+                ? -i
+                : e.key === 'End'
+                  ? chips.length - 1 - i
+                  : 0
+        if (step === 0) return
+        e.preventDefault()
+        chips[(i + step + chips.length) % chips.length]?.focus()
+      })
       r.append(v)
       info.append(r)
     }

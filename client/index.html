@@ -503,10 +503,13 @@
         color: #fff;
         border-color: #fff;
       }
+      /* Выбранная команда — явная зелёная рамка со свечением, чтобы статус
+         читался и на белой (t0), и на чёрной (t1) кнопке */
       .segBtn.on {
-        border-color: currentColor;
-        box-shadow: 0 0 8px rgba(55, 255, 155, 0.25);
-        background: rgba(55, 255, 155, 0.08);
+        border-color: #37ff9b;
+        outline: 2px solid #37ff9b;
+        outline-offset: 1px;
+        box-shadow: 0 0 12px rgba(55, 255, 155, 0.45);
       }
       #nameInput {
         background: #02120a;
@@ -1258,6 +1261,14 @@
       .dev-link:hover {
         background: rgba(55, 255, 155, 0.25);
         color: #eafff3;
+      }
+      /* Фокус с клавиатуры (таб/стрелки по линкам) должен быть виден —
+         браузерный outline тут выключен общим сбросом (плейтест M4) */
+      .dev-link:focus-visible {
+        background: rgba(55, 255, 155, 0.35);
+        border-color: #7dffc0;
+        color: #eafff3;
+        outline: 1px solid rgba(125, 255, 192, 0.8);
       }
       .dev-links-none {
         color: rgba(170, 255, 210, 0.45);
@@ -2204,9 +2215,9 @@
         </div>
         <div id="joinCards" class="cards"></div>
         <div class="joinRow seg" id="teamSeg">
-          <button type="button" data-team="-1" class="segBtn on">АВТО</button>
-          <button type="button" data-team="0" class="segBtn t0">WHITEHAT</button>
-          <button type="button" data-team="1" class="segBtn t1">BLACKHAT</button>
+          <button type="button" data-team="-1" class="segBtn on">(A)UTO</button>
+          <button type="button" data-team="0" class="segBtn t0">(W)HITEHAT</button>
+          <button type="button" data-team="1" class="segBtn t1">(B)LACKHAT</button>
         </div>
         <div class="btnRow joinBtns">
           <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
