@@ -205,6 +205,14 @@ export class HackView {
    *  между узлами, было 340×250). Зум/пан считаются от него. */
   private static readonly NETMAP_W = 480
   private static readonly NETMAP_H = 360
+  /** Карта на тапе (§15.7): базовый зум > 1 — на 390px-высоте телефона
+   *  фиксированная геометрия viewBox (узлы r=7, подписи 8px) давала ~5 css
+   *  px; отталкиваемся от 1.5×, pinch по-прежнему разматывает до 0.6 (вся
+   *  карта) и зумит до 5. Десктоп: 1, побайтно прежнее. */
+  private static readonly NETMAP_ZOOM0 = IS_TOUCH ? 1.5 : 1
+  /** Масштаб геометрии узлов на карте (r, подписи, ореолы) — тоже только
+   *  для тача: крупные цели тапа + разборчивые подписи. */
+  private static readonly NETMAP_S = IS_TOUCH ? 1.45 : 1
 
   private readonly root: HTMLElement
   private readonly main: HTMLElement
@@ -257,9 +265,14 @@ export class HackView {
   private menuOpen = false
   /** Режим палитры: 'run' = '/' программы, 'tab' = 'T' открыть таб (§12.6). */
   private paletteMode: 'run' | 'tab' = 'run'
+  /** Палитра-дерево на тапе (§15.7): выбранный второй уровень (устройство)
+   *  или null — ряд устройств. */
+  private paletteDev: string | null = null
 
   // Слэш-палитра (§13.3): командная строка запуска программ с клавиатуры.
-  private palette: { wrap: HTMLElement; input: HTMLInputElement; list: HTMLElement } | null = null
+  // input === null на тапе: дерево кнопок без поля ввода и без системной
+  // клавиатуры — она съедала до 90% экрана (ревебр owner, §15.7).
+  private palette: { wrap: HTMLElement; input: HTMLInputElement | null; list: HTMLElement } | null = null
   private paletteCands: readonly PalCand[] = []
   private paletteSel = -1
   /** Токен, который дополняет Tab: 0 = устройство, 1 = программа. */
@@ -333,7 +346,7 @@ export class HackView {
     this._active = false
     this.menuOpen = false
     this.closePalette()
-    this.netmapZoom = 1 // зум/пан карты не переживает сессию деки
+    this.netmapZoom = HackView.NETMAP_ZOOM0 // зум/пан карты не переживает сессию деки
     this.netmapCenter = { x: HackView.NETMAP_W / 2, y: HackView.NETMAP_H / 2 }
     this.pendingJobs = []
     if (this.raf !== null) {
@@ -425,6 +438,11 @@ export class HackView {
     }
     if (this.target !== null && !next.has(this.target)) this.target = null
     this.devices = next
+    // Открытая палитра-дерево (touch) — список устройств устарел со сканом.
+    if (this.palette !== null && this.palette.input === null) {
+      if (this.paletteDev !== null && !next.has(this.paletteDev)) this.paletteDev = null
+      this.updatePalette()
+    }
     this.schedule(() => this.render())
   }
 
@@ -697,6 +715,14 @@ export class HackView {
   private onPaletteKey(e: KeyboardEvent): void {
     const pal = this.palette
     if (pal === null) return
+    if (pal.input === null) {
+      // Дерево на тапе (§15.7): клавиатуры нет, только ESC/× закрывают.
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        this.closePalette()
+      }
+      return
+    }
     if (e.ctrlKey || e.metaKey) {
       // Блокируем дека-комбинации (T/W/H/V/Digit), остальные браузерные
       // шорткаты (копипаст и т.п.) не трогаем.
@@ -736,7 +762,27 @@ export class HackView {
   private openPalette(mode: 'run' | 'tab'): void {
     if (this.palette !== null) return
     this.paletteMode = mode
+    this.paletteDev = null
     const wrap = el('div', 'hv-palette')
+    const list = el('div', 'hv-pal-list')
+    if (IS_TOUCH) {
+      // Режебр owner (§15.7): системную клавиатуру iOS/Android веб уменьшить
+      // не может, а она съедала до 90% экрана — поэтому на тапе поля ввода
+      // нет вовсе: дерево кнопок «устройство → программа». Клавиатура не
+      // вызывается, потому что фокусить нечему.
+      const hint = el('div', 'hv-pal-hint')
+      hint.textContent = '× ЗАКРЫТЬ'
+      const x = el('button', 'hv-pal-x')
+      x.textContent = '×'
+      x.setAttribute('aria-label', 'закрыть')
+      x.addEventListener('click', () => this.closePalette())
+      hint.append(x)
+      wrap.append(list, hint)
+      this.root.append(wrap)
+      this.palette = { wrap, input: null, list }
+      this.updatePalette()
+      return
+    }
     const input = document.createElement('input')
     input.type = 'text'
     input.className = 'hv-pal-input'
@@ -750,24 +796,12 @@ export class HackView {
       this.paletteSel = -1
       this.updatePalette()
     })
-    const list = el('div', 'hv-pal-list')
     const hint = el('div', 'hv-pal-hint')
-    hint.textContent = IS_TOUCH
-      ? mode === 'tab'
-        ? 'ТАП ПО СТРОКЕ — ОТКРЫТЬ ТАБ · × ЗАКРЫТЬ'
-        : 'ТАП ПО СТРОКЕ — ЗАПУСК · ENTER ЗАПУСК · × ЗАКРЫТЬ'
-      : mode === 'tab'
+    hint.textContent =
+      mode === 'tab'
         ? 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ENTER ОТКРЫТЬ ТАБ · ESC ЗАКРЫТЬ'
         : 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ЗАПУСК · ESC ЗАКРЫТЬ'
     wrap.append(input, list, hint)
-    if (IS_TOUCH) {
-      // На телефоне ESC нет — кнопка закрытия в строке подсказки (ГДД §15.2).
-      const x = el('button', 'hv-pal-x')
-      x.textContent = '×'
-      x.setAttribute('aria-label', 'закрыть')
-      x.addEventListener('click', () => this.closePalette())
-      hint.append(x)
-    }
     this.root.append(wrap)
     this.palette = { wrap, input, list }
     this.paletteSel = -1
@@ -776,10 +810,82 @@ export class HackView {
     input.focus()
   }
 
+  /** Уровень устройств палитры-дерева (touch, §15.7): PORTSCAN по всей сети
+   *  + устройство → следующий уровень (или сразу таб в режиме 'tab'). */
+  private paletteTreeDevs(pal: NonNullable<HackView['palette']>): void {
+    const { list } = pal
+    const all = [...this.devices.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
+    if (this.paletteMode === 'run') {
+      const b = el('button', 'hv-pal-cand hv-pal-dev')
+      b.append(
+        txt('span', 'hv-pal-name', 'PORTSCAN — ВСЯ СЕТЬ'),
+        txt('span', 'hv-pal-hintc', 'РАЗВЕДКА'),
+      )
+      b.addEventListener('click', () => this.paletteTreeRun('portscan', null))
+      list.append(b)
+    }
+    if (all.length === 0) {
+      list.append(txt('div', 'hv-dim', 'СЕТЬ ПУСТА — НАЖМИ PORTSCAN ВЫШЕ'))
+      return
+    }
+    for (const d of all) {
+      const b = el('button', 'hv-pal-cand hv-pal-dev')
+      const name = txt('span', 'hv-pal-name', `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`)
+      b.append(name)
+      b.append(txt('span', 'hv-pal-hintc', this.paletteMode === 'tab' ? this.tabHint(d) : this.ownerLabel(d.owner)))
+      b.addEventListener('click', () => {
+        if (this.paletteMode === 'tab') {
+          this.ensureTab(d.id, true)
+          this.closePalette()
+          this.toast(`ТАБ: ${d.id.toUpperCase()}`)
+          this.schedule(() => this.render())
+          return
+        }
+        this.paletteDev = d.id
+        this.updatePalette()
+      })
+      list.append(b)
+    }
+  }
+
+  /** Уровень программ палитры-дерева (touch, §15.7): назад + шесть программ
+   *  с подсказкой готовности (та же логика, что у второго токена строки). */
+  private paletteTreeProgs(pal: NonNullable<HackView['palette']>, dev: string): void {
+    const { list } = pal
+    const back = el('button', 'hv-pal-cand hv-pal-back')
+    back.append(txt('span', 'hv-pal-name', '← НАЗАД'), txt('span', 'hv-pal-hintc', 'УСТРОЙСТВА'))
+    back.addEventListener('click', () => {
+      this.paletteDev = null
+      this.updatePalette()
+    })
+    list.append(back)
+    const d = this.devices.get(dev)
+    for (const p of PALETTE_PROGS) {
+      const b = el('button', 'hv-pal-cand')
+      b.append(txt('span', 'hv-pal-name', PROG_LABEL[p]), txt('span', 'hv-pal-hintc', this.paletteProgHint(p, d)))
+      b.addEventListener('click', () => this.paletteTreeRun(p, dev))
+      list.append(b)
+    }
+  }
+
+  /** Подсказка готовности программы — тот же смысл, что у второго токена. */
+  private paletteProgHint(p: RunProg, d: ScanDevice | undefined): string {
+    if (p === 'portscan') return 'РАЗВЕДКА'
+    if (d === undefined) return '—'
+    if (p === 'trojan' && !d.vulned) return 'СНАЧАЛА VULNSCAN'
+    return 'ГОТОВО'
+  }
+
+  private paletteTreeRun(prog: RunProg, dev: string | null): void {
+    this.closePalette()
+    this.runProgAt(prog, dev)
+  }
+
   private closePalette(): void {
     if (this.palette === null) return
     // Touch: снять фокус, иначе экранная клавиатура останется висеть (§15.2).
-    this.palette.input.blur()
+    // В дереве (§15.7) фокуса нет вовсе — input === null.
+    this.palette.input?.blur()
     this.palette.wrap.remove()
     this.palette = null
     this.paletteCands = []
@@ -798,6 +904,13 @@ export class HackView {
   private updatePalette(): void {
     const pal = this.palette
     if (pal === null) return
+    if (pal.input === null) {
+      // Дерево на тапе (§15.7): два уровня — устройства → программы.
+      pal.list.replaceChildren()
+      if (this.paletteDev === null) this.paletteTreeDevs(pal)
+      else this.paletteTreeProgs(pal, this.paletteDev)
+      return
+    }
     const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
     const dq = (tokens[0] ?? '').toLowerCase()
     const pq = (tokens[1] ?? '').toLowerCase()
@@ -867,7 +980,7 @@ export class HackView {
   /** Tab/↑↓: цикл по кандидатам; первый выбор дописывает токен в строку. */
   private paletteCycle(dir: 1 | -1): void {
     const pal = this.palette
-    if (pal === null || this.paletteCands.length === 0) return
+    if (pal === null || pal.input === null || this.paletteCands.length === 0) return
     const len = this.paletteCands.length
     this.paletteSel = this.paletteSel < 0 ? 0 : (this.paletteSel + dir + len) % len
     const c = this.paletteCands[this.paletteSel]
@@ -890,7 +1003,7 @@ export class HackView {
     const pal = this.palette
     // История команд — только про запуск программ; в режиме «таб» там чужие
     // строки («portscan»), они только собьют с толку.
-    if (pal === null || this.paletteMode === 'tab' || this.cmdHistory.length === 0) return
+    if (pal === null || pal.input === null || this.paletteMode === 'tab' || this.cmdHistory.length === 0) return
     const i = Math.min(this.histIdx, this.cmdHistory.length - 1)
     pal.input.value = this.cmdHistory[this.cmdHistory.length - 1 - i]
     this.histIdx = i + 1
@@ -908,7 +1021,7 @@ export class HackView {
    *  открыть таб на устройство (§12.6). */
   private paletteRun(): void {
     const pal = this.palette
-    if (pal === null) return
+    if (pal === null || pal.input === null) return // на тапе — дерево (§15.7)
     const raw = pal.input.value.trim()
     const tokens = raw.split(/\s+/).filter((t) => t !== '')
     const sel =
@@ -1066,7 +1179,7 @@ export class HackView {
     // Хоткей-строка — клавиатурная; на touch она бессмысленна, подсказываем
     // тап-жесты (ГДД §15.2).
     foot.textContent = IS_TOUCH
-      ? 'ЧИБЫ — ТАБЫ · [ / ] ПАЛИТРА (ТАП ПО СТРОКЕ = ENTER) · ВЫХОД — КНОПКА СПРАВА'
+      ? 'ЧИБЫ — ТАБЫ · [ / ] ПАЛИТРА · ВЫХОД — КНОПКА СПРАВА'
       : 'T ТАБ [ФИЛЬТР] · W ЗАКРЫТЬ · H/V СПЛИТ · F1..F9 ПЕРЕКЛЮЧИТЬ · 1–6 ПРОГРАММЫ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
     main.append(foot)
 
@@ -1145,7 +1258,7 @@ export class HackView {
     const netmapBox = el('div', 'hv-netmap')
     this.netmapBoxes.push(netmapBox)
     right.append(netmapBox)
-    right.append(txt('div', 'netmap-hint', 'КЛИК ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА'))
+    right.append(txt('div', 'netmap-hint', IS_TOUCH ? 'ТАП ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА' : 'КЛИК ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА'))
 
     cols.append(left, right)
   }
@@ -1232,7 +1345,32 @@ export class HackView {
     row('ID', d.id.toUpperCase())
     row('ТИП', KIND_LABEL[d.kind])
     row('ВЛАДЕЛЕЦ', this.ownerLabel(d.owner))
-    row('СВЯЗИ', d.links.map((l) => l.toUpperCase()).join(' ') || '—')
+    // СВЯЗИ — кликабельные чипы (тап и клик, desktop тоже, ГДД §15.7):
+    // тап по связи открывает таб устройства. Не-просканированные ссылки
+    // остаются тусклым текстом — открыть нечего.
+    {
+      const r = el('div', 'dev-row')
+      r.append(txt('span', 'dev-k', 'СВЯЗИ'))
+      const v = el('span', 'dev-v dev-links')
+      if (d.links.length === 0) v.append(txt('span', 'dev-links-none', '—'))
+      for (const l of d.links) {
+        if (!this.devices.has(l)) {
+          v.append(txt('span', 'dev-links-none', l.toUpperCase()))
+          continue
+        }
+        const chip = el('button', 'dev-link')
+        chip.textContent = l.toUpperCase()
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.ensureTab(l, true)
+          this.toast(`ТАБ: ${l.toUpperCase()}`)
+          this.schedule(() => this.render())
+        })
+        v.append(chip)
+      }
+      r.append(v)
+      info.append(r)
+    }
     info.append(txt('div', 'hv-dim', 'КОНТРОЛЛЕРОВ НЕТ — ЗАГЛУШКА M2'))
     body.append(info)
     this.appendWatchPanel(body, dev, d)
@@ -1510,7 +1648,7 @@ export class HackView {
   /** SVG-карта сети: узлы = discovered устройства, цвет = владелец, клик = цель.
    *  Зум (плейтест M3): колесо мыши и pinch-жест — масштаб к точке курсора,
    *  двойной клик — сброс. Состояние общее для карты деки, живёт до деактивации. */
-  private netmapZoom = 1
+  private netmapZoom = HackView.NETMAP_ZOOM0
   private netmapCenter: { x: number; y: number } = {
     x: HackView.NETMAP_W / 2,
     y: HackView.NETMAP_H / 2,
@@ -1552,7 +1690,7 @@ export class HackView {
   }
 
   private netmapResetZoom(svg: SVGElement): void {
-    this.netmapZoom = 1
+    this.netmapZoom = HackView.NETMAP_ZOOM0 // тап-дабл: к тач-базе, не к десктопной
     this.netmapCenter = { x: HackView.NETMAP_W / 2, y: HackView.NETMAP_H / 2 }
     this.applyNetmapZoom(svg)
   }
@@ -1669,11 +1807,12 @@ export class HackView {
     this.attachNetmapZoom(svg)
 
     const nodes = [...this.devices.values()]
+    const S = HackView.NETMAP_S
     const label = (x: number, y: number, text: string, cls: string, plate = false): void => {
       // Подложка под подпись узла: полупрозрачная тёмная плашка, чтобы
       // текст не перебивал соседние узлы/подписи (плейтест M3).
       if (plate) {
-        const fs = 8
+        const fs = 8 * S
         const w = text.length * fs * 0.62 + 5
         const r = svgEl('rect')
         r.setAttribute('x', String(x - w / 2))
@@ -1689,6 +1828,9 @@ export class HackView {
       t.setAttribute('y', String(y))
       t.setAttribute('text-anchor', 'middle')
       t.classList.add(cls)
+      // CSS-класс держит базовый 8px; presentation-атрибут его не перебивает,
+      // поэтому тач-увеличение (§15.7) — inline-стилем.
+      if (S !== 1) t.style.fontSize = `${8 * S}px`
       t.textContent = text
       svg.append(t)
     }
@@ -1763,7 +1905,7 @@ export class HackView {
     // должны пересекать границы этажей).
     const pos = new Map<string, { x: number; y: number }>()
     for (const d of nodes) pos.set(d.id, screenFor(d))
-    const MIN_DIST = 30
+    const MIN_DIST = 30 * S
     for (let pass = 0; pass < 16; pass++) {
       let maxPush = 0
       for (let i = 0; i < nodes.length; i++) {
@@ -1821,7 +1963,7 @@ export class HackView {
       t.setAttribute('x', '18')
       t.setAttribute('y', String(f.bandTop + 12))
       t.setAttribute('fill', '#4fae8b')
-      t.setAttribute('font-size', '9')
+      t.setAttribute('font-size', String(Math.round(9 * S)))
       t.textContent = `Э${lv + 1}`
       svg.append(t)
     }
@@ -1875,10 +2017,10 @@ export class HackView {
       const deck = svgEl('circle')
       deck.setAttribute('cx', String(deckX))
       deck.setAttribute('cy', String(deckY))
-      deck.setAttribute('r', '6')
+      deck.setAttribute('r', String(6 * S))
       deck.classList.add('svg-deck')
       svg.append(deck)
-      label(deckX, deckY + 18, `ДЕКА·${hostDev.id.toUpperCase()}`, 'svg-label', true)
+      label(deckX, deckY + 18 * S, `ДЕКА·${hostDev.id.toUpperCase()}`, 'svg-label', true)
     }
 
     // устройства
@@ -1891,7 +2033,7 @@ export class HackView {
         const ring = svgEl('circle')
         ring.setAttribute('cx', String(cx))
         ring.setAttribute('cy', String(cy))
-        ring.setAttribute('r', '11')
+        ring.setAttribute('r', String(11 * S))
         ring.classList.add('svg-sel')
         svg.append(ring)
       }
@@ -1899,7 +2041,7 @@ export class HackView {
         const vm = svgEl('circle')
         vm.setAttribute('cx', String(cx))
         vm.setAttribute('cy', String(cy))
-        vm.setAttribute('r', '10')
+        vm.setAttribute('r', String(10 * S))
         vm.classList.add('svg-vulned')
         svg.append(vm)
       }
@@ -1908,7 +2050,7 @@ export class HackView {
         const wt = svgEl('circle')
         wt.setAttribute('cx', String(cx))
         wt.setAttribute('cy', String(cy))
-        wt.setAttribute('r', '10')
+        wt.setAttribute('r', String(10 * S))
         wt.classList.add('svg-watched')
         svg.append(wt)
       }
@@ -1921,16 +2063,16 @@ export class HackView {
         const fw = svgEl('circle')
         fw.setAttribute('cx', String(cx))
         fw.setAttribute('cy', String(cy))
-        fw.setAttribute('r', '15')
+        fw.setAttribute('r', String(15 * S))
         fw.setAttribute('stroke', this.fwColor(by))
         fw.classList.add('svg-firewalled')
         svg.append(fw)
         const badge = svgEl('text')
         badge.setAttribute('x', String(cx))
-        badge.setAttribute('y', String(cy - 19))
+        badge.setAttribute('y', String(cy - 19 * S))
         badge.setAttribute('text-anchor', 'middle')
         badge.setAttribute('fill', this.fwColor(by))
-        badge.setAttribute('font-size', '7')
+        badge.setAttribute('font-size', String(Math.round(7 * S)))
         badge.classList.add('svg-fwbadge')
         // Короткий бейдж: цвет уже кодирует свой/чужой, полный текст — в
         // tooltip узла (плейтест M3: длинные бейджи наезжали на подписи).
@@ -1943,7 +2085,7 @@ export class HackView {
         const av = svgEl('circle')
         av.setAttribute('cx', String(cx))
         av.setAttribute('cy', String(cy))
-        av.setAttribute('r', '12')
+        av.setAttribute('r', String(12 * S))
         av.classList.add('svg-antivirused')
         svg.append(av)
       }
@@ -1953,9 +2095,9 @@ export class HackView {
         const own = svgEl('circle')
         own.setAttribute('cx', String(cx))
         own.setAttribute('cy', String(cy))
-        own.setAttribute('r', '13')
+        own.setAttribute('r', String(13 * S))
         own.setAttribute('stroke', this.ownerColor(d.owner))
-        own.setAttribute('stroke-width', d.owner === this.myId ? '3' : '2')
+        own.setAttribute('stroke-width', String((d.owner === this.myId ? 3 : 2) * S))
         own.setAttribute('fill', 'none')
         own.classList.add('svg-owned')
         svg.append(own)
@@ -1963,7 +2105,7 @@ export class HackView {
       const c = svgEl('circle')
       c.setAttribute('cx', String(cx))
       c.setAttribute('cy', String(cy))
-      c.setAttribute('r', '7')
+      c.setAttribute('r', String(7 * S))
       c.setAttribute('fill', this.ownerColor(d.owner))
       c.classList.add('svg-node')
       c.addEventListener('click', () => {
@@ -1981,7 +2123,7 @@ export class HackView {
       if (d.firewalled === true) tip += ` · FIREWALL: ${this.fwLabel(d.firewalledBy ?? 0)}`
       title.textContent = tip
       c.append(title)
-      label(cx, cy + 19, d.id.toUpperCase(), 'svg-label', true)
+      label(cx, cy + 19 * S, d.id.toUpperCase(), 'svg-label', true)
     }
     return svg
   }

@@ -1193,6 +1193,34 @@
       .dev-v {
         color: #eafff3;
       }
+      /* СВЯЗИ — кликабельные чипы (ГДД §15.7): тап и клик открывают таб
+         устройства; на обеих платформах. Не-просканированные ссылки — тусклый
+         текст без рамки (открыть нечего). */
+      .dev-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        justify-content: flex-end;
+      }
+      .dev-link {
+        background: rgba(55, 255, 155, 0.1);
+        border: 1px solid rgba(55, 255, 155, 0.5);
+        color: #baffdd;
+        font: inherit;
+        font-size: 11px;
+        letter-spacing: 1px;
+        padding: 3px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      .dev-link:hover {
+        background: rgba(55, 255, 155, 0.25);
+        color: #eafff3;
+      }
+      .dev-links-none {
+        color: rgba(170, 255, 210, 0.45);
+        padding: 3px 4px;
+      }
       .hv-netmap {
         flex: 1;
         min-height: 0;
@@ -1589,6 +1617,25 @@
       }
       body.touch .hv-pal-cand:active { background: rgba(55, 255, 155, 0.25); }
       body.touch .hv-pal-hint { display: flex; justify-content: space-between; align-items: center; }
+      /* Палитра-дерево на тапе (§15.7): поля ввода и системной клавиатуры нет
+         (она съедала до 90% экрана) — два уровня кнопок. Кандидаты — button:
+         сбрасываем браузерную рамку/фон, держим тап-таргет ≥40px. */
+      body.touch .hv-pal-list { gap: 6px; max-height: 56vh; }
+      body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 66px); }
+      body.touch button.hv-pal-cand {
+        width: 100%;
+        font: inherit;
+        text-align: left;
+        background: rgba(55, 255, 155, 0.06);
+        border: 1px solid rgba(55, 255, 155, 0.4);
+        border-radius: 6px;
+        min-height: 44px;
+        padding: 10px 12px;
+      }
+      body.touch button.hv-pal-cand:active { background: rgba(55, 255, 155, 0.25); }
+      body.touch .hv-pal-back { opacity: 0.75; }
+      /* чипы СВЯЗЕЙ на тапе — ≥40px тап-таргет (§15.7) */
+      body.touch .dev-link { min-height: 40px; padding: 9px 12px; font-size: 13px; border-radius: 5px; }
       .hv-pal-x {
         background: none;
         border: 1px solid rgba(55, 255, 155, 0.4);
