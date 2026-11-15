@@ -1904,13 +1904,35 @@ export class HackView {
     // должны пересекать границы этажей).
     const pos = new Map<string, { x: number; y: number }>()
     for (const d of nodes) pos.set(d.id, screenFor(d))
+
+    // Дека участвует в declutter наравне с устройствами (плейтест M4: иначе
+    // жёсткое смещение «40 px влево от хоста» попадает в кучу раздвинутых
+    // нод, и маркер «куда подключился» не виден среди узлов). Дека —
+    // псевдо-узел DECK_ID: старт рядом с хостом, дальше общая раздвижка.
+    const DECK_ID = '__deck'
+    const hostDev = this.devices.get(this.host)
+    const hostLevel = hostDev !== undefined ? levelOf(hostDev.y) : null
+    const hostPos = hostDev !== undefined ? pos.get(hostDev.id) : undefined
+    if (hostPos !== undefined && hostLevel !== null) {
+      const hf = fits.get(hostLevel)
+      const bandTop = hf?.bandTop ?? 10
+      const dirY = bandTop + bandH / 2 - hostPos.y >= 0 ? 1 : -1
+      const deckX = Math.max(20, Math.min(W - 20, hostPos.x - 40))
+      const deckY = Math.max(
+        bandTop + 10,
+        Math.min(bandTop + bandH - 6, hostPos.y + dirY * (Math.abs(hostPos.x - deckX) < 12 ? 36 : 18)),
+      )
+      pos.set(DECK_ID, { x: deckX, y: deckY })
+    }
+
+    const bodies = hostPos !== undefined ? [...nodes.map((d) => ({ id: d.id, lv: levelOf(d.y) })), { id: DECK_ID, lv: hostLevel as number }] : nodes.map((d) => ({ id: d.id, lv: levelOf(d.y) }))
     const MIN_DIST = 30 * S
     for (let pass = 0; pass < 16; pass++) {
       let maxPush = 0
-      for (let i = 0; i < nodes.length; i++) {
-        for (let j = i + 1; j < nodes.length; j++) {
-          const a = pos.get(nodes[i].id)
-          const b = pos.get(nodes[j].id)
+      for (let i = 0; i < bodies.length; i++) {
+        for (let j = i + 1; j < bodies.length; j++) {
+          const a = pos.get(bodies[i].id)
+          const b = pos.get(bodies[j].id)
           if (a === undefined || b === undefined) continue
           let dx = b.x - a.x
           let dy = b.y - a.y
@@ -1934,9 +1956,9 @@ export class HackView {
       if (maxPush < 0.5) break
     }
     // Кламп строго внутри своей полосы: узел никогда не покидает этаж.
-    for (const d of nodes) {
-      const p = pos.get(d.id)
-      const f = fits.get(levelOf(d.y))
+    for (const b of bodies) {
+      const p = pos.get(b.id)
+      const f = fits.get(b.lv)
       if (p === undefined || f === undefined) continue
       p.x = Math.max(14, Math.min(W - 14, p.x))
       p.y = Math.max(f.bandTop + 10, Math.min(f.bandTop + bandH - 6, p.y))
@@ -1999,27 +2021,29 @@ export class HackView {
     }
 
     // Дека — узел РЯДОМ с точкой джек-ина (плейтест M4: в углу она «вне
-    // этажей», а смысл — «откуда сижу»): ставим на 40 px от хоста по
-    // направлению к центру его полосы, клампим в полосу; подпись — ДЕКА·ID.
-    const hostDev = this.devices.get(this.host)
-    const hostPos = hostDev !== undefined ? pos.get(hostDev.id) : undefined
-    if (hostPos !== undefined && hostDev !== undefined) {
-      const hf = fits.get(levelOf(hostDev.y))
-      const bandTop = hf?.bandTop ?? 10
-      let dirY = (bandTop + bandH / 2 - hostPos.y >= 0 ? 1 : -1)
-      const deckX = Math.max(20, Math.min(W - 20, hostPos.x - 40))
-      const deckY = Math.max(
-        bandTop + 10,
-        Math.min(bandTop + bandH - 6, hostPos.y + dirY * (Math.abs(hostPos.x - deckX) < 12 ? 36 : 18)),
-      )
-      line(deckX, deckY, hostPos.x, hostPos.y, 'svg-link svg-link-deck')
+    // этажей», а смысл — «откуда сижу»): позиция прошла общую раздвижку
+    // declutter (см. выше), так что маркер не тонет в куче нод. Подпись —
+    // ДЕКА·ID, двойной круг — «ты здесь».
+    const deckPos = hostDev !== undefined ? pos.get(DECK_ID) : undefined
+    const hostPosFinal = hostDev !== undefined ? pos.get(hostDev.id) : undefined
+    if (deckPos !== undefined && hostPosFinal !== undefined && hostDev !== undefined) {
+      line(deckPos.x, deckPos.y, hostPosFinal.x, hostPosFinal.y, 'svg-link svg-link-deck')
+      const halo = svgEl('circle')
+      halo.setAttribute('cx', String(deckPos.x))
+      halo.setAttribute('cy', String(deckPos.y))
+      halo.setAttribute('r', String(10 * S))
+      halo.setAttribute('fill', 'none')
+      halo.setAttribute('stroke', 'rgba(55,255,155,0.45)')
+      halo.setAttribute('stroke-width', '1')
+      halo.setAttribute('stroke-dasharray', '2 3')
+      svg.append(halo)
       const deck = svgEl('circle')
-      deck.setAttribute('cx', String(deckX))
-      deck.setAttribute('cy', String(deckY))
+      deck.setAttribute('cx', String(deckPos.x))
+      deck.setAttribute('cy', String(deckPos.y))
       deck.setAttribute('r', String(6 * S))
       deck.classList.add('svg-deck')
       svg.append(deck)
-      label(deckX, deckY + 18 * S, `ДЕКА·${hostDev.id.toUpperCase()}`, 'svg-label', true)
+      label(deckPos.x, deckPos.y + 18 * S, `ДЕКА·${hostDev.id.toUpperCase()}`, 'svg-label-deck', true)
     }
 
     // устройства

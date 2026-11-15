@@ -1364,6 +1364,15 @@
         font-size: 8px;
         font-family: ui-monospace, Menlo, Consolas, monospace;
       }
+      /* подпись деки на карте сети — ярче и крупнее обычных узлов:
+         «ты здесь» должен читаться сквозь кучу нод (плейтест M4) */
+      .svg-label-deck {
+        fill: #eafff3;
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 1px;
+        font-family: ui-monospace, Menlo, Consolas, monospace;
+      }
       /* подложка-плашка под подпись узла карты сети */
       .svg-label-plate {
         fill: rgba(1, 10, 5, 0.78);
