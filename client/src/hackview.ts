@@ -238,7 +238,11 @@ export class HackView {
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
   private splitDir: 'h' | 'v' = 'h'
+  /** Мышиное меню «+ ТАБ» (клик по чипу); клавиатурный T — палитра, §12.6. */
   private menuOpen = false
+  /** Режим палитры: 'run' = '/' программы, 'tab' = 'T' открыть таб (§12.6). */
+  private paletteMode: 'run' | 'tab' = 'run'
+
   // Слэш-палитра (§13.3): командная строка запуска программ с клавиатуры.
   private palette: { wrap: HTMLElement; input: HTMLInputElement; list: HTMLElement } | null = null
   private paletteCands: readonly PalCand[] = []
@@ -478,6 +482,8 @@ export class HackView {
       this.onPaletteKey(e)
       return
     }
+    // Мышино меню «+ ТАБ» (клик по чипу) закрывается Escape — палитра для T
+    // теперь основной клавиатурный путь, но жест для мыши остаётся.
     if (e.code === 'Escape' && this.menuOpen) {
       e.preventDefault()
       this.menuOpen = false
@@ -490,15 +496,19 @@ export class HackView {
     // не конфликтуют с FPS-управлением: в деке controls.frozen, при джек-ауте
     // клавиши сбрасываются (resetKeys). Пробел/цифры палитры — ниже.
     if (!mod && !e.altKey) {
+      // T — палитра в режиме «таб»: фильтр устройства + Enter = открыть таб
+      // (плейтест M3: «надо можно было T CAM2», как / в режиме программ).
       if (e.code === 'KeyT') {
         e.preventDefault()
-        this.menuOpen = !this.menuOpen
-        this.schedule(() => this.render())
+        this.openPalette('tab')
         return
       }
+      // W — в сплите снимает ПАНЕЛЬ (окно), а не таб: иначе при сплитах
+      // «закрыть» не закрывал ничего (панель деки refuse'ила) — плейтест M3.
       if (e.code === 'KeyW') {
         e.preventDefault()
-        this.closeActiveTab()
+        if (this.panes.length > 1) this.removePane(this.activePane)
+        else this.closeActiveTab()
         return
       }
       if (e.code === 'KeyH') {
@@ -539,17 +549,18 @@ export class HackView {
       }
       return
     }
+    // Палитра программ — из ЛЮБОГО таба, не только деки: после сплита/H/V
+    // активная панель могла уехать на устройство, и `/` молчал (плейтест M3).
+    // e.code — физическая клавиша: слэш работает в любой раскладке (в русской
+    // e.key = '.', а code всё равно 'Slash'). Firefox иначе открывает quick-find.
+    if (e.code === 'Slash' && !e.altKey) {
+      e.preventDefault()
+      this.openPalette('run')
+      return
+    }
     // Хоткеи программ — пока активна панель деки (ГДД §12.6).
     const pane = this.panes[this.activePane]
     if (pane === undefined || pane.tabKey !== 'deck') return
-    // e.code — физическая клавиша: слэш открывает палитру в любой раскладке
-    // (в русской e.key = '.', а code всё равно 'Slash'). Firefox иначе
-    // открывает quick-find.
-    if (e.code === 'Slash' && !e.altKey) {
-      e.preventDefault()
-      this.openPalette()
-      return
-    }
     if (e.code === 'Digit1') {
       e.preventDefault()
       this.runProg('portscan')
@@ -693,22 +704,25 @@ export class HackView {
     // Остальное — обычный ввод в строку фильтра (input-событие обновит список).
   }
 
-  private openPalette(): void {
+  private openPalette(mode: 'run' | 'tab'): void {
     if (this.palette !== null) return
+    this.paletteMode = mode
     const wrap = el('div', 'hv-palette')
     const input = document.createElement('input')
     input.type = 'text'
     input.className = 'hv-pal-input'
     input.autocomplete = 'off'
     input.spellcheck = false
-    input.placeholder = 'фильтр устройства + программа — напр. cam1 port'
+    input.placeholder =
+      mode === 'tab' ? 'фильтр устройства — напр. cam2, ENTER ОТКРЫТЬ ТАБ' : 'фильтр устройства + программа — напр. cam1 port'
     input.addEventListener('input', () => {
       this.paletteSel = -1
       this.updatePalette()
     })
     const list = el('div', 'hv-pal-list')
     const hint = el('div', 'hv-pal-hint')
-    hint.textContent = 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ЗАПУСК · ESC ЗАКРЫТЬ'
+    hint.textContent =
+      mode === 'tab' ? 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ENTER ОТКРЫТЬ ТАБ · ESC ЗАКРЫТЬ' : 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ЗАПУСК · ESC ЗАКРЫТЬ'
     wrap.append(input, list, hint)
     this.root.append(wrap)
     this.palette = { wrap, input, list }
@@ -745,7 +759,9 @@ export class HackView {
     // (иначе «cam1␣» после Tab опять показывает список устройств).
     const secondTok = tokens.length > 1 || /\s$/.test(pal.input.value)
     const cands: PalCand[] = []
-    this.paletteTok = secondTok ? 1 : 0
+    // Режим «таб» (T): только устройства, второго токена нет (§12.6).
+    const isTabMode = this.paletteMode === 'tab'
+    this.paletteTok = isTabMode ? 0 : secondTok ? 1 : 0
     if (this.paletteTok === 0) {
       // Первый токен: устройства (только из текущего скана), потом программы.
       const devs = [...this.devices.values()]
@@ -757,11 +773,11 @@ export class HackView {
           text: d.id,
           dev: d.id,
           label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
-          hint: this.ownerLabel(d.owner),
+          hint: isTabMode ? this.tabHint(d) : this.ownerLabel(d.owner),
         })
       }
       for (const p of PALETTE_PROGS) {
-        if (p.startsWith(dq)) {
+        if (!isTabMode && p.startsWith(dq)) {
           cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
         }
       }
@@ -802,7 +818,9 @@ export class HackView {
     this.paletteSel = this.paletteSel < 0 ? 0 : (this.paletteSel + dir + len) % len
     const c = this.paletteCands[this.paletteSel]
     const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
-    if (this.paletteTok === 0) {
+    if (this.paletteMode === 'tab') {
+      pal.input.value = c.text // без хвостового пробела: второго токена нет
+    } else if (this.paletteTok === 0) {
       // устройство дополняем с пробелом — следующий Tab дополнит программу
       pal.input.value = c.kind === 'dev' ? `${c.text} ` : c.text
     } else {
@@ -816,7 +834,9 @@ export class HackView {
 
   private recallHistory(): void {
     const pal = this.palette
-    if (pal === null || this.cmdHistory.length === 0) return
+    // История команд — только про запуск программ; в режиме «таб» там чужие
+    // строки («portscan»), они только собьют с толку.
+    if (pal === null || this.paletteMode === 'tab' || this.cmdHistory.length === 0) return
     const i = Math.min(this.histIdx, this.cmdHistory.length - 1)
     pal.input.value = this.cmdHistory[this.cmdHistory.length - 1 - i]
     this.histIdx = i + 1
@@ -824,8 +844,14 @@ export class HackView {
     this.updatePalette()
   }
 
+  /** Подсказка кандидата в режиме «таб» (T): владелец или «УЖЕ В ТАБАХ». */
+  private tabHint(d: ScanDevice): string {
+    return this.tabs.some((t) => t.dev === d.id) ? 'УЖЕ В ТАБАХ' : this.ownerLabel(d.owner)
+  }
+
   /** Enter: запуск программы с до-поленной целью; кандидат-устройство без
-   *  программы — выбор цели, палитра остаётся (§13.3). */
+   *  программы — выбор цели, палитра остаётся (§13.3). В режиме «таб» —
+   *  открыть таб на устройство (§12.6). */
   private paletteRun(): void {
     const pal = this.palette
     if (pal === null) return
@@ -835,6 +861,23 @@ export class HackView {
       this.paletteSel >= 0 && this.paletteSel < this.paletteCands.length
         ? this.paletteCands[this.paletteSel]
         : undefined
+    if (this.paletteMode === 'tab') {
+      let devT: string | null =
+        sel !== undefined && sel.kind === 'dev' && sel.dev !== undefined ? sel.dev : null
+      if (devT === null && tokens.length > 0) {
+        const m = [...this.devices.values()].filter((d) => this.devMatch(d, tokens[0].toLowerCase()))
+        devT = m.length === 1 ? m[0].id : (m.find((d) => d.id === tokens[0].toLowerCase())?.id ?? null)
+      }
+      if (devT === null) {
+        this.toast(tokens.length === 0 ? 'УТОЧНИ УСТРОЙСТВО — TAB ПОКАЖЕТ СПИСОК' : 'НЕТ ТАКОГО УСТРОЙСТВА')
+        return
+      }
+      this.ensureTab(devT, true)
+      this.closePalette()
+      this.toast(`ТАБ: ${devT.toUpperCase()}`)
+      this.schedule(() => this.render())
+      return
+    }
     // Цель: выделенный кандидат-устройство, иначе уникальное/точное
     // совпадение первого токена.
     let dev: string | null = null
@@ -959,7 +1002,7 @@ export class HackView {
 
     const foot = el('div', 'hv-foot')
     foot.textContent =
-      'T ТАБ · W ЗАКРЫТЬ · H/V СПЛИТ · F1..F9 ПЕРЕКЛЮЧИТЬ · 1–6 ПРОГРАММЫ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
+      'T ТАБ [ФИЛЬТР] · W ЗАКРЫТЬ · H/V СПЛИТ · F1..F9 ПЕРЕКЛЮЧИТЬ · 1–6 ПРОГРАММЫ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
     main.append(foot)
 
     if (this.menuOpen) main.append(this.buildMenu())
