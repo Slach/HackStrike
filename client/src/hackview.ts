@@ -587,10 +587,10 @@ export class HackView {
     // но с клавиатуры. Сервер валидирует ctrl, это только UX. Газ (M4 §14.2)
     // — то же правило: взвод клапана пробелом на своём табе газа.
     if (e.code === 'Space') {
-      // Фокус на кнопке (линки, TOGGLE, табы) — Space отдаём браузеру:
-      // нативная активация кнопки; наш TOGGLE-пробел работает только без
-      // фокуса (клавиатурная навигация по линкам, плейтест M4).
-      if (document.activeElement instanceof HTMLButtonElement) return
+      // ПРОБЕЛ = TOGGLE на табе двери-владения — ВЕЗДЕ, даже когда фокус на
+      // кнопке (фикс плейтеста: после Enter на линке фокус оставался на чипе
+      // S1, и пробел «не работал» до клика мышью). preventDefault гасит
+      // нативную активацию сфокусированной кнопки — двойного тоггла нет.
       const pane0 = this.panes[this.activePane]
       const tab0 = this.tabs.find((t) => t.key === pane0?.tabKey)
       const dev0 = tab0?.dev !== null && tab0?.dev !== undefined ? this.devices.get(tab0.dev) : undefined
@@ -610,25 +610,30 @@ export class HackView {
       return
     }
     // Хоткеи программ — из ЛЮБОГО таба (плейтест M4: S/V/D/G/T/R/CAM тоже,
-    // не только дека; ГДД §12.6): программа идёт с текущей целью (this.target).
+    // не только дека; ГДД §12.6). Цель — устройство АКТИВНОГО таба: «смотрю
+    // на D1 — цифры работают на D1», а не на последнюю цель с карты (фикс
+    // плейтеста: софт уходил на S1, с которого открыли таб). На деке цель —
+    // выбранная на карте сети, как раньше.
+    const pane = this.panes[this.activePane]
+    const tabDev = pane !== undefined ? (this.tabs.find((t) => t.key === pane.tabKey)?.dev ?? null) : null
     if (e.code === 'Digit1') {
       e.preventDefault()
-      this.runProg('portscan')
+      this.runProgAt('portscan', tabDev)
     } else if (e.code === 'Digit2') {
       e.preventDefault()
-      this.runProg('vulnscan')
+      this.runProgAt('vulnscan', tabDev)
     } else if (e.code === 'Digit3') {
       e.preventDefault()
-      this.runProg('trojan')
+      this.runProgAt('trojan', tabDev)
     } else if (e.code === 'Digit4') {
       e.preventDefault()
-      this.runProg('watcher')
+      this.runProgAt('watcher', tabDev)
     } else if (e.code === 'Digit5') {
       e.preventDefault()
-      this.runProg('firewall')
+      this.runProgAt('firewall', tabDev)
     } else if (e.code === 'Digit6') {
       e.preventDefault()
-      this.runProg('antivirus')
+      this.runProgAt('antivirus', tabDev)
     }
   }
 
