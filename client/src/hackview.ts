@@ -1640,48 +1640,57 @@ export class HackView {
       return svg
     }
 
-    // Проекция мировые XZ→экран. Multi-floor (M4 §13.3.1): узлы раскладываются
-    // по высотным полкам — нижний этаж внизу, верхние подняты на FLOOR_LIFT
-    // и сдвинуты вправо (ISO_X), каждая полка — полупрозрачная «этажерка» с
-    // подписью. Связи между полками (стояк s2→s3) — крутые голубые штрихи.
-    // Одноэтажная сеть = ровно прежняя проекция (L=0, Lift=0).
+    // Проекция мировые XZ→экран. Multi-floor (M4 §13.3.1, ред. плейтеста:
+    // ярусы НЕ должны пересекаться — никакой ISO-накидки поверх плана):
+    // каждый ярус получает свою горизонтальную полосу и свой fit по своему
+    // bbox — полосы не пересекаются по построению, а стояк c9 (s2→s3) —
+    // единственный мост между ними (голубой пунктир). Ярусы: y<4 → Э1,
+    // y<11 → Э2 (пороги от реальных плит m1: терраса y=8). Одноэтажная
+    // сеть = одна полоса на всю высоту ≈ прежняя проекция.
     const levelOf = (y: number): number => (y < 4 ? 0 : y < 11 ? 1 : 2)
     const levels = [...new Set(nodes.map((d) => levelOf(d.y)))].sort((a, b) => a - b)
-    const shelf = new Map<number, number>() // levelOf → индекс полки (0=низ)
-    levels.forEach((lv, i) => shelf.set(lv, i))
-    const L = levels.length - 1
-    const FLOOR_LIFT = 86
-    const ISO_X = L > 0 ? 26 : 0
-
-    let minX = Number.POSITIVE_INFINITY
-    let maxX = Number.NEGATIVE_INFINITY
-    let minZ = Number.POSITIVE_INFINITY
-    let maxZ = Number.NEGATIVE_INFINITY
-    for (const d of nodes) {
-      minX = Math.min(minX, d.x)
-      maxX = Math.max(maxX, d.x)
-      minZ = Math.min(minZ, d.z)
-      maxZ = Math.max(maxZ, d.z)
-    }
-    const spanX = Math.max(maxX - minX, 1)
-    const spanZ = Math.max(maxZ - minZ, 1)
-    const availH = H - PAD * 2 - 20 - L * FLOOR_LIFT
-    const k = Math.min((W - PAD * 2) / spanX, availH / spanZ)
-    const offX = (W - PAD * 2 - spanX * k) / 2
-    const offZ = (availH - spanZ * k) / 2
-    const screenFor = (d: ScanDevice): { x: number; y: number } => {
-      const s = shelf.get(levelOf(d.y)) ?? 0
-      return {
-        x: PAD + offX + (d.x - minX) * k + ISO_X * (L - s),
-        y: PAD + 10 + offZ + (d.z - minZ) * k + (L - s) * FLOOR_LIFT,
+    const shelfIdx = new Map<number, number>() // levelOf → индекс снизу (0=низ)
+    levels.forEach((lv, i) => shelfIdx.set(lv, i))
+    const BAND_GAP = 16
+    const bandH = (H - 20 - 28 - BAND_GAP * (levels.length - 1)) / levels.length
+    const fits = new Map<number, { k: number; ox: number; oz: number; bandTop: number }>()
+    for (const lv of levels) {
+      const s = shelfIdx.get(lv) ?? 0
+      const bandBottom = H - 20 - s * (bandH + BAND_GAP)
+      const bandTop = bandBottom - bandH
+      const innerTop = bandTop + 18 // строка «ЭN» сверху полосы
+      const innerBottom = bandBottom - 6
+      let lx0 = Number.POSITIVE_INFINITY
+      let lx1 = Number.NEGATIVE_INFINITY
+      let lz0 = Number.POSITIVE_INFINITY
+      let lz1 = Number.NEGATIVE_INFINITY
+      for (const d of nodes) {
+        if (levelOf(d.y) !== lv) continue
+        lx0 = Math.min(lx0, d.x)
+        lx1 = Math.max(lx1, d.x)
+        lz0 = Math.min(lz0, d.z)
+        lz1 = Math.max(lz1, d.z)
       }
+      const sx = Math.max(lx1 - lx0, 1)
+      const sz = Math.max(lz1 - lz0, 1)
+      const k = Math.min((W - PAD * 2 - 30) / sx, (innerBottom - innerTop) / sz)
+      fits.set(lv, {
+        k,
+        ox: PAD + 14 + (W - PAD * 2 - 30 - sx * k) / 2 - lx0 * k,
+        oz: innerTop + (innerBottom - innerTop - sz * k) / 2 - lz0 * k,
+        bandTop,
+      })
+    }
+    const screenFor = (d: ScanDevice): { x: number; y: number } => {
+      const f = fits.get(levelOf(d.y))
+      if (f === undefined) return { x: W / 2, y: H / 2 }
+      return { x: f.ox + d.x * f.k, y: f.oz + d.z * f.k }
     }
 
     // Declutter: мировые координаты дают наложения (в m1 cam1/d1 и cam2/d2
-    // проектируются в ~16 px друг от друга, а вторые этажи после подъёма —
-    // тем более). Раздвижение пар ближе MIN_DIST до сходимости (плейтест M4:
-    // s3 налезал на s1/s2) + кламп внутрь viewBox, чтобы толчок не выносил
-    // узлы за край.
+    // проектируются в ~16 px друг от друга). Раздвижение пар ближе MIN_DIST
+    // до сходимости + кламп ВНУТРИ СВОЕЙ ПОЛОСЫ яруса (плейтест M4: узлы не
+    // должны пересекать границы этажей).
     const pos = new Map<string, { x: number; y: number }>()
     for (const d of nodes) pos.set(d.id, screenFor(d))
     const MIN_DIST = 30
@@ -1713,47 +1722,38 @@ export class HackView {
       }
       if (maxPush < 0.5) break
     }
-    for (const p of pos.values()) {
+    // Кламп строго внутри своей полосы: узел никогда не покидает этаж.
+    for (const d of nodes) {
+      const p = pos.get(d.id)
+      const f = fits.get(levelOf(d.y))
+      if (p === undefined || f === undefined) continue
       p.x = Math.max(14, Math.min(W - 14, p.x))
-      p.y = Math.max(22, Math.min(H - 12, p.y))
+      p.y = Math.max(f.bandTop + 10, Math.min(f.bandTop + bandH - 6, p.y))
     }
 
-    // Полки этажей: прямоугольник-подложка по bbox узлов уровня + подпись.
-    // Рисуем до связей/узлов — фон.
-    if (L > 0) {
-      for (const lv of levels) {
-        let bx0 = Number.POSITIVE_INFINITY
-        let by0 = Number.POSITIVE_INFINITY
-        let bx1 = Number.NEGATIVE_INFINITY
-        let by1 = Number.NEGATIVE_INFINITY
-        for (const d of nodes) {
-          if (levelOf(d.y) !== lv) continue
-          const p = pos.get(d.id)
-          if (p === undefined) continue
-          bx0 = Math.min(bx0, p.x)
-          by0 = Math.min(by0, p.y)
-          bx1 = Math.max(bx1, p.x)
-          by1 = Math.max(by1, p.y)
-        }
-        if (!Number.isFinite(bx0)) continue
-        const r = svgEl('rect')
-        r.setAttribute('x', String(bx0 - 22 - ISO_X))
-        r.setAttribute('y', String(by0 - 24))
-        r.setAttribute('width', String(bx1 - bx0 + 44 + ISO_X))
-        r.setAttribute('height', String(by1 - by0 + 52))
-        r.setAttribute('rx', '8')
-        r.setAttribute('fill', 'rgba(55,255,155,0.03)')
-        r.setAttribute('stroke', 'rgba(55,255,155,0.28)')
-        r.setAttribute('stroke-dasharray', '3 5')
-        svg.append(r)
-        const t = svgEl('text')
-        t.setAttribute('x', String(bx0 - 14 - ISO_X))
-        t.setAttribute('y', String(by0 - 12))
-        t.setAttribute('fill', '#4fae8b')
-        t.setAttribute('font-size', '9')
-        t.textContent = `Э${lv + 1}`
-        svg.append(t)
-      }
+    // Полосы этажей: подложка на всю ширину + подпись. Рисуем до связей —
+    // фон. Стояк c9 виден поверх полос и читается как «вертикаль сквозь
+    // перекрытия».
+    for (const lv of levels) {
+      const f = fits.get(lv)
+      if (f === undefined) continue
+      const r = svgEl('rect')
+      r.setAttribute('x', '8')
+      r.setAttribute('y', String(f.bandTop))
+      r.setAttribute('width', String(W - 16))
+      r.setAttribute('height', String(bandH))
+      r.setAttribute('rx', '8')
+      r.setAttribute('fill', 'rgba(55,255,155,0.03)')
+      r.setAttribute('stroke', 'rgba(55,255,155,0.28)')
+      r.setAttribute('stroke-dasharray', '3 5')
+      svg.append(r)
+      const t = svgEl('text')
+      t.setAttribute('x', '18')
+      t.setAttribute('y', String(f.bandTop + 12))
+      t.setAttribute('fill', '#4fae8b')
+      t.setAttribute('font-size', '9')
+      t.textContent = `Э${lv + 1}`
+      svg.append(t)
     }
 
     // связи (дедуп по паре); координаты — после declutter. Связь между
@@ -1787,19 +1787,29 @@ export class HackView {
       }
     }
 
-    // дека — узел в углу, линией к точке джек-ина
-    const deckX = 28
-    const deckY = 28
+    // Дека — узел РЯДОМ с точкой джек-ина (плейтест M4: в углу она «вне
+    // этажей», а смысл — «откуда сижу»): ставим на 40 px от хоста по
+    // направлению к центру его полосы, клампим в полосу; подпись — ДЕКА·ID.
     const hostDev = this.devices.get(this.host)
     const hostPos = hostDev !== undefined ? pos.get(hostDev.id) : undefined
-    if (hostPos !== undefined) line(deckX, deckY, hostPos.x, hostPos.y, 'svg-link svg-link-deck')
-    const deck = svgEl('circle')
-    deck.setAttribute('cx', String(deckX))
-    deck.setAttribute('cy', String(deckY))
-    deck.setAttribute('r', '6')
-    deck.classList.add('svg-deck')
-    svg.append(deck)
-    label(deckX, deckY + 18, 'ДЕКА', 'svg-label', true)
+    if (hostPos !== undefined && hostDev !== undefined) {
+      const hf = fits.get(levelOf(hostDev.y))
+      const bandTop = hf?.bandTop ?? 10
+      let dirY = (bandTop + bandH / 2 - hostPos.y >= 0 ? 1 : -1)
+      const deckX = Math.max(20, Math.min(W - 20, hostPos.x - 40))
+      const deckY = Math.max(
+        bandTop + 10,
+        Math.min(bandTop + bandH - 6, hostPos.y + dirY * (Math.abs(hostPos.x - deckX) < 12 ? 36 : 18)),
+      )
+      line(deckX, deckY, hostPos.x, hostPos.y, 'svg-link svg-link-deck')
+      const deck = svgEl('circle')
+      deck.setAttribute('cx', String(deckX))
+      deck.setAttribute('cy', String(deckY))
+      deck.setAttribute('r', '6')
+      deck.classList.add('svg-deck')
+      svg.append(deck)
+      label(deckX, deckY + 18, `ДЕКА·${hostDev.id.toUpperCase()}`, 'svg-label', true)
+    }
 
     // устройства
     for (const d of nodes) {
