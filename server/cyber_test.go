@@ -1007,64 +1007,132 @@ func TestSnapReportsJacked(t *testing.T) {
 	}
 }
 
-// Firewall (M3 §13.5): установка (too_far без скана, bad_target на switch),
-// чужой jack-in отбит (denied firewall + alert src=firewall хозяину),
-// союзник и владелец проходят, отбитая попытка НЕ триггерит watcher,
-// обход без тупика: чужой vulnscan+trojan выкуривает firewall.
-func TestFirewall(t *testing.T) {
-	w, _ := cyberTestWorld(t)
-	h := w.addPlayer(1, "h", "hacker", -1)   // team 0
-	foe := w.addPlayer(2, "f", "hacker", -1) // team 1
-	w.takeOut()
-	jackAt(w, h, "t1")
+// firewallTestWorld — карта для сегментации (§13.5): t1—s1—t2(шлюз)—s2,
+// s2—d1, радио r2 с аплинком к s2 (вторая точка входа в сегмент за t2).
+func firewallTestWorld(t *testing.T) (*world, *time.Time) {
+	t.Helper()
+	const j = `{
+	 "name":"fwtest","bounds":[40,8,40],
+	 "colliders":[
+	  {"min":[0,0,0],"max":[40,1,40],"kind":"floor"},
+	  {"min":[0,1,37],"max":[0.7,1.5,39],"kind":"stair"}
+	 ],
+	 "spawns":{"0":[[5,1,5]],"1":[[35,1,35]]},
+	 "props":[
+	  {"kind":"terminal","id":"t1","pos":[5,1,8]},
+	  {"kind":"switch","id":"s1","pos":[5,1,15]},
+	  {"kind":"terminal","id":"t2","pos":[20,1,20]},
+	  {"kind":"switch","id":"s2","pos":[28,1,20]},
+	  {"kind":"door","id":"d1","pos":[28,1,27],"size":[3,3,0.3],"axis":"x","to":"s2"},
+	  {"kind":"radio","id":"r2","pos":[28,1,13],"radius":8},
+	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
+	  {"kind":"cable","id":"c5","from":"s1","to":"t2"},
+	  {"kind":"cable","id":"c6","from":"t2","to":"s2"},
+	  {"kind":"cable","id":"c7","from":"s2","to":"d1"}
+	 ]}`
+	m, err := parseGameMap([]byte(j))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	w := newWorld(m)
+	clock := time.UnixMilli(1_700_000_000_000)
+	w.now = func() time.Time { return clock }
+	return w, &clock
+}
 
-	// Цель не открыта portscan'ом — too_far (как watcher/trojan).
+// Firewall (M3 §13.5, редакция «сетевая сегментация» 2026-11-15): установка
+// (too_far без скана, bad_target на switch); скан чужого не раскрывает сегмент
+// за D, D сам видим (firewalled/firewalledBy в scan); ранее открытое гаснет;
+// jack-in в D чужим проходит; обход через вторую точку входа; vulnscan+trojan
+// выкуривает; ровно один alert src=firewall на упор portscan'а; союзники
+// не режутся.
+func TestFirewall(t *testing.T) {
+	w, clock := firewallTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", 0)   // team 0: защитник
+	foe := w.addPlayer(2, "f", "hacker", 1) // team 1: атакующий
+	ally := w.addPlayer(3, "a", "hacker", 0)
+	w.takeOut()
+
+	// runCollect — как runAndWaitM2, но возвращает исходящие (нужны alert'ы).
+	runCollect := func(pl *player, msg message) []outMsg {
+		w.handleMessage(pl, msg)
+		for i := 0; i < 400 && len(pl.progs) > 0; i++ {
+			w.simulateTick()
+		}
+		if len(pl.progs) > 0 {
+			t.Fatalf("program did not finish: %v", msg)
+		}
+		return w.takeOut()
+	}
+	scan := func(pl *player, steps int) {
+		for i := 0; i < steps; i++ {
+			runCollect(pl, message{"t": "run", "prog": "portscan"})
+		}
+	}
+
+	// --- Установка: цель не открыта — too_far; switch — bad_target.
+	jackAt(w, h, "t1")
 	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	assertDenied(t, w, h, "too_far")
-
-	// Firewall только на точку входа: switch — bad_target.
-	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"}) // +s1
+	scan(h, 1) // t1, s1
 	w.handleMessage(h, message{"t": "run", "prog": "firewall", "dev": "s1"})
 	assertDenied(t, w, h, "bad_target")
 
-	// Открыли сеть до t2, поставили firewall (+watcher для интеракции):
-	// фильтр живёт на устройстве, слот деки свободен.
-	for i := 0; i < 2; i++ {
-		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	// Атакующий заранее раскрывает сеть (4 хопа — вся, включая сегмент за t2).
+	out := jackAt(w, foe, "t1")
+	if !foe.jacked {
+		t.Fatalf("setup: foe must jack into neutral t1, out=%v", out)
 	}
-	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
-	runAndWaitM2(w, h, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	scan(foe, 4)
+	for _, id := range []string{"t2", "s2", "d1", "r2"} {
+		if !foe.scanned[id] {
+			t.Fatalf("setup: foe must have scanned %s: %v", id, foe.scanned)
+		}
+	}
+
+	// Защитник раскрывает сеть и ставит firewall на шлюз t2: фильтр живёт
+	// на устройстве, слот деки свободен.
+	scan(h, 4)
+	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	if w.cyber.devices["t2"].firewalled != h.id {
 		t.Fatalf("firewall must be installed on t2 by h")
 	}
 	if len(h.progs) != 0 {
 		t.Fatalf("installed firewall must free the deck slot (lives on the device)")
 	}
-	// scan помечает устройство firewalled:true (наблюдаемый фильтр — всем,
-	// кто скавш; здесь — хозяину).
-	w.sendScan(h)
+
+	// Ранее открытое «за t2» гаснет у чужого (живой вид сети), t2 сам видим
+	// и помечен firewalled + firewalledBy (бейдж «чей», §13.2).
+	for _, id := range []string{"s2", "d1", "r2"} {
+		if foe.scanned[id] {
+			t.Fatalf("installing the firewall must fade %s from the enemy scan", id)
+		}
+	}
+	if !foe.scanned["t2"] || !foe.scanned["t1"] || !foe.scanned["s1"] {
+		t.Fatalf("the gateway t2 itself must stay visible to the enemy: %v", foe.scanned)
+	}
+	w.sendScan(foe)
 	var fwSeen bool
 	for _, om := range w.takeOut() {
-		if om.msg["t"] != "scan" || om.to != h.id {
+		if om.msg["t"] != "scan" || om.to != foe.id {
 			continue
 		}
 		for _, d := range om.msg["devices"].([]scanDevice) {
-			if d.ID == "t2" && d.Firewalled {
+			if d.ID == "t2" && d.Firewalled && d.FirewalledBy == h.id {
 				fwSeen = true
 			}
 		}
 	}
 	if !fwSeen {
-		t.Fatalf("scan must mark t2 firewalled")
+		t.Fatalf("scan must mark t2 firewalled + firewalledBy=%d", h.id)
 	}
 
-	// Чужой (вражеская команда) jack-in отбит: denied firewall + ровно один
-	// alert src=firewall (watcher НЕ срабатывает — входа не было, §13.5).
-	out := jackAt(w, foe, "t2")
-	if foe.jacked {
-		t.Fatalf("enemy must not jack into a firewalled terminal")
+	// Повторный portscan чужого: сегмент НЕ раскрывается, скан упёрлся —
+	// ровно один alert src=firewall хозяину на запуск.
+	out = runCollect(foe, message{"t": "run", "prog": "portscan"})
+	if foe.scanned["s2"] || foe.scanned["d1"] || foe.scanned["r2"] {
+		t.Fatalf("enemy portscan must not reveal the segment behind the firewall: %v", foe.scanned)
 	}
-	assertDeniedOut(t, out, foe, "firewall")
 	alerts := 0
 	for _, om := range out {
 		if om.msg["t"] == "alert" && om.to == h.id && om.msg["dev"] == "t2" {
@@ -1072,51 +1140,111 @@ func TestFirewall(t *testing.T) {
 			if om.msg["src"] != "firewall" {
 				t.Fatalf("alert src = %v, want firewall", om.msg["src"])
 			}
+			if om.msg["who"] != foe.id {
+				t.Fatalf("alert.who = %v, want %d", om.msg["who"], foe.id)
+			}
 		}
 	}
 	if alerts != 1 {
-		t.Fatalf("blocked attempt must fire exactly one firewall alert, got %d", alerts)
+		t.Fatalf("scan hit must fire exactly one firewall alert, got %d", alerts)
 	}
 
-	// Союзник владельца проходит свободно (свой firewall не запирает команду).
-	ally := w.addPlayer(3, "a", "hacker", 0)
-	w.takeOut()
-	out = jackAt(w, ally, "t2")
-	if !ally.jacked {
-		t.Fatalf("ally must pass the owner's firewall, out=%v", out)
-	}
-	w.handleMessage(ally, message{"t": "jackout"})
-
-	// Владелец тоже проходит.
-	w.handleMessage(h, message{"t": "jackout"})
-	out = jackAt(w, h, "t2")
-	if !h.jacked {
-		t.Fatalf("owner must pass own firewall, out=%v", out)
-	}
-	w.handleMessage(h, message{"t": "jackout"})
-
-	// Обход без тупика: враг входит в другом месте, выкуривает firewall
-	// trojan'ом — фильтр снят, вход открыт, владение перешло.
-	out = jackAt(w, foe, "t1")
-	if !foe.jacked {
-		t.Fatalf("setup: foe must jack into neutral t1, out=%v", out)
-	}
-	for i := 0; i < 3; i++ {
-		runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
-	}
-	runAndWaitM2(w, foe, message{"t": "run", "prog": "vulnscan", "dev": "t2"})
-	runAndWaitM2(w, foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
-	if w.cyber.devices["t2"].firewalled != 0 {
-		t.Fatalf("enemy trojan must flush the old firewall")
-	}
-	if w.cyber.devices["t2"].owner != foe.id {
-		t.Fatalf("setup: t2 must be captured by foe")
-	}
+	// Джек-ин в само D чужим проходит (замок входа убран) — но скан из D
+	// упирается в фильтр: распространение «от D» — тоже трафик через D.
 	w.handleMessage(foe, message{"t": "jackout"})
 	out = jackAt(w, foe, "t2")
 	if !foe.jacked {
-		t.Fatalf("jack-in must pass after the firewall is flushed, out=%v", out)
+		t.Fatalf("enemy jack-in into the firewalled device itself must pass, out=%v", out)
 	}
+	runCollect(foe, message{"t": "run", "prog": "portscan"})
+	for _, id := range []string{"s1", "s2", "d1"} {
+		if foe.scanned[id] {
+			t.Fatalf("scan from inside the firewalled gateway must not spread to %s: %v", id, foe.scanned)
+		}
+	}
+	if !foe.scanned["t2"] {
+		t.Fatalf("the gateway itself must stay visible: %v", foe.scanned)
+	}
+
+	// Обход через вторую точку входа: радио r2 (аплинк → s2) раскрывает
+	// сегмент, не проходя через t2; сеть хозяина за t2 не видна.
+	w.handleMessage(foe, message{"t": "jackout"})
+	out = jackAt(w, foe, "r2")
+	if !foe.jacked {
+		t.Fatalf("setup: foe must jack into r2, out=%v", out)
+	}
+	scan(foe, 3)
+	for _, id := range []string{"r2", "s2", "d1", "t2"} {
+		if !foe.scanned[id] {
+			t.Fatalf("second entry point must reveal the segment incl %s: %v", id, foe.scanned)
+		}
+	}
+	if foe.scanned["s1"] || foe.scanned["t1"] {
+		t.Fatalf("scan must not spread THROUGH the firewalled gateway: %v", foe.scanned)
+	}
+
+	// vulnscan+trojan на D выкуривает firewall; после этого сегмент снова
+	// проходим насквозь (распространение через t2 открыто).
+	runCollect(foe, message{"t": "run", "prog": "vulnscan", "dev": "t2"})
+	runCollect(foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
+	if w.cyber.devices["t2"].firewalled != 0 || w.cyber.devices["t2"].owner != foe.id {
+		t.Fatalf("enemy trojan must flush the firewall and take ownership: fw=%v owner=%v",
+			w.cyber.devices["t2"].firewalled, w.cyber.devices["t2"].owner)
+	}
+	runCollect(foe, message{"t": "run", "prog": "portscan"})
+	runCollect(foe, message{"t": "run", "prog": "portscan"})
+	if !foe.scanned["s1"] || !foe.scanned["t1"] {
+		t.Fatalf("after the firewall is flushed the scan must cross t2: %v", foe.scanned)
+	}
+
+	// Союзники и владелец фильтра не режутся (firewall снова стоит).
+	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	if w.cyber.devices["t2"].firewalled != h.id {
+		t.Fatalf("setup: firewall must be reinstalled by h")
+	}
+	out = jackAt(w, ally, "t1")
+	if !ally.jacked {
+		t.Fatalf("setup: ally must jack into t1, out=%v", out)
+	}
+	scan(ally, 4)
+	for _, id := range []string{"t2", "s2", "d1", "r2"} {
+		if !ally.scanned[id] {
+			t.Fatalf("ally must not be cut by the owner's firewall, missing %s: %v", id, ally.scanned)
+		}
+	}
+	runCollect(h, message{"t": "run", "prog": "portscan"})
+	for _, id := range []string{"s2", "d1", "r2"} {
+		if !h.scanned[id] {
+			t.Fatalf("owner must not be cut by own firewall, missing %s: %v", id, h.scanned)
+		}
+	}
+
+	// Смерть хозяина: firewall живёт в сети, но alert'ы мёртвым не шлём —
+	// упор чужого скана в фильтр проходит тихо.
+	killer := w.addPlayer(4, "k", "sniper", 1)
+	w.takeOut()
+	w.damage(killer, h, 150)
+	if h.alive {
+		t.Fatalf("setup: firewall owner must die")
+	}
+	if w.cyber.devices["t2"].firewalled == 0 {
+		t.Fatalf("death must NOT uninstall the firewall (it lives in the network)")
+	}
+	w.handleMessage(foe, message{"t": "jackout"})
+	out = jackAt(w, foe, "t1")
+	if !foe.jacked {
+		t.Fatalf("setup: foe re-jacks t1, out=%v", out)
+	}
+	out = runCollect(foe, message{"t": "run", "prog": "portscan"})
+	for _, om := range out {
+		if om.msg["t"] == "alert" && om.to == h.id {
+			t.Fatalf("dead firewall owner must not receive alerts: %v", om.msg)
+		}
+	}
+	if foe.scanned["s2"] {
+		t.Fatalf("the live firewall must still segment the enemy scan: %v", foe.scanned)
+	}
+	_ = clock
 }
 
 // Antivirus (M3 §13.6): установка (too_far без скана, слот свободен,

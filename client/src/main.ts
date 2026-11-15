@@ -255,6 +255,7 @@ const sock = new GameSocket({
               vulned: d.vulned,
               watched: d.watched,
               firewalled: d.firewalled,
+              firewalledBy: d.firewalledBy,
               antivirused: d.antivirused,
             },
           ]),
@@ -265,8 +266,8 @@ const sock = new GameSocket({
         break
       case 'alert': {
         // Сработал триггер (M3 §13.2): watcher — чужой вход; firewall —
-        // отбитая попытка входа (§13.5); antivirus — отбита попытка trojan
-        // (§13.6). В деке-WM — тост, иначе — HUD.
+        // чужой portscan упёрся в мой фильтр (§13.5); antivirus — отбита
+        // попытка trojan (§13.6). В деке-WM — тост, иначе — HUD.
         const whoName = latestMeta.get(msg.who)?.name ?? `#${msg.who}`
         const mark = msg.src === 'firewall' ? 'F' : msg.src === 'antivirus' ? 'A' : 'W'
         const text = `${mark} ▸ ${msg.dev.toUpperCase()} ← ${whoName}`

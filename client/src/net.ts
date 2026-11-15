@@ -55,6 +55,7 @@ export interface ScanDevice {
   vulned?: boolean // my vulnscan found an exploit here (omitted when false)
   watched?: boolean // my watcher trigger sits on this device (M3, omitted when false)
   firewalled?: boolean // someone's firewall sits on this device (M3 §13.5, visible to everyone who scanned it)
+  firewalledBy?: number // firewall owner id (M3 §13.5: whose filter — for the own/ally/enemy badge; sent together with firewalled)
   antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
 }
 
@@ -125,7 +126,8 @@ export type ServerMessage =
   | { t: 'scan'; devices: ScanDevice[] }
   | { t: 'denied'; reason: string }
   // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
-  // into my watched device) from firewall (enemy jack-in attempt blocked).
+  // into my watched device) from firewall (enemy portscan hit my filter,
+  // one alert per scan run) or antivirus (enemy trojan repelled).
   | { t: 'alert'; dev: string; who: number; src?: string }
   // M3 (GDD §13.7): camera feed — 2 Hz, only to the living trojan owner.
   | { t: 'cam'; dev: string; seen: CamSeen[] }
@@ -233,6 +235,7 @@ function parseDevice(v: unknown): ScanDevice | null {
     vulned: p.vulned === true,
     watched: p.watched === true,
     firewalled: p.firewalled === true,
+    firewalledBy: typeof p.firewalledBy === 'number' && Number.isFinite(p.firewalledBy) ? p.firewalledBy : undefined,
     antivirused: p.antivirused === true,
   }
 }

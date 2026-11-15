@@ -199,6 +199,60 @@ func (cs *cyberState) reachable(from string) map[string]bool {
 	return seen
 }
 
+// reachableFor — BFS «для конкретного хакера» (§13.5, сегментация): чужой
+// firewall на устройстве не пропускает распространение СКВОЗЬ него — само
+// устройство остаётся достижимым (интерфейс виден), соседи за ним не
+// открываются. Владелец фильтра и его команда проходят свободно.
+func (w *world) reachableFor(from string, pl *player) map[string]bool {
+	seen := map[string]bool{from: true}
+	queue := []string{from}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if w.firewallBlocksThrough(w.cyber.devices[cur], pl) {
+			continue // транзитный трафик через чужой firewall не идёт
+		}
+		for _, n := range w.cyber.neighbors(cur) {
+			if !seen[n] {
+				seen[n] = true
+				queue = append(queue, n)
+			}
+		}
+	}
+	return seen
+}
+
+// firewallBlocksThrough — режет ли firewall на устройстве транзит для pl:
+// фильтр есть, pl не хозяин и не союзник. Хозяин offline (сессия) — режет
+// всех чужих: фильтр живёт в сети (§13.5), союзничество проверяется по
+// последней известной команде.
+func (w *world) firewallBlocksThrough(d *device, pl *player) bool {
+	if d == nil || d.firewalled == 0 || d.firewalled == pl.id {
+		return false
+	}
+	owner, ok := w.players[d.firewalled]
+	return !ok || owner.team != pl.team
+}
+
+// firewallScanHit — первый (в порядке карты) известный хакеру хост, через
+// который его portscan не может распространиться из-за чужого firewall, при
+// условии, что за фильтром есть ещё неоткрытые соседи — «скан упёрлся».
+// nil = упора нет (спамить alert'ами нельзя, §13.5).
+func (w *world) firewallScanHit(pl *player, known map[string]bool) *device {
+	for _, id := range w.cyber.order {
+		d := w.cyber.devices[id]
+		if !known[id] || !w.firewallBlocksThrough(d, pl) {
+			continue
+		}
+		for _, n := range w.cyber.neighbors(id) {
+			if !known[n] {
+				return d
+			}
+		}
+	}
+	return nil
+}
+
 // jackTarget — ближайшее устройство джек-ина: терминал в 2 м, радио — в
 // радиусе (3D-дистанция; LOS по §12.7 не нужен).
 func (cs *cyberState) jackTarget(pos vec3) *device {
@@ -267,21 +321,11 @@ func (w *world) interactTick(pl *player) {
 func (w *world) jackin(pl *player, dev *device) {
 	// Точка входа — тоже сетевое устройство (§6): захвачена другим хакером —
 	// джек-ин закрыт, перехватить точку можно только из другого места сети.
+	// NB: firewall джек-ин больше не фильтрует (§13.5, редакция 2026-11-15):
+	// защита сегмента, а не входа — замок убран.
 	if dev.owner != 0 && dev.owner != pl.id {
 		w.denied(pl, "not_owner")
 		return
-	}
-	// §13.5: firewall фильтрует точку входа — вражеским вход закрыт,
-	// владельцу фильтра и его союзникам открыт. Отбитая попытка не молчит:
-	// alert хозяину фильтра (живому — мёртвым не шлём, §5.5).
-	if fw := dev.firewalled; fw != 0 && fw != pl.id {
-		if owner, ok := w.players[fw]; !ok || owner.team != pl.team {
-			if ok && owner.alive {
-				w.sendTo(fw, message{"t": "alert", "dev": dev.id, "who": pl.id, "src": "firewall"})
-			}
-			w.denied(pl, "firewall")
-			return
-		}
 	}
 	pl.jacked = true
 	pl.jackHost = dev
@@ -294,9 +338,10 @@ func (w *world) jackin(pl *player, dev *device) {
 	// Накопленные знания переживают jackout (сессия, §12.5): повторный вход
 	// сразу показывает карту сети и восстанавливает табы захваченных
 	// устройств (плейтест M3). Знания обрезаем по достижимости от новой
-	// точки входа — scan остаётся живым видом сети, а не архивом.
+	// точки входа ( с учётом firewall-сегментации, §13.5) — scan остаётся
+	// живым видом сети, а не архивом.
 	if pl.scanned != nil {
-		reach := w.cyber.reachable(dev.id)
+		reach := w.reachableFor(dev.id, pl)
 		for id := range pl.scanned {
 			if !reach[id] {
 				delete(pl.scanned, id)
@@ -366,8 +411,9 @@ func (w *world) handleRun(pl *player, msg message) {
 	if prog != "portscan" {
 		dev, ok := w.cyber.devices[devID]
 		// Цель должна быть обнаружена (scanned — туман войны portscan'а) И
-		// оставаться достижимой по текущей сети (обрыв кабеля отрезает управление).
-		if !ok || !pl.scanned[devID] || !w.cyber.reachable(pl.jackHost.id)[devID] {
+		// оставаться достижимой по текущей сети — достижимость per-player:
+		// чужой firewall на транзитном устройстве отрезает цель (§13.5).
+		if !ok || !pl.scanned[devID] || !w.reachableFor(pl.jackHost.id, pl)[devID] {
 			w.denied(pl, "too_far")
 			return
 		}
@@ -403,7 +449,7 @@ func (w *world) handleCtrl(pl *player, msg message) {
 		w.denied(pl, "not_owner")
 		return
 	}
-	if !w.cyber.reachable(pl.jackHost.id)[dev.id] {
+	if !w.reachableFor(pl.jackHost.id, pl)[dev.id] {
 		w.denied(pl, "too_far")
 		return
 	}
@@ -450,7 +496,11 @@ func (w *world) completeProgram(pl *player, p *program) {
 		if pl.scanned == nil {
 			pl.scanned = map[string]bool{pl.jackHost.id: true}
 		}
-		reach := w.cyber.reachable(pl.jackHost.id)
+		pl.scanned[pl.jackHost.id] = true // точка входа известна всегда
+		// Достижимость per-player (§13.5): чужой firewall не пропускает
+		// распространение сквозь себя — соседи за фильтром не открываются,
+		// ранее открытое гаснет (живой вид сети).
+		reach := w.reachableFor(pl.jackHost.id, pl)
 		frontier := make([]string, 0, len(pl.scanned))
 		for id := range pl.scanned {
 			frontier = append(frontier, id)
@@ -465,6 +515,13 @@ func (w *world) completeProgram(pl *player, p *program) {
 		for id := range pl.scanned {
 			if !reach[id] {
 				delete(pl.scanned, id)
+			}
+		}
+		// Скан упёрся в чужой firewall (за фильтром есть неоткрытые соседи) —
+		// один alert хозяину на запуск (§13.5, без спама; живому — §5.5).
+		if hit := w.firewallScanHit(pl, pl.scanned); hit != nil {
+			if owner, ok := w.players[hit.firewalled]; ok && owner.alive {
+				w.sendTo(hit.firewalled, message{"t": "alert", "dev": hit.id, "who": pl.id, "src": "firewall"})
 			}
 		}
 		w.sendScan(pl)
@@ -509,7 +566,25 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// Повторная установка тем же хакером — no-op (один firewall на девайс).
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.firewalled = pl.id
-			w.resendScanFor(p.dev) // на карте появится ореол firewalled
+			// Сегмент за D закрылся для чужих: их кибер-карта — живой вид
+			// сети. Обрезаем знания всех джекнутых по их достижимости и
+			// пересылаем scan (гаснет «за D», появляется бейдж firewalled).
+			for _, p2 := range w.players {
+				if !p2.jacked || p2.jackHost == nil || p2.scanned == nil {
+					continue
+				}
+				reach := w.reachableFor(p2.jackHost.id, p2)
+				changed := false
+				for id := range p2.scanned {
+					if !reach[id] {
+						delete(p2.scanned, id)
+						changed = true
+					}
+				}
+				if changed || p2.scanned[dev.id] {
+					w.sendScan(p2)
+				}
+			}
 		}
 	case "antivirus":
 		// §13.6: резидентный процесс живёт на устройстве (как trojan), слот
@@ -551,6 +626,9 @@ type scanDevice struct {
 	// Наблюдаемый сетевой фильтр — виден всем, кто открыл устройство
 	// (в отличие от личных vulned/watched).
 	Firewalled bool `json:"firewalled,omitempty"`
+	// FirewalledBy — хозяин фильтра (§13.5: чей — для бейджа «свой/союзный/
+	// чужой» на кибер-карте; приходит вместе с Firewalled).
+	FirewalledBy uint64 `json:"firewalledBy,omitempty"`
 	// Antivirused — на устройстве стоит чей-то antivirus (§13.6), omitempty.
 	// Резидентный процесс наблюдаем из сети — виден всем, кто открыл
 	// устройство (как firewalled).
@@ -582,6 +660,7 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.firewalled != 0 {
 			sd.Firewalled = true
+			sd.FirewalledBy = d.firewalled
 		}
 		if d.antivirused != 0 {
 			sd.Antivirused = true

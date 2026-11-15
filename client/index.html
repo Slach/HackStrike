@@ -911,13 +911,17 @@
         font-size: 15px;
         padding: 12px;
       }
-      /* лента камеры (M3 §13.7): список видимых игроков в табе устройства */
+      /* рапорт камеры (M3 §13.7, плейтест M3): карточка-кадр — шапка + профили
+         целей; пустой кадр — стейт «СЕКТОР ЧИСТ» с последним контактом */
       .cam-ui {
         display: flex;
         flex-direction: column;
         gap: 10px;
         flex: 1;
         justify-content: center;
+        max-width: 420px;
+        margin: 0 auto;
+        width: 100%;
       }
       .cam-owner {
         font-size: 11px;
@@ -925,44 +929,95 @@
         color: #baffdd;
         text-align: center;
       }
-      .cam-title {
-        font-size: 16px;
-        letter-spacing: 5px;
+      .cam-report {
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 4px;
+        background: rgba(4, 18, 11, 0.7);
+        box-shadow: inset 0 0 24px rgba(55, 255, 155, 0.06);
+        padding: 10px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .cam-report-head {
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        border-bottom: 1px solid rgba(55, 255, 155, 0.35);
+        padding-bottom: 6px;
+        font-size: 11px;
+        letter-spacing: 2px;
+      }
+      .cam-report-id {
+        font-size: 15px;
         font-weight: 700;
         color: #37ff9b;
-        text-shadow: 0 0 14px rgba(55, 255, 155, 0.5);
-        text-align: center;
+        text-shadow: 0 0 12px rgba(55, 255, 155, 0.5);
+        letter-spacing: 3px;
+      }
+      .cam-report-status {
+        color: #37ff9b;
+        border: 1px solid rgba(55, 255, 155, 0.55);
+        border-radius: 3px;
+        padding: 1px 6px;
+        background: rgba(55, 255, 155, 0.08);
+      }
+      .cam-report-time {
+        color: rgba(170, 255, 210, 0.75);
+        margin-left: auto;
+      }
+      .cam-report-count {
+        color: #ffd237;
       }
       .cam-feed {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 4px;
         max-height: 240px;
         overflow-y: auto;
       }
       .cam-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
+        display: grid;
+        grid-template-columns: minmax(90px, 1fr) auto auto auto 1.2em;
+        align-items: baseline;
+        gap: 12px;
         border-bottom: 1px dashed rgba(55, 255, 155, 0.15);
-        padding-bottom: 4px;
+        padding: 3px 0;
         font-size: 13px;
       }
       .cam-name {
         font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .cam-cls {
         color: rgba(170, 255, 210, 0.75);
         letter-spacing: 1px;
         font-size: 11px;
       }
-      .cam-pos {
-        color: rgba(170, 255, 210, 0.55);
+      .cam-metric {
+        color: rgba(170, 255, 210, 0.65);
         font-size: 11px;
+        letter-spacing: 1px;
+        white-space: nowrap;
       }
-      .cam-empty {
-        color: rgba(170, 255, 210, 0.55);
+      .cam-move {
+        color: #ffd237;
+        font-size: 13px;
+        text-align: center;
+      }
+      .cam-empty-title {
+        color: rgba(170, 255, 210, 0.7);
+        letter-spacing: 5px;
+        font-size: 14px;
+        text-align: center;
+        padding: 10px 0 4px;
+      }
+      .cam-empty-sub {
+        color: rgba(170, 255, 210, 0.45);
         letter-spacing: 2px;
+        font-size: 11px;
         text-align: center;
       }
       .dev-info {
@@ -1043,12 +1098,16 @@
         stroke-dasharray: 3 3;
         pointer-events: none;
       }
-      /* firewall на устройстве — голубой пунктир (M3 §13.5) */
+      /* firewall на устройстве — пунктир (M3 §13.5); цвет задаётся атрибутом
+         stroke по firewalledBy: свой/союзный #5fd7ff, чужой #ff4dd2 */
       .svg-firewalled {
         fill: none;
-        stroke: #5fd7ff;
         stroke-width: 2;
         stroke-dasharray: 2 4;
+        pointer-events: none;
+      }
+      .svg-fwbadge {
+        font-family: inherit;
         pointer-events: none;
       }
       /* antivirus на устройстве — фиолетовый пунктир (M3 §13.6) */

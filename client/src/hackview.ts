@@ -38,7 +38,6 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   not_jacked: 'НЕ В СЕТИ',
   no_los: 'НЕТ ПРЯМОЙ ВИДИМОСТИ',
   too_far: 'СЛИШКОМ ДАЛЕКО',
-  firewall: 'FIREWALL — ДОСТУП ЗАПРЕЩЁН',
   bad_target: 'FIREWALL — ТОЛЬКО ТЕРМИНАЛ ИЛИ РАДИО',
   antivirus: 'ANTIVIRUS — УСТАНОВКА TROJAN ОТБИТА',
 }
@@ -178,13 +177,19 @@ export class HackView {
   private vulned = new Map<string, true>()
   /** Устройства с моим watcher-триггером (M3 §13.1) — для ореола на карте. */
   private watched = new Map<string, true>()
-  /** Устройства с чьим-то firewall (M3 §13.5) — ореол + тост об установке. */
-  private firewalled = new Map<string, true>()
+  /** Устройства с firewall и его хозяин (M3 §13.5) — ореол/бейдж + тост. */
+  private firewalled = new Map<string, number>()
   /** Устройства с чьим-то antivirus (M3 §13.6) — ореол + тост об установке. */
   private antivirused = new Map<string, true>()
   /** Ленты камер (M3 §13.7): последний «кадр» по каждой МОЕЙ камере; живёт
    *  между перестройками DOM и обновляется на месте (клики не срываются). */
   private readonly camFeeds = new Map<string, readonly CamSeen[]>()
+  /** Рапорт камеры (плейтест M3): время первого кадра по камере — «T+мм:сс»
+   *  uptime ленты; предыдущий кадр — направление движения целей (Δ между
+   *  кадрами 2 Гц); последний контакт — пустой стейт «N с назад». */
+  private readonly camFirstFrame = new Map<string, number>()
+  private readonly camPrevFrame = new Map<string, ReadonlyMap<number, CamSeen>>()
+  private readonly camLastContact = new Map<string, { name: string; at: number }>()
   private tabs: Tab[] = [{ key: 'deck', dev: null }]
   private panes: Pane[] = [{ tabKey: 'deck' }]
   private activePane = 0
@@ -196,7 +201,7 @@ export class HackView {
   private progLists: HTMLElement[] = []
   private netmapBoxes: HTMLElement[] = []
   private doorRefs: { dev: string; status: HTMLElement; btn: HTMLButtonElement }[] = []
-  private camRefs: { dev: string; list: HTMLElement }[] = []
+  private camRefs: { dev: string; list: HTMLElement; time: HTMLElement; count: HTMLElement }[] = []
 
   constructor(private deps: HackViewDeps) {
     this.root = byId('hackview')
@@ -280,13 +285,19 @@ export class HackView {
       }
     }
     this.watched = new Map([...next].filter(([, d]) => d.watched === true).map(([id]) => [id, true] as const))
-    // Обратная связь firewall (§13.5): фильтр на карте видим всем скавшим.
+    // Обратная связь firewall (§13.5): фильтр наблюдаем из сети; тост — на
+    // новое появление или смену хозяина (чей — видно в подписи бейджа).
     for (const d of msg.devices) {
-      if (d.firewalled === true && !this.firewalled.has(d.id)) {
-        this.toast(`FIREWALL: ${d.id.toUpperCase()}`)
+      const by = d.firewalled === true ? d.firewalledBy ?? 0 : 0
+      if (by !== 0 && this.firewalled.get(d.id) !== by) {
+        this.toast(`FIREWALL: ${d.id.toUpperCase()} (${this.fwLabel(by)})`)
       }
     }
-    this.firewalled = new Map([...next].filter(([, d]) => d.firewalled === true).map(([id]) => [id, true] as const))
+    this.firewalled = new Map(
+      [...next]
+        .filter(([, d]) => d.firewalled === true && d.firewalledBy !== undefined)
+        .map(([id, d]) => [id, d.firewalledBy as number] as const),
+    )
     // Обратная связь antivirus (§13.6): резидентный процесс видим всем
     // скавшим; износ (oreol исчез) — атакующий видит, что путь открыт.
     for (const d of msg.devices) {
@@ -306,7 +317,12 @@ export class HackView {
     }
     // §13.7: камеру у меня отобрали — лента гаснет (иначе висел бы старый кадр).
     for (const [id, d] of next) {
-      if (d.kind === 'camera' && d.owner !== this.myId) this.camFeeds.delete(id)
+      if (d.kind === 'camera' && d.owner !== this.myId) {
+        this.camFeeds.delete(id)
+        this.camFirstFrame.delete(id)
+        this.camPrevFrame.delete(id)
+        this.camLastContact.delete(id)
+      }
     }
     this.tabs = this.tabs.filter((t) => t.dev === null || next.has(t.dev))
     for (const p of this.panes) {
@@ -332,6 +348,14 @@ export class HackView {
    *  hackview — открыв таб, хакер видит последний кадр сразу. */
   onCam(msg: CamMsg): void {
     this.camFeeds.set(msg.dev, msg.seen)
+    const now = performance.now()
+    if (!this.camFirstFrame.has(msg.dev)) this.camFirstFrame.set(msg.dev, now)
+    // контакт есть → обновляем «последний контакт» (кадр атомарен, время одно)
+    if (msg.seen.length > 0) {
+      const prev = this.camLastContact.get(msg.dev)
+      const keep = prev !== undefined && msg.seen.some((s) => s.name === prev.name) ? prev.name : msg.seen[msg.seen.length - 1].name
+      this.camLastContact.set(msg.dev, { name: keep, at: now })
+    }
     this.schedule(() => this.updateCamFeeds())
   }
 
@@ -539,6 +563,20 @@ export class HackView {
     return this.deps.teamOf(owner) === 1 ? '#ff4dd2' : '#37ff9b'
   }
 
+  /** Firewall чей (§13.5): свой / союзный / чужой — подпись бейджа. */
+  private fwLabel(by: number): string {
+    if (by === this.myId) return 'СВОЙ'
+    const myTeam = this.myId !== null ? this.deps.teamOf(this.myId) : null
+    return myTeam !== null && this.deps.teamOf(by) === myTeam ? 'СОЮЗНИК' : `ВРАГ #${by}`
+  }
+
+  /** Цвет бейджа/ореола firewall (§13.5): свой/союзный голубой, чужой маджента. */
+  private fwColor(by: number): string {
+    if (by === this.myId) return '#5fd7ff'
+    const myTeam = this.myId !== null ? this.deps.teamOf(this.myId) : null
+    return myTeam !== null && this.deps.teamOf(by) === myTeam ? '#5fd7ff' : '#ff4dd2'
+  }
+
   private render(): void {
     if (!this._active) return
     this.sparkRefs = []
@@ -699,13 +737,25 @@ export class HackView {
     }
     if (d.kind === 'camera') {
       // §13.7: сенсор — «картинка в UI» это лента наблюдения (видео — M7+).
+      // Плейтест M3: лента = «рапорт» — шапка (id/статус/T+/цели) + строки-
+      // профили целей; пустой кадр — осмысленный стейт «СЕКТОР ЧИСТ».
       const wrap = el('div', 'cam-ui')
       wrap.append(txt('div', 'cam-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)} · РАДИУС 12 М + LOS`))
       if (d.owner === this.myId) {
-        wrap.append(txt('div', 'cam-title', 'ЛЕНТА НАБЛЮДЕНИЯ'))
+        const report = el('div', 'cam-report')
+        const head = el('div', 'cam-report-head')
+        const id = txt('span', 'cam-report-id', dev.toUpperCase())
+        head.append(id)
+        head.append(txt('span', 'cam-report-status', 'ЗАХВАЧЕНА'))
+        const time = txt('span', 'cam-report-time', 'T+00:00')
+        head.append(time)
+        const count = txt('span', 'cam-report-count', 'ЦЕЛЕЙ: 0')
+        head.append(count)
+        report.append(head)
         const list = el('div', 'cam-feed')
-        wrap.append(list)
-        this.camRefs.push({ dev, list })
+        report.append(list)
+        wrap.append(report)
+        this.camRefs.push({ dev, list, time, count })
       } else {
         wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] ТРОЯН'))
       }
@@ -805,29 +855,85 @@ export class HackView {
     }
   }
 
-  /** Точечное обновление лент камер (§13.7): без перестройки DOM. */
+  /** Точечное обновление лент камер (§13.7): без перестройки DOM. Кадр —
+   *  «рапорт»: шапка (uptime ленты, счётчик целей) + профиль каждой цели —
+   *  дистанция от объектива, азимут и направление движения вычисляются из
+   *  данных кадра + позиции камеры из scan (протокол не расширяется). */
   private updateCamFeeds(): void {
+    const now = performance.now()
     for (const ref of this.camRefs) {
       const seen = this.camFeeds.get(ref.dev)
+      const cam = this.devices.get(ref.dev)
+      // uptime ленты T+мм:сс — от первого кадра (владение могло случиться
+      // вне деки; это uptime наблюдения, а не владения — честное число)
+      const t0 = this.camFirstFrame.get(ref.dev)
+      if (t0 !== undefined) {
+        const sec = Math.max(0, Math.floor((now - t0) / 1000))
+        ref.time.textContent = `T+${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
+      }
+      ref.count.textContent = `ЦЕЛЕЙ: ${seen?.length ?? 0}`
       ref.list.replaceChildren()
       if (seen === undefined) {
-        ref.list.append(txt('div', 'hv-dim', 'ОЖИДАНИЕ КАДРА…'))
+        ref.list.append(txt('div', 'cam-empty', 'ОЖИДАНИЕ КАДРА…'))
         continue
       }
       if (seen.length === 0) {
-        ref.list.append(txt('div', 'cam-empty', 'НИКОГО В ЗОНЕ ВИДИМОСТИ'))
+        ref.list.append(txt('div', 'cam-empty-title', 'СЕКТОР ЧИСТ'))
+        const last = this.camLastContact.get(ref.dev)
+        const lastText =
+          last !== undefined
+            ? `ПОСЛЕДНИЙ КОНТАКТ: ${last.name.toUpperCase()}, ${Math.max(1, Math.round((now - last.at) / 1000))} С НАЗАД`
+            : 'КОНТАКТОВ НЕ БЫЛО'
+        ref.list.append(txt('div', 'cam-empty-sub', `КАДР 2 Гц · ${lastText}`))
         continue
       }
+      const prev = this.camPrevFrame.get(ref.dev)
       for (const s of seen) {
-        const row = el('div', 'cam-row')
-        const name = txt('span', 'cam-name', s.name)
-        name.style.color = s.team === 1 ? '#ff4dd2' : '#37ff9b'
-        row.append(name)
-        row.append(txt('span', 'cam-cls', s.cls.toUpperCase()))
-        row.append(txt('span', 'cam-pos', `${Math.round(s.x)}·${Math.round(s.z)}`))
-        ref.list.append(row)
+        ref.list.append(this.buildCamRow(s, cam, prev?.get(s.id)))
       }
     }
+    // кадр обработан → он же теперь «предыдущий» для дельт движения
+    for (const [dev, seen] of this.camFeeds) {
+      const m = new Map<number, CamSeen>()
+      for (const s of seen) m.set(s.id, s)
+      this.camPrevFrame.set(dev, m)
+    }
+  }
+
+  /** Строка-«профиль» цели: имя цветом команды, класс, дистанция до
+   *  объектива (3D, как радиус 12 м на сервере), азимут от камеры и сектор
+   *  движения (Δ между кадрами; стоит на месте — «·»). */
+  private buildCamRow(s: CamSeen, cam: ScanDevice | undefined, prev: CamSeen | undefined): HTMLElement {
+    const row = el('div', 'cam-row')
+    const name = txt('span', 'cam-name', s.name)
+    name.style.color = s.team === 1 ? '#ff4dd2' : '#37ff9b'
+    row.append(name)
+    row.append(txt('span', 'cam-cls', s.cls.toUpperCase()))
+    if (cam !== undefined) {
+      // центр корпуса игрока = ноги + 0.9 м (та же точка, куда смотрит LOS)
+      const dx = s.x - cam.x
+      const dy = s.y + 0.9 - cam.y
+      const dz = s.z - cam.z
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      row.append(txt('span', 'cam-metric', `${dist.toFixed(1)} М`))
+      const az = (Math.atan2(dx, -dz) * 180) / Math.PI
+      row.append(txt('span', 'cam-metric', `АЗ ${String(Math.round((az + 360) % 360)).padStart(3, '0')}°`))
+    } else {
+      row.append(txt('span', 'cam-metric', '—'))
+    }
+    row.append(txt('span', 'cam-move', this.moveSector(s, prev)))
+    return row
+  }
+
+  /** Сектор направления движения из Δ двух кадров (2 Гц); север = −Z. */
+  private moveSector(s: CamSeen, prev: CamSeen | undefined): string {
+    if (prev === undefined) return '·'
+    const dx = s.x - prev.x
+    const dz = s.z - prev.z
+    if (dx * dx + dz * dz < 0.09) return '·' // < 0.3 м между кадрами — стоит
+    const a = Math.atan2(dx, -dz) // −π..π, 0 = север
+    const i = Math.round(a / (Math.PI / 4))
+    return ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'][(i + 8) % 8]
   }
 
   private updateNetmaps(): void {
@@ -950,15 +1056,28 @@ export class HackView {
         wt.classList.add('svg-watched')
         svg.append(wt)
       }
-      // Firewall на устройстве (чей — не важно: фильтр наблюдаем из сети,
-      // §13.5) — голубой пунктирный ореол по аналогии со watched.
+      // Firewall на устройстве (§13.5): пунктирный ореол + бейдж «FW» —
+      // цвет по firewalledBy (свой/союзный голубой, чужой маджента), чей —
+      // в tooltip. Рёбра за чужим фильтром не рисуются: устройства за ним
+      // выпадают из скана (сегмент визуально отсечён).
       if (d.firewalled === true) {
+        const by = d.firewalledBy ?? 0
         const fw = svgEl('circle')
         fw.setAttribute('cx', String(cx))
         fw.setAttribute('cy', String(cy))
         fw.setAttribute('r', '15')
+        fw.setAttribute('stroke', this.fwColor(by))
         fw.classList.add('svg-firewalled')
         svg.append(fw)
+        const badge = svgEl('text')
+        badge.setAttribute('x', String(cx))
+        badge.setAttribute('y', String(cy - 19))
+        badge.setAttribute('text-anchor', 'middle')
+        badge.setAttribute('fill', this.fwColor(by))
+        badge.setAttribute('font-size', '7')
+        badge.classList.add('svg-fwbadge')
+        badge.textContent = `FW ${this.fwLabel(by)}`
+        svg.append(badge)
       }
       // Antivirus на устройстве (чей — не важно: резидентный процесс
       // наблюдаем из сети, §13.6) — фиолетовый пунктирный ореол.

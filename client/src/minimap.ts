@@ -41,6 +41,7 @@ export interface MiniCyberDev {
   vulned?: boolean
   watched?: boolean
   firewalled?: boolean
+  firewalledBy?: number // хозяин фильтра (§13.5): цвет бейджа свой/союзный/чужой
   antivirused?: boolean
 }
 
@@ -268,7 +269,19 @@ export class Minimap {
       }
       if (d.vulned === true) halo(6, '#ffd237', [])
       if (d.watched === true) halo(10, '#ff9f43', [3, 3])
-      if (d.firewalled === true) halo(9, '#5fd7ff', [2, 4])
+      // firewall (§13.5): ореол + бейдж «FW», цвет по firewalledBy —
+      // свой/союзный голубой, чужой маджента.
+      if (d.firewalled === true) {
+        const by = d.firewalledBy ?? null
+        const own =
+          by !== null && (by === cyber.myId || (cyber.teamOf(by) !== null && cyber.teamOf(by) === cyber.ownTeam))
+        const color = own ? '#5fd7ff' : '#ff4dd2'
+        halo(9, color, [2, 4])
+        ctx.fillStyle = color
+        ctx.font = '6px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText('FW', x, y - 13)
+      }
       if (d.antivirused === true) halo(11, '#c792ea', [5, 3])
       ctx.setLineDash([])
     }
