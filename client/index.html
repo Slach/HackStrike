@@ -1712,6 +1712,66 @@
         display: none;
       }
 
+      /* Экран загрузки (§15.5): поверх join, гасится прозрачностью через .gone */
+      #loadingScreen {
+        z-index: 14; /* join=10, death=11, end=12 — загрузка всех перекрывает */
+        background: #020704; /* непрозрачный: под ним join ещё не собран */
+      }
+      #loadingScreen.gone {
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.35s ease;
+      }
+      .loadPanel {
+        width: min(420px, 92%);
+      }
+      .loadBar {
+        height: 10px;
+        border: 1px solid rgba(55, 255, 155, 0.45);
+        border-radius: 5px;
+        overflow: hidden;
+        margin: 4px 0 12px;
+        background: rgba(55, 255, 155, 0.06);
+      }
+      .loadFill {
+        height: 100%;
+        width: 4%;
+        background: linear-gradient(90deg, rgba(55, 255, 155, 0.55), #37ff9b);
+        box-shadow: 0 0 12px rgba(55, 255, 155, 0.7);
+        transition: width 0.3s ease;
+      }
+      /* Мерцание: полоса живая даже до загрузки бандла (статика, без JS) */
+      .loadBar::after {
+        content: '';
+        display: block;
+        height: 100%;
+        margin-top: -100%;
+        background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+        animation: loadShimmer 1.4s linear infinite;
+      }
+      @keyframes loadShimmer {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(100%); }
+      }
+      /* Ссылка-приглашение: перелиновываемая, но читаемая и копируемая */
+      .inviteUrl {
+        font-size: 12px;
+        color: var(--cy);
+        word-break: break-all;
+        background: rgba(55, 255, 155, 0.06);
+        border: 1px solid rgba(55, 255, 155, 0.22);
+        border-radius: 6px;
+        padding: 8px 10px;
+        user-select: all; /* выделение одним тапом — ручной fallback копирования */
+      }
+      #inviteQr {
+        align-self: center;
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 6px;
+        background: #dff;
+        image-rendering: pixelated;
+      }
+
 
       /* Mobile meatview HUD (ГДД §15.5): нижние углы эксклюзивны за tc-
          контролами — всё остальное ушло вверх; дебаг на телефоне не нужен;
@@ -1860,6 +1920,20 @@
       <div class="row"><span class="dim">snaps/s</span><span id="snaps">—</span></div>
     </div>
 
+    <!-- Экран загрузки (§15.5): виден с первого кадра отрисовки (чистый
+         HTML/CSS, до загрузки бандла) — join без карточек классов и мёртвым
+         ДЕПЛОЕМ больше не мигает. Прогресс ведёт main.ts по стадиям:
+         движок → сеть → карта → мир. .gone гасит прозрачностью, оставляя
+         место join'у уже под ним. -->
+    <div id="loadingScreen" class="overlay">
+      <div class="panel loadPanel">
+        <h1 class="logo">HACKSTRIKE</h1>
+        <div class="tag">ЗАГРУЗКА РЕСУРСОВ</div>
+        <div class="loadBar"><div id="loadFill" class="loadFill"></div></div>
+        <div id="loadStatus" class="dim">ИНИЦИАЛИЗАЦИЯ…</div>
+      </div>
+    </div>
+
     <div id="joinScreen" class="overlay">
       <div class="panel">
         <h1 class="logo">HACKSTRIKE</h1>
@@ -1876,9 +1950,21 @@
         </div>
         <div class="btnRow">
           <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
+          <button id="inviteBtn" class="btn small ghost" type="button">✉ ПРИГЛАСИТЬ</button>
           <button id="settingsBtn" class="btn small ghost" type="button">⚙ НАСТРОЙКИ</button>
         </div>
-        <div id="joinStatus" class="dim">ЗАГРУЗКА КАРТЫ…</div>
+        <div id="joinStatus" class="dim"></div>
+      </div>
+      <!-- Приглашение (§15.5): QR + ссылка на текущий сервер, кнопка копирования.
+           Стиль как у модалки настроек — тот же .settings-слой поверх join. -->
+      <div id="joinInvite" class="settings hidden">
+        <div class="setPanel">
+          <div class="setHead">ПРИГЛАСИТЬ</div>
+          <canvas id="inviteQr" width="180" height="180"></canvas>
+          <div id="inviteUrl" class="inviteUrl"></div>
+          <button id="inviteCopy" class="btn small" type="button">СКОПИРОВАТЬ</button>
+          <button id="inviteClose" class="btn small ghost" type="button">ЗАКРЫТЬ</button>
+        </div>
       </div>
       <div id="joinSettings" class="settings hidden">
         <div class="setPanel">

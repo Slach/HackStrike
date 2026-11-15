@@ -5,6 +5,7 @@
 import { CLASSES } from './classes'
 import type { Cls, NetStats, SnapPlayer } from './net'
 import { IS_TOUCH } from './mobile'
+import QRCode from 'qrcode'
 
 const TEAM_LABEL = ['ЦИАНОВЫЕ', 'МАДЖЕНТОВЫЕ'] as const
 const KILLFEED_ROWS = 5
@@ -59,6 +60,8 @@ export class Hud {
   private joinTeam = -1 // -1 = авто-баланс; выбор хранится в localStorage
   private deathCls: Cls = 'assault'
   private mapReady = false
+  /** Экран загрузки жив до первого «карта построена» (§15.5). */
+  private loadVisible = true
   private respawnAtMs = 0
   private deathActive = false
   private deathReady = false
@@ -78,6 +81,15 @@ export class Hud {
     deploy: byId<HTMLButtonElement>('deployBtn'),
     joinStatus: byId('joinStatus'),
     joinCards: byId('joinCards'),
+    loading: byId('loadingScreen'),
+    loadFill: byId('loadFill'),
+    loadStatus: byId('loadStatus'),
+    inviteBtn: byId('inviteBtn'),
+    invite: byId('joinInvite'),
+    inviteQr: byId<HTMLCanvasElement>('inviteQr'),
+    inviteUrl: byId('inviteUrl'),
+    inviteCopy: byId<HTMLButtonElement>('inviteCopy'),
+    inviteClose: byId('inviteClose'),
     death: byId('deathOverlay'),
     deathTitle: byId('deathTitle'),
     deathCount: byId('deathCount'),
@@ -149,9 +161,45 @@ export class Hud {
       if (e.target === this.el.settings) this.el.settings.classList.add('hidden')
     })
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !this.el.settings.classList.contains('hidden')) {
+      if (e.key === 'Escape') {
         this.el.settings.classList.add('hidden')
+        this.el.invite.classList.add('hidden')
       }
+    })
+    // Приглашение (§15.5): QR + ссылка на текущий origin. URL считаем на
+    // момент открытия — стенд может переехать между открытиями (zrok и т.п.).
+    this.el.inviteBtn.addEventListener('click', () => {
+      const url = `${window.location.origin}${window.location.pathname}`
+      this.el.inviteUrl.textContent = url
+      QRCode.toCanvas(this.el.inviteQr, url, { width: 180, margin: 1 }).catch((err) => {
+        console.warn('hud: qr render failed', err)
+      })
+      this.el.invite.classList.remove('hidden')
+    })
+    this.el.inviteClose.addEventListener('click', () => this.el.invite.classList.add('hidden'))
+    this.el.invite.addEventListener('click', (e) => {
+      if (e.target === this.el.invite) this.el.invite.classList.add('hidden')
+    })
+    this.el.inviteCopy.addEventListener('click', () => {
+      const done = (): void => {
+        this.el.inviteCopy.textContent = 'СКОПИРОВАНО ✓'
+        window.setTimeout(() => {
+          this.el.inviteCopy.textContent = 'СКОПИРОВАТЬ'
+        }, 1500)
+      }
+      const url = this.el.inviteUrl.textContent
+      navigator.clipboard
+        .writeText(url)
+        .then(done)
+        .catch(() => {
+          // Fallback (clipboard API запрещён на http-стендах): выделение —
+          // копирование вручную через контекстное меню.
+          const range = document.createRange()
+          range.selectNodeContents(this.el.inviteUrl)
+          const sel = window.getSelection()
+          sel?.removeAllRanges()
+          sel?.addRange(range)
+        })
     })
     for (const btn of this.el.teamSeg.querySelectorAll<HTMLButtonElement>('.segBtn')) {
       if (Number(btn.dataset.team) === Number(localStorage.getItem('hs.team'))) {
@@ -217,9 +265,28 @@ export class Hud {
     this.el.join.classList.add('hidden')
   }
 
+  /** Стадия загрузки (§15.5): pct 0..100, пока экран не погашен — иначе noop. */
+  setLoading(pct: number, text?: string): void {
+    if (!this.loadVisible) return
+    this.el.loadFill.style.width = `${Math.max(0, Math.min(100, pct))}%`
+    if (text !== undefined) this.el.loadStatus.textContent = text
+  }
+
+  /** Карта построена, мир готов — гасим загрузку, join уже собран под ней. */
+  hideLoading(): void {
+    if (!this.loadVisible) return
+    this.loadVisible = false
+    this.el.loadFill.style.width = '100%'
+    this.el.loadStatus.textContent = 'ГОТОВО'
+    window.setTimeout(() => this.el.loading.classList.add('gone'), 250)
+  }
+
   setMapStatus(text: string | null): void {
     this.el.joinStatus.textContent = text ?? ''
     this.mapReady = text === null
+    // Пока виден экран загрузки, статусы карты дублируем в его прогресс:
+    // пользователь смотрит именно туда (§15.5).
+    if (this.loadVisible) this.setLoading(text === null ? 80 : 60, text ?? 'ЗАГРУЗКА КАРТЫ…')
     this.refreshDeploy()
   }
 

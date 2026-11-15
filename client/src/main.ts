@@ -474,6 +474,7 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
     if (window.__hs) window.__hs.propsView = propsView
     minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, world)
     hud.setMapStatus(null)
+    hud.hideLoading() // мир собран — гасим экран загрузки, join готов под ним
   },
 )
 
