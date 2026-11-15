@@ -11,6 +11,7 @@ import type { FreeCamera } from '@babylonjs/core/Cameras/freeCamera'
 
 import { GameSocket } from './net'
 import type { Cls, ServerMessage, SnapPlayer } from './net'
+import { startUpdateWatch } from './updatewatch'
 import { createScene } from './scene'
 import { fetchMap, MapWorld } from './map'
 import {
@@ -629,6 +630,7 @@ declare global {
       propsView: PropsView | null
       doorAngle: (id: string) => number | null
       cyberMap: () => { on: boolean; devices: Map<string, MiniCyberDev> } // M3 §13.8
+      updateWatch?: boolean
     }
   }
 }
@@ -642,4 +644,8 @@ window.__hs = {
   propsView: null, // ставится после загрузки карты
   doorAngle: (id) => propsView?.doorAngle(id) ?? null,
   cyberMap: () => ({ on: cyberMapOn && myCls === 'hacker', devices: scanDevs }),
+  updateWatch: true, // auto-reload после пердеплоя (M4)
 }
+
+// M4: авто-обновление вкладки после пердеплоя клиента (см. модуль).
+startUpdateWatch()
