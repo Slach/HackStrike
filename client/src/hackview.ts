@@ -1445,10 +1445,9 @@ export class HackView {
 
   private fillProgs(list: HTMLElement): void {
     list.replaceChildren()
-    if (this.progs.length === 0) {
-      list.append(txt('div', 'hv-dim', IS_TOUCH ? 'ПРОЦЕССОВ НЕТ — КНОПКИ 1–6' : 'ПРОЦЕССОВ НЕТ — КЛАВИШИ 1/2/3/4/5/6'))
-      return
-    }
+    // Пустой список — просто пусто: процесс запущенный виден, а заглушка
+    // «ПРОЦЕССОВ НЕТ — КНОПКИ/КЛАВИШИ 1–6» только шумела (ревебр owner §15.8;
+    // подсказок достаточно — ряд кнопок, футер, палитра).
     for (const p of this.progs) {
       const row = el('div', 'hv-prog')
       const name = `${PROG_LABEL[p.prog] ?? p.prog}${p.dev !== null ? ` → ${p.dev.toUpperCase()}` : ''}`
