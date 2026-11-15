@@ -933,14 +933,19 @@ export class HackView {
   }
 
   private buildDeckPane(body: HTMLElement): void {
-    const left = el('div', 'deck-left')
-
+    // Графики — одной горизонтальной строкой НАД колонками (плейтест M3:
+    // в узкой левой колонке канвасы наезжали на карту сети).
     const sparks = el('div', 'hv-sparks')
     sparks.append(this.buildSpark('cpu', 'CPU'))
     sparks.append(this.buildSpark('npu', 'NPU'))
     sparks.append(this.buildSpark('ram', 'RAM'))
     sparks.append(this.buildSpark('net', 'NET'))
-    left.append(sparks)
+    const cols = el('div', 'deck-cols')
+    const wrap = el('div', 'deck-wrap')
+    wrap.append(sparks, cols)
+    body.append(wrap)
+
+    const left = el('div', 'deck-left')
 
     const progsBox = el('div', 'hv-progs')
     this.progLists.push(progsBox)
@@ -968,7 +973,7 @@ export class HackView {
     right.append(netmapBox)
     right.append(txt('div', 'netmap-hint', 'КЛИК ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА'))
 
-    body.append(left, right)
+    cols.append(left, right)
   }
 
   private targetSuffix(): string {
@@ -983,8 +988,6 @@ export class HackView {
     top.append(value)
     const canvas = el('canvas')
     canvas.className = 'spark-cv'
-    canvas.style.width = `${SPARK_W}px`
-    canvas.style.height = `${SPARK_H}px`
     wrap.append(top, canvas)
     this.sparkRefs.push({ canvas, value, key })
     return wrap
