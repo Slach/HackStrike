@@ -594,9 +594,15 @@ export class HackView {
       const pane0 = this.panes[this.activePane]
       const tab0 = this.tabs.find((t) => t.key === pane0?.tabKey)
       const dev0 = tab0?.dev !== null && tab0?.dev !== undefined ? this.devices.get(tab0.dev) : undefined
-      if (dev0 !== undefined && (dev0.kind === 'door' || dev0.kind === 'gas' || dev0.kind === 'valve') && dev0.owner === this.myId) {
+      if (dev0 !== undefined && (dev0.kind === 'door' || dev0.kind === 'gas' || dev0.kind === 'valve')) {
         e.preventDefault()
-        this.deps.send({ t: 'ctrl', dev: dev0.id, action: 'toggle' })
+        if (dev0.owner === this.myId) {
+          this.deps.send({ t: 'ctrl', dev: dev0.id, action: 'toggle' })
+        } else {
+          // Не-владелец: молчаливый пробел выглядел как «клавиша мертва»
+          // (плейтест M4) — явно говорим, почему и что делать.
+          this.toast(`${dev0.id.toUpperCase()}: НЕ ВЛАДЕЛЕЦ — НУЖЕН TROJAN`)
+        }
       }
       return
     }
