@@ -1497,12 +1497,14 @@
         touch-action: none;
         border-radius: 50%;
         background: radial-gradient(circle, rgba(2, 18, 10, 0.78), rgba(2, 18, 10, 0.88));
-        border: 1px solid rgba(55, 255, 155, 0.24);
+        border: 2px solid rgba(55, 255, 155, 0.6);
+        box-shadow: 0 0 10px rgba(55, 255, 155, 0.22);
       }
       .tc-seg {
         position: absolute;
-        color: rgba(170, 255, 210, 0.5);
-        font-size: 13px;
+        color: rgba(190, 255, 226, 0.85);
+        font-size: 14px;
+        text-shadow: 0 0 6px rgba(55, 255, 155, 0.55);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1513,14 +1515,14 @@
       .tc-seg.right { right: 4px; top: 0; bottom: 0; width: 30px; }
       .tc-seg.hot {
         color: #37ff9b;
-        background: rgba(55, 255, 155, 0.16);
+        background: rgba(55, 255, 155, 0.3);
       }
       .tc-hub {
         position: absolute;
         left: 50%; top: 50%;
         width: 30%; height: 30%;
         transform: translate(-50%, -50%);
-        border: 1px solid rgba(55, 255, 155, 0.3);
+        border: 2px solid rgba(55, 255, 155, 0.45);
         border-radius: 50%;
       }
       .tc-right {
@@ -1552,17 +1554,19 @@
         width: 112px; height: 112px;
         border-radius: 50%;
         background: radial-gradient(circle, rgba(2, 18, 10, 0.75), rgba(2, 18, 10, 0.86));
+        border: 2px solid rgba(55, 255, 155, 0.6);
+        box-shadow: 0 0 10px rgba(55, 255, 155, 0.22);
       }
       .tc-look-ring {
         position: absolute;
         inset: 12%;
-        border: 1px solid rgba(55, 255, 155, 0.28);
+        border: 2px solid rgba(55, 255, 155, 0.55);
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: rgba(170, 255, 210, 0.4);
-        font-size: 9px;
+        color: rgba(190, 255, 226, 0.8);
+        font-size: 10px;
         letter-spacing: 2px;
       }
       .tc-look.aiming .tc-look-ring {

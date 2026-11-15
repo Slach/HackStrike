@@ -112,12 +112,16 @@ export class TouchOverlay {
     this.pad.className = 'tc-pad'
     const up = document.createElement('div')
     up.className = 'tc-seg up'
+    up.textContent = '\u25B2'
     const down = document.createElement('div')
     down.className = 'tc-seg down'
+    down.textContent = '\u25BC'
     const left = document.createElement('div')
     left.className = 'tc-seg left'
+    left.textContent = '\u25C0'
     const right = document.createElement('div')
     right.className = 'tc-seg right'
+    right.textContent = '\u25B6'
     const hub = document.createElement('div')
     hub.className = 'tc-hub'
     this.segs = { up, down, left, right }
