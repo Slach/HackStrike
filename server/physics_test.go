@@ -157,6 +157,48 @@ func TestClimbSEStaircase(t *testing.T) {
 	}
 }
 
+// Проходимость СВ-лестницы (M4/M5, развёртка карты): ступени 0.5 м, подъём
+// к -X (зеркало SE по z=32), проём в плите террасы x48.2..53.5/z2..4.
+func TestClimbNEStaircase(t *testing.T) {
+	m, err := parseGameMap(map1JSON)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pl := &player{cls: "assault", pos: vec3{59.5, 1, 3}, grounded: true}
+	pl.yaw = -math.Pi / 2 // вперёд = -X, к лестнице
+	pl.keys.w = true
+
+	runTicks(m, pl, 150)
+
+	if got := pl.pos[1]; math.Abs(got-8) > 0.01 {
+		t.Fatalf("should reach the 2nd floor (y=8) via NE stairs, y=%v pos=%v", got, pl.pos)
+	}
+	if got := pl.pos[0]; got > 48 {
+		t.Fatalf("should have left the stairwell onto the terrace, x=%v", got)
+	}
+}
+
+// Проходимость ЮЗ-лестницы (зеркало NW по z=32): подъём к +X, проём
+// x10.5..15.8/z60..62.
+func TestClimbSWStaircase(t *testing.T) {
+	m, err := parseGameMap(map1JSON)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	pl := &player{cls: "assault", pos: vec3{4.5, 1, 61}, grounded: true}
+	pl.yaw = math.Pi / 2 // вперёд = +X, к лестнице
+	pl.keys.w = true
+
+	runTicks(m, pl, 150)
+
+	if got := pl.pos[1]; math.Abs(got-8) > 0.01 {
+		t.Fatalf("should reach the 2nd floor (y=8) via SW stairs, y=%v pos=%v", got, pl.pos)
+	}
+	if got := pl.pos[0]; got < 16 {
+		t.Fatalf("should have left the stairwell onto the terrace, x=%v", got)
+	}
+}
+
 // wishDir: WASD относительно yaw (LH: yaw 0 = +Z, yaw pi/2 = +X).
 func TestWishDir(t *testing.T) {
 	cases := []struct {
