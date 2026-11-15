@@ -1105,8 +1105,8 @@ export class HackView {
 
   private ownerColor(owner: number | null): string {
     if (owner === null) return '#7d8f85' // нейтральный серый
-    if (owner === this.myId) return '#37ff9b'
-    return this.deps.teamOf(owner) === 1 ? '#ff4dd2' : '#37ff9b'
+    if (owner === this.myId) return '#ffffff'
+    return this.deps.teamOf(owner) === this.deps.teamOf(this.myId ?? -1) ? '#ffffff' : '#ff4d5e'
   }
 
   /** Firewall чей (§13.5): свой / союзный / чужой — подпись бейджа. */
@@ -1116,11 +1116,11 @@ export class HackView {
     return myTeam !== null && this.deps.teamOf(by) === myTeam ? 'СОЮЗНИК' : `ВРАГ #${by}`
   }
 
-  /** Цвет бейджа/ореола firewall (§13.5): свой/союзный голубой, чужой маджента. */
+  /** Цвет бейджа/ореола firewall (§13.5): свой/союзный голубой, чужой красный. */
   private fwColor(by: number): string {
     if (by === this.myId) return '#5fd7ff'
     const myTeam = this.myId !== null ? this.deps.teamOf(this.myId) : null
-    return myTeam !== null && this.deps.teamOf(by) === myTeam ? '#5fd7ff' : '#ff4dd2'
+    return myTeam !== null && this.deps.teamOf(by) === myTeam ? '#5fd7ff' : '#ff4d5e'
   }
 
   private render(): void {
@@ -1534,7 +1534,7 @@ export class HackView {
   private buildCamRow(s: CamSeen, cam: ScanDevice | undefined, prev: CamSeen | undefined): HTMLElement {
     const row = el('div', 'cam-row')
     const name = txt('span', 'cam-name', s.name)
-    name.style.color = s.team === 1 ? '#ff4dd2' : '#37ff9b'
+    name.style.color = s.team === 1 ? '#ff4d5e' : '#ffffff'
     row.append(name)
     row.append(txt('span', 'cam-cls', s.cls.toUpperCase()))
     if (cam !== undefined) {
@@ -1601,7 +1601,7 @@ export class HackView {
       row.append(txt('span', 'watch-log-tick', `T${e.tick}`))
       row.append(txt('span', 'watch-log-ev', this.evText(e.ev, e.prog)))
       const name = txt('span', 'watch-log-who', this.logWhoName(e.who))
-      name.style.color = this.deps.teamOf(e.who) === 1 ? '#ff4dd2' : '#37ff9b'
+      name.style.color = this.deps.teamOf(e.who) === 1 ? '#ff4d5e' : '#ffffff'
       row.append(name)
       list.append(row)
     }
@@ -1628,7 +1628,7 @@ export class HackView {
       for (const w of who) {
         const row = el('div', 'watch-radar-row')
         const name = txt('span', 'watch-radar-name', w.name)
-        name.style.color = w.team === 1 ? '#ff4dd2' : '#37ff9b'
+        name.style.color = w.team === 1 ? '#ff4d5e' : '#ffffff'
         row.append(name)
         row.append(txt('span', 'watch-radar-cls', w.cls.toUpperCase()))
         row.append(txt('span', 'watch-radar-host', `ХОСТ ${w.host.toUpperCase()}`))

@@ -131,7 +131,7 @@ function proceduralNetmap(w: number, h: number): HTMLCanvasElement {
     ctx.lineTo(w, y)
     ctx.stroke()
   }
-  const colors = ['#37ff9b', '#ff59c7', '#37d6ff']
+  const colors = ['#37ff9b', '#f2f2f2', '#37d6ff']
   let seed = 42
   const rnd = (): number => {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff
@@ -700,7 +700,7 @@ export class Hud {
     this.el.scope.classList.toggle('hidden', !on)
   }
 
-  /** Own team's frags get a solid team-color chip: white on green/magenta. */
+  /** Own team's frags get a solid team-identity chip (WhiteHat/BlackHat). */
   setTeam(team: number): void {
     this.el.score0.classList.toggle('mine', team === 0)
     this.el.score1.classList.toggle('mine', team === 1)
@@ -708,7 +708,8 @@ export class Hud {
 
   private rosterSig = ''
 
-  /** Team rosters under each score: names in team colors; own name bold. */
+  /** Team rosters under each score: t0/t1 класс на каждом имени (WhiteHat —
+   *  белое, BlackHat — чёрное на белой плашке); свой ник — жирным. */
   setRoster(players: readonly SnapPlayer[], myId: number | null): void {
     const sig = players.map((p) => `${p.team}:${p.name}:${p.alive ? 1 : 0}`).join('|')
     if (sig === this.rosterSig) return
@@ -719,6 +720,7 @@ export class Hud {
       for (const p of players) {
         if (p.team !== team) continue
         const s = document.createElement('span')
+        s.classList.add(`t${team}`)
         if (p.id === myId) {
           s.className = 'me'
           s.textContent = `▸ ${p.name}`

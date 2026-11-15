@@ -366,8 +366,10 @@ export class PropsView {
       cam.led.emissiveColor = new Color3(0.3, 0.38, 0.34) // нейтральная: тускло-серый
       return
     }
+    // LED владения: своё — белый (WhiteHat/союзник), чужое — красный
+    // (чёрный LED не виден на тёмном корпусе камеры).
     cam.led.emissiveColor =
-      this.ownerState(cam.owner) === 'own' ? new Color3(0.22, 1.0, 0.61) : new Color3(1.0, 0.3, 0.82)
+      this.ownerState(cam.owner) === 'own' ? new Color3(1, 1, 1) : new Color3(1.0, 0.3, 0.37)
   }
 
   /** Газ (M4 §14.2): AABB-объём ловушки — полупрозрачный fill + каркас из

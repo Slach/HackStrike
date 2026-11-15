@@ -6,7 +6,7 @@
 // M3 status halos over the physical map — hacker only, key C toggles it.
 
 import type { MapWorld, WallRect } from './map'
-import { teamCss } from './players'
+import { teamCss, teamEdgeCss } from './players'
 
 export interface MiniAlly {
   x: number
@@ -117,11 +117,15 @@ export class Minimap {
     if (cyber !== null) this.drawCyberLinks(cyber)
     this.drawProps(props)
     if (cyber !== null) this.drawCyberStatus(cyber)
+    // Союзники — заливка цветом команды + контрастная обводка (BlackHat —
+    // чёрный дот с белой обводкой, иначе не виден на тёмной карте).
     ctx.fillStyle = teamCss(myTeam)
+    ctx.strokeStyle = teamEdgeCss(myTeam)
     for (const a of allies) {
       ctx.beginPath()
       ctx.arc(this.px(a.x), this.pz(a.z), 3, 0, Math.PI * 2)
       ctx.fill()
+      ctx.stroke()
     }
     if (me !== null) {
       ctx.save()
@@ -291,7 +295,7 @@ export class Minimap {
       const y = this.pz(d.z)
       if (d.owner !== null) {
         ctx.strokeStyle =
-          d.owner === cyber.myId || cyber.teamOf(d.owner) === cyber.ownTeam ? '#37ff9b' : '#ff4dd2'
+          d.owner === cyber.myId || cyber.teamOf(d.owner) === cyber.ownTeam ? '#ffffff' : '#ff4d5e'
         ctx.lineWidth = d.owner === cyber.myId ? 2.5 : 2
         ctx.setLineDash([])
         ctx.beginPath()
@@ -314,7 +318,7 @@ export class Minimap {
         const by = d.firewalledBy ?? null
         const own =
           by !== null && (by === cyber.myId || (cyber.teamOf(by) !== null && cyber.teamOf(by) === cyber.ownTeam))
-        const color = own ? '#5fd7ff' : '#ff4dd2'
+        const color = own ? '#5fd7ff' : '#ff4d5e'
         halo(9, color, [2, 4])
         ctx.fillStyle = color
         ctx.font = '6px monospace'

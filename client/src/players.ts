@@ -6,7 +6,7 @@ import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder'
 import { Mesh } from '@babylonjs/core/Meshes/mesh'
 import { StandardMaterial } from '@babylonjs/core/Materials/standardMaterial'
 import { DynamicTexture } from '@babylonjs/core/Materials/Textures/dynamicTexture'
-import { Color3 } from '@babylonjs/core/Maths/math.color'
+import { Color3, Color4 } from '@babylonjs/core/Maths/math.color'
 import type { Scene } from '@babylonjs/core/scene'
 import { CLASS_BY_KEY } from './classes'
 import type { SnapPlayer, Snapshot } from './net'
@@ -14,7 +14,11 @@ import type { SnapPlayer, Snapshot } from './net'
 export const EYE_HEIGHT = 1.6
 export const PLAYER_HALF_WIDTH = 0.35 // client-side aim gate, slightly forgiving
 export const PLAYER_HEIGHT = 1.8
-export const TEAM_CSS: readonly [string, string] = ['#37ff9b', '#ff4dd2']
+// Команды — монохром: WhiteHat (0) — белый, BlackHat (1) — чёрный.
+// TEAM_CSS — цвет заливки/идентичности; на тёмных фонах чёрный всегда
+// paired с белой обводкой (грани бокса, контур дота, плашка неймплейта).
+export const TEAM_CSS: readonly [string, string] = ['#ffffff', '#0b0b0b']
+export const TEAM_EDGE_CSS: readonly [string, string] = ['#000000', '#ffffff']
 
 const TAU = Math.PI * 2
 
@@ -22,8 +26,12 @@ export function teamCss(team: number): string {
   return team === 1 ? TEAM_CSS[1] : TEAM_CSS[0]
 }
 
+export function teamEdgeCss(team: number): string {
+  return team === 1 ? TEAM_EDGE_CSS[1] : TEAM_EDGE_CSS[0]
+}
+
 export function teamColor3(team: number): Color3 {
-  return team === 1 ? new Color3(1.0, 0.3, 0.82) : new Color3(0.22, 1.0, 0.61)
+  return team === 1 ? new Color3(0.043, 0.043, 0.043) : new Color3(1, 1, 1)
 }
 
 function lerpAngle(a: number, b: number, t: number): number {
@@ -168,11 +176,24 @@ export class PlayerViews {
     const maxHp = CLASS_BY_KEY[meta.cls].hp
     const ctx = v.plateTex.getContext() as unknown as CanvasRenderingContext2D
     ctx.clearRect(0, 0, 256, 64)
-    ctx.fillStyle = 'rgba(2,12,7,0.72)'
-    ctx.fillRect(0, 0, 256, 64)
+    // Плашка неймплейта — инверсная по команде: WhiteHat — белая с чёрным
+    // именем, BlackHat — чёрная с белым именем и белой обводкой.
+    if (meta.team === 1) {
+      ctx.fillStyle = 'rgba(6,6,6,0.88)'
+      ctx.fillRect(0, 0, 256, 64)
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'
+      ctx.lineWidth = 2
+      ctx.strokeRect(1, 1, 254, 62)
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.9)'
+      ctx.fillRect(0, 0, 256, 64)
+      ctx.strokeStyle = 'rgba(0,0,0,0.9)'
+      ctx.lineWidth = 2
+      ctx.strokeRect(1, 1, 254, 62)
+    }
     ctx.font = 'bold 30px monospace'
     ctx.textAlign = 'center'
-    ctx.fillStyle = teamCss(meta.team)
+    ctx.fillStyle = meta.team === 1 ? '#ffffff' : '#000000'
     ctx.fillText(meta.name, 128, 32)
     const frac = Math.max(0, Math.min(1, meta.hp / maxHp))
     ctx.fillStyle = 'rgba(0,0,0,0.6)'
@@ -191,6 +212,12 @@ export class PlayerViews {
       this.scene,
     )
     body.material = this.bodyMats[meta.team === 1 ? 1 : 0]
+    // Грани бокса — контрастным цветом команды: WhiteHat — белое тело с
+    // чёрными рёбрами, BlackHat — чёрное с белыми (иначе чёрный не виден).
+    body.enableEdgesRendering()
+    body.edgesWidth = 3
+    body.edgesColor =
+      meta.team === 1 ? new Color4(1, 1, 1, 1) : new Color4(0, 0, 0, 1)
     body.isPickable = false
 
     const plate = MeshBuilder.CreatePlane(`p${id}.plate`, { width: 1.8, height: 0.45 }, this.scene)
