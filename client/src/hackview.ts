@@ -691,8 +691,11 @@ export class HackView {
     const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
     const dq = (tokens[0] ?? '').toLowerCase()
     const pq = (tokens[1] ?? '').toLowerCase()
+    // Хвостовой пробел после устройства = перешли ко второму токену
+    // (иначе «cam1␣» после Tab опять показывает список устройств).
+    const secondTok = tokens.length > 1 || /\s$/.test(pal.input.value)
     const cands: PalCand[] = []
-    this.paletteTok = tokens.length > 1 ? 1 : 0
+    this.paletteTok = secondTok ? 1 : 0
     if (this.paletteTok === 0) {
       // Первый токен: устройства (только из текущего скана), потом программы.
       const devs = [...this.devices.values()]
@@ -713,11 +716,15 @@ export class HackView {
         }
       }
     } else {
-      // Второй токен: программы поверх уже отфильтрованного устройства.
+      // Второй токен: ВСЕ программы для выбранного устройства, с подсказкой
+      // готовности (плейтест M3: «нажал CAM1 + Tab — покажи что можно»).
+      const dev = [...this.devices.values()].find((d) => this.devMatch(d, dq))
       for (const p of PALETTE_PROGS) {
-        if (p.includes(pq)) {
-          cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
-        }
+        if (!p.includes(pq)) continue
+        let hint = 'ГОТОВО'
+        if (p === 'portscan') hint = 'БЕЗ ЦЕЛИ'
+        else if (p === 'trojan' && dev !== undefined && !dev.vulned) hint = 'СНАЧАЛА VULNSCAN'
+        cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint })
       }
     }
     this.paletteCands = cands
