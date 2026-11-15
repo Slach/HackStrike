@@ -1640,6 +1640,19 @@ export class HackView {
       return svg
     }
 
+    // Проекция мировые XZ→экран. Multi-floor (M4 §13.3.1): узлы раскладываются
+    // по высотным полкам — нижний этаж внизу, верхние подняты на FLOOR_LIFT
+    // и сдвинуты вправо (ISO_X), каждая полка — полупрозрачная «этажерка» с
+    // подписью. Связи между полками (стояк s2→s3) — крутые голубые штрихи.
+    // Одноэтажная сеть = ровно прежняя проекция (L=0, Lift=0).
+    const levelOf = (y: number): number => (y < 4 ? 0 : y < 11 ? 1 : 2)
+    const levels = [...new Set(nodes.map((d) => levelOf(d.y)))].sort((a, b) => a - b)
+    const shelf = new Map<number, number>() // levelOf → индекс полки (0=низ)
+    levels.forEach((lv, i) => shelf.set(lv, i))
+    const L = levels.length - 1
+    const FLOOR_LIFT = 86
+    const ISO_X = L > 0 ? 26 : 0
+
     let minX = Number.POSITIVE_INFINITY
     let maxX = Number.NEGATIVE_INFINITY
     let minZ = Number.POSITIVE_INFINITY
@@ -1652,19 +1665,28 @@ export class HackView {
     }
     const spanX = Math.max(maxX - minX, 1)
     const spanZ = Math.max(maxZ - minZ, 1)
-    const k = Math.min((W - PAD * 2) / spanX, (H - PAD * 2 - 20) / spanZ)
+    const availH = H - PAD * 2 - 20 - L * FLOOR_LIFT
+    const k = Math.min((W - PAD * 2) / spanX, availH / spanZ)
     const offX = (W - PAD * 2 - spanX * k) / 2
-    const offZ = (H - PAD * 2 - 20 - spanZ * k) / 2
-    const px = (x: number): number => PAD + offX + (x - minX) * k
-    const py = (z: number): number => PAD + 10 + offZ + (z - minZ) * k
+    const offZ = (availH - spanZ * k) / 2
+    const screenFor = (d: ScanDevice): { x: number; y: number } => {
+      const s = shelf.get(levelOf(d.y)) ?? 0
+      return {
+        x: PAD + offX + (d.x - minX) * k + ISO_X * (L - s),
+        y: PAD + 10 + offZ + (d.z - minZ) * k + (L - s) * FLOOR_LIFT,
+      }
+    }
 
     // Declutter: мировые координаты дают наложения (в m1 cam1/d1 и cam2/d2
-    // проектируются в ~16 px друг от друга). Лёгкое раздвижение пар ближе
-    // MIN_DIST — 2 прохода, без физики.
+    // проектируются в ~16 px друг от друга, а вторые этажи после подъёма —
+    // тем более). Раздвижение пар ближе MIN_DIST до сходимости (плейтест M4:
+    // s3 налезал на s1/s2) + кламп внутрь viewBox, чтобы толчок не выносил
+    // узлы за край.
     const pos = new Map<string, { x: number; y: number }>()
-    for (const d of nodes) pos.set(d.id, { x: px(d.x), y: py(d.z) })
+    for (const d of nodes) pos.set(d.id, screenFor(d))
     const MIN_DIST = 30
-    for (let pass = 0; pass < 2; pass++) {
+    for (let pass = 0; pass < 16; pass++) {
+      let maxPush = 0
       for (let i = 0; i < nodes.length; i++) {
         for (let j = i + 1; j < nodes.length; j++) {
           const a = pos.get(nodes[i].id)
@@ -1682,15 +1704,61 @@ export class HackView {
             dy /= d
           }
           const push = (MIN_DIST - d) / 2 + 0.5
+          maxPush = Math.max(maxPush, push)
           a.x -= dx * push
           a.y -= dy * push
           b.x += dx * push
           b.y += dy * push
         }
       }
+      if (maxPush < 0.5) break
+    }
+    for (const p of pos.values()) {
+      p.x = Math.max(14, Math.min(W - 14, p.x))
+      p.y = Math.max(22, Math.min(H - 12, p.y))
     }
 
-    // связи (дедуп по паре); координаты — после declutter
+    // Полки этажей: прямоугольник-подложка по bbox узлов уровня + подпись.
+    // Рисуем до связей/узлов — фон.
+    if (L > 0) {
+      for (const lv of levels) {
+        let bx0 = Number.POSITIVE_INFINITY
+        let by0 = Number.POSITIVE_INFINITY
+        let bx1 = Number.NEGATIVE_INFINITY
+        let by1 = Number.NEGATIVE_INFINITY
+        for (const d of nodes) {
+          if (levelOf(d.y) !== lv) continue
+          const p = pos.get(d.id)
+          if (p === undefined) continue
+          bx0 = Math.min(bx0, p.x)
+          by0 = Math.min(by0, p.y)
+          bx1 = Math.max(bx1, p.x)
+          by1 = Math.max(by1, p.y)
+        }
+        if (!Number.isFinite(bx0)) continue
+        const r = svgEl('rect')
+        r.setAttribute('x', String(bx0 - 22 - ISO_X))
+        r.setAttribute('y', String(by0 - 24))
+        r.setAttribute('width', String(bx1 - bx0 + 44 + ISO_X))
+        r.setAttribute('height', String(by1 - by0 + 52))
+        r.setAttribute('rx', '8')
+        r.setAttribute('fill', 'rgba(55,255,155,0.03)')
+        r.setAttribute('stroke', 'rgba(55,255,155,0.28)')
+        r.setAttribute('stroke-dasharray', '3 5')
+        svg.append(r)
+        const t = svgEl('text')
+        t.setAttribute('x', String(bx0 - 14 - ISO_X))
+        t.setAttribute('y', String(by0 - 12))
+        t.setAttribute('fill', '#4fae8b')
+        t.setAttribute('font-size', '9')
+        t.textContent = `Э${lv + 1}`
+        svg.append(t)
+      }
+    }
+
+    // связи (дедуп по паре); координаты — после declutter. Связь между
+    // полками (стояк c9 s2→s3) — отдельный голубой пунктир: читается как
+    // «сквозь перекрытие», а не как соседство на плане (§13.3.1).
     const seen = new Set<string>()
     const drawLink = (a: ScanDevice, b: ScanDevice): void => {
       const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
@@ -1699,6 +1767,16 @@ export class HackView {
       const pa = pos.get(a.id)
       const pb = pos.get(b.id)
       if (pa === undefined || pb === undefined) return
+      if (levelOf(a.y) !== levelOf(b.y)) {
+        const l = svgEl('line')
+        l.setAttribute('x1', String(pa.x))
+        l.setAttribute('y1', String(pa.y))
+        l.setAttribute('x2', String(pb.x))
+        l.setAttribute('y2', String(pb.y))
+        l.setAttribute('class', 'svg-link svg-riser')
+        svg.append(l)
+        return
+      }
       const wireless = a.kind === 'radio' || b.kind === 'radio'
       line(pa.x, pa.y, pb.x, pb.y, wireless ? 'svg-link svg-wireless' : 'svg-link')
     }
