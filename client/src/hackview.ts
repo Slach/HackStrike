@@ -815,13 +815,14 @@ export class HackView {
     const progs = PALETTE_PROGS.filter((p) => p.startsWith(pq.toLowerCase()))
     const prog = progs.find((p) => p === pq.toLowerCase()) ?? progs[0]
     if (prog === undefined) {
-      // Программы нет, но устройство есть и оно ещё не в строке как цель —
-      // выбираем цель и остаёмся в палитре (пользователь введёт программу).
+      // Программы нет, но устройство есть: цель выбрана — палитру закрываем
+      // и переключаемся на панель деки, дальше программы доступны хоткеями
+      // 1–6 (плейтест M3: «/cam1 + Enter → жми 1 2 3…»).
       if (dev !== null && tokens.length <= 1) {
         this.target = dev
-        pal.input.value = `${dev} `
-        this.paletteSel = -1
-        this.updatePalette()
+        this.panes[this.activePane].tabKey = 'deck'
+        this.closePalette()
+        this.toast(`ЦЕЛЬ: ${dev.toUpperCase()} — ХОТКЕИ 1–6`)
         this.schedule(() => this.render())
         return
       }
