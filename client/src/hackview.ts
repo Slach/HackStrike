@@ -1,9 +1,10 @@
 // Hacker view (M2, GDD §12.6): full-screen DOM overlay in CRT-terminal
 // style, visible between "jackin" and "jackout"/death. Tiled WM of panels:
-// F1 = deck, F2+ = controlled devices; CMD/CTRL+T new tab, CMD/CTRL+W close,
-// CMD/CTRL+1..9 / F1..F9 switch, CMD/CTRL+H/V split (up to 2×2). The server
-// stays the single source of truth — this UI only renders deck/scan/snap
-// data and sends run/ctrl intents.
+// F1 = deck, F2+ = controlled devices; plain T new tab, W close, H/V split
+// (up to 2×2), F1..F9 switch (modifier variants are reserved by the browser
+// and never reach the page — GDD §12.1/§12.6). The server stays the single
+// source of truth — this UI only renders deck/scan/snap data and sends
+// run/ctrl intents.
 //
 // Rendering split: render() rebuilds the structure (rare — tab/pane/scan
 // changes); deck samples (2 Hz) and door states update existing nodes in
@@ -459,6 +460,11 @@ export class HackView {
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (!this._active) return
+    // Автоповтор не исполняем: удержание plain W закрывало бы табы один за
+    // другим, удержание Space — спамил бы TOGGLE двери, Enter в палитре —
+    // перезапускал программы. Редактирование текста в палитре не страдает:
+    // там повтор — дефолт браузера, а не наш обработчик.
+    if (e.repeat) return
     const mod = e.ctrlKey || e.metaKey
     // CTRL/CMD+ALT+DEL перехватывает main.ts (шлёт jackout) — здесь только
     // не отдаём комбинацию браузеру повторно.
@@ -478,7 +484,12 @@ export class HackView {
       this.schedule(() => this.render())
       return
     }
-    if (mod && !e.altKey) {
+    // WM-хоткеи — PLAIN T/W/H/V (ГДД §12.1/§12.6, плейтест M3): Cmd/Ctrl+T/W
+    // резервирует браузер (новая вкладка / закрытие вкладки), до страницы не
+    // доходят — поэтому модификаторный вариант был мёртв физически. Plain W/H/V
+    // не конфликтуют с FPS-управлением: в деке controls.frozen, при джек-ауте
+    // клавиши сбрасываются (resetKeys). Пробел/цифры палитры — ниже.
+    if (!mod && !e.altKey) {
       if (e.code === 'KeyT') {
         e.preventDefault()
         this.menuOpen = !this.menuOpen
@@ -500,14 +511,13 @@ export class HackView {
         this.split('v')
         return
       }
-      const d = keyIndex(e.code, 'Digit')
-      if (d !== null && d < this.tabs.length) {
-        e.preventDefault()
-        this.panes[this.activePane].tabKey = this.tabs[d].key
-        this.schedule(() => this.render())
-      }
-      return
     }
+    // Ctrl/Cmd+любое (кроме тройки, отобранной выше) — территория браузера:
+    // не перехватываем и не исполняем (как раньше: мода не доходит до F/Space/
+    // программ ниже).
+    if (mod) return
+    // Переключение табов — F1..F9. Цифры с Ctrl/Cmd тоже зарезервированы
+    // браузером (переключение вкладок), plain-цифры = программы деки ниже.
     const f = keyIndex(e.code, 'F')
     if (f !== null) {
       e.preventDefault() // F1 иначе открывает помощь браузера
@@ -949,7 +959,7 @@ export class HackView {
 
     const foot = el('div', 'hv-foot')
     foot.textContent =
-      'T ТАБ · W ЗАКРЫТЬ · ЦИФРЫ / F1..F9 ПЕРЕКЛЮЧИТЬ · H/V СПЛИТ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
+      'T ТАБ · W ЗАКРЫТЬ · H/V СПЛИТ · F1..F9 ПЕРЕКЛЮЧИТЬ · 1–6 ПРОГРАММЫ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
     main.append(foot)
 
     if (this.menuOpen) main.append(this.buildMenu())
