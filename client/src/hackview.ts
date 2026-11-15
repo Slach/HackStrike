@@ -490,6 +490,18 @@ export class HackView {
       }
       return
     }
+    // ПРОБЕЛЬ на табе двери-владения = TOGGLE (плейтест M3) — как кнопка,
+    // но с клавиатуры. Сервер валидирует ctrl, это только UX.
+    if (e.code === 'Space') {
+      const pane0 = this.panes[this.activePane]
+      const tab0 = this.tabs.find((t) => t.key === pane0?.tabKey)
+      const dev0 = tab0?.dev !== null && tab0?.dev !== undefined ? this.devices.get(tab0.dev) : undefined
+      if (dev0 !== undefined && dev0.kind === 'door' && dev0.owner === this.myId) {
+        e.preventDefault()
+        this.deps.send({ t: 'ctrl', dev: dev0.id, action: 'toggle' })
+      }
+      return
+    }
     // Хоткеи программ — пока активна панель деки (ГДД §12.6).
     const pane = this.panes[this.activePane]
     if (pane === undefined || pane.tabKey !== 'deck') return
@@ -1013,7 +1025,7 @@ export class HackView {
       wrap.append(status)
       wrap.append(txt('div', 'door-owner', `ВЛАДЕЛЕЦ: ${this.ownerLabel(d.owner)}`))
       const btn = el('button', 'hv-btn door-toggle')
-      btn.textContent = 'TOGGLE'
+      btn.textContent = d.owner === this.myId ? 'TOGGLE [ПРОБЕЛ]' : 'TOGGLE'
       btn.disabled = d.owner !== this.myId // ctrl валидирует сервер, это только UX
       btn.addEventListener('click', () => this.deps.send({ t: 'ctrl', dev, action: 'toggle' }))
       wrap.append(btn)
