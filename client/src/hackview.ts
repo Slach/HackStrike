@@ -899,7 +899,7 @@ export class HackView {
 
     const foot = el('div', 'hv-foot')
     foot.textContent =
-      'T ТАБ · W ЗАКРЫТЬ · ЦИФРЫ / F1..F9 ПЕРЕКЛЮЧИТЬ · H/V СПЛИТ · / ПАЛИТРА · ESC ВЫХОД'
+      'T ТАБ · W ЗАКРЫТЬ · ЦИФРЫ / F1..F9 ПЕРЕКЛЮЧИТЬ · H/V СПЛИТ · / ПАЛИТРА · CTRL+ALT+DEL ДЖЕК-АУТ'
     main.append(foot)
 
     if (this.menuOpen) main.append(this.buildMenu())
