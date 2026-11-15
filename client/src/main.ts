@@ -54,6 +54,10 @@ const controls = new Controls(canvas)
 // Touch-оверлей meatview (ГДД §15.1) — только при детекте пальца: крестина
 // движения слева, круг прицела справа, ДЕЙСТВИЕ=Space. --kb для деки (§15.2).
 let touch: TouchOverlay | null = null
+// FPS-чип вместо debug-панели на тапе (ГДД §15.9): #debug скрыт CSS, а лёгкая
+// телеметрия кадра остаётся. Пишется раз в секунду — дешевле каждого кадра.
+const fpsChip = IS_TOUCH ? document.getElementById('fpsChip') : null
+let lastFpsAt = 0
 if (IS_TOUCH) {
   document.body.classList.add('touch')
   startKeyboardTracker()
@@ -617,6 +621,10 @@ engine.runRenderLoop(() => {
   }
 
   hud.tick(serverNow)
+  if (fpsChip !== null && nowSec - lastFpsAt >= 1) {
+    lastFpsAt = nowSec
+    fpsChip.textContent = `${Math.round(engine.getFps())} FPS`
+  }
   scene.render()
 })
 
