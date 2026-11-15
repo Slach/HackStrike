@@ -3,6 +3,13 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- PWA standalone на iOS: до 16.4 понимает только legacy-тег (modern
+         display-mode: standalone работает лишь с 16.4) — без него ярлык с
+         домашнего экрана открывается закладкой в Safari (ГДД §15.4) -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="HACKSTRIKE" />
     <title>HACKSTRIKE</title>
     <style>
       :root {
