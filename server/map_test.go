@@ -79,6 +79,102 @@ func TestMapGasValidation(t *testing.T) {
 	}
 }
 
+// lavaMapJSON — базовая мини-карта для валидации kind `lava` (§14.6).
+func lavaMapJSON(prop string) string {
+	return `{"name":"l","bounds":[40,16,40],
+	 "colliders":[{"min":[0,0,0],"max":[40,1,40],"kind":"floor"},
+	              {"min":[0,1,37],"max":[0.7,1.5,39],"kind":"stair"}],
+	 "spawns":{"0":[[5,1,5]],"1":[[35,1,35]]},
+	 "props":[{"kind":"switch","id":"s1","pos":[5,1,15]},` + prop + `]}`
+}
+
+// §14.6: kind `lava` — физическая ловушка без сети: size [w,h,d] > 0
+// обязателен, `to`/`from` запрещены (не устройство); кабель к лаве недопустим.
+// m1 несёт ровно 3 лужи, зеркальная пара lv1/lv2 — точное отражение x′=64−x.
+func TestMapLavaValidation(t *testing.T) {
+	if _, err := parseGameMap([]byte(lavaMapJSON(
+		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4]}`))); err != nil {
+		t.Fatalf("valid lava must parse: %v", err)
+	}
+	if _, err := parseGameMap([]byte(lavaMapJSON(
+		`{"kind":"lava","id":"lv1","pos":[20,1.15,20]}`))); err == nil ||
+		!strings.Contains(err.Error(), "size") {
+		t.Fatalf("lava without size must be rejected, got %v", err)
+	}
+	if _, err := parseGameMap([]byte(lavaMapJSON(
+		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0,4]}`))); err == nil ||
+		!strings.Contains(err.Error(), "size") {
+		t.Fatalf("lava with zero size component must be rejected, got %v", err)
+	}
+	if _, err := parseGameMap([]byte(lavaMapJSON(
+		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"to":"s1"}`))); err == nil ||
+		!strings.Contains(err.Error(), "to/from") {
+		t.Fatalf("lava with to must be rejected as non-network, got %v", err)
+	}
+	if _, err := parseGameMap([]byte(lavaMapJSON(
+		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4],"from":"s1"}`))); err == nil ||
+		!strings.Contains(err.Error(), "to/from") {
+		t.Fatalf("lava with from must be rejected as non-network, got %v", err)
+	}
+	// Кабель к лаве — endpoint не устройство: ребро запрещено.
+	if _, err := parseGameMap([]byte(lavaMapJSON(
+		`{"kind":"lava","id":"lv1","pos":[20,1.15,20],"size":[4,0.3,4]},` +
+			`{"kind":"cable","id":"c9","from":"s1","to":"lv1"}`))); err == nil {
+		t.Fatalf("cable to lava must be rejected (not a network device)")
+	}
+
+	m := mustParseEmbeddedMap(t)
+	lv := map[string]mapProp{}
+	lavas := 0
+	for _, p := range m.props {
+		if p.Kind == "lava" {
+			lavas++
+			lv[p.ID] = p
+		}
+	}
+	if lavas != 3 || len(lv) != 3 {
+		t.Fatalf("m1 must carry exactly 3 lava pools lv1..lv3 (§14.6), got %d", lavas)
+	}
+	a, b, c := lv["lv1"], lv["lv2"], lv["lv3"]
+	if a.ID != "lv1" || b.ID != "lv2" || c.ID != "lv3" {
+		t.Fatalf("m1 lava ids must be lv1/lv2/lv3, got %v", lv)
+	}
+	// Зеркальная пара 1-го этажа: x′ = 64−x, size и z идентичны (§8-симметрия).
+	if b.Pos[0] != 64-a.Pos[0] || b.Pos[1] != a.Pos[1] || b.Pos[2] != a.Pos[2] ||
+		b.Size != a.Size {
+		t.Fatalf("lv2 must mirror lv1 across x=32 exactly: lv1=%v lv2=%v", a, b)
+	}
+	// Лужи стоят НА плите: нижняя грань пола 1 этажа = 1.0, террасы = 8.0
+	// (float-допуск: 1.15−0.3/2 не ровно 1.0 в двоичной арифметике).
+	for _, p := range []mapProp{a, b} {
+		if d := math.Abs(p.Pos[1] - p.Size[1]/2 - 1.0); d > 1e-9 {
+			t.Fatalf("ground pool %s must sit on floor top y=1, got bottom %v", p.ID, p.Pos[1]-p.Size[1]/2)
+		}
+	}
+	if d := math.Abs(c.Pos[1] - c.Size[1]/2 - 8.0); d > 1e-9 {
+		t.Fatalf("terrace pool lv3 must sit on slab top y=8, got bottom %v", c.Pos[1]-c.Size[1]/2)
+	}
+	// Ни одна лужа не пересекает не-floor коллайдер (пол под лужей — опора,
+	// пересечение ожидаемо; boundary-touch не считается, boxesOverlap строгая).
+	for _, p := range m.props {
+		if p.Kind != "lava" {
+			continue
+		}
+		box := aabb{
+			min: vec3{p.Pos[0] - p.Size[0]/2, p.Pos[1] - p.Size[1]/2, p.Pos[2] - p.Size[2]/2},
+			max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1]/2, p.Pos[2] + p.Size[2]/2},
+		}
+		for _, c := range m.Colliders {
+			if c.Kind == "floor" {
+				continue
+			}
+			if boxesOverlap(box, aabb{vec3(c.Min), vec3(c.Max)}) {
+				t.Fatalf("lava %s intersects %s collider %v..%v", p.ID, c.Kind, c.Min, c.Max)
+			}
+		}
+	}
+}
+
 // TestMapStairsAutostepable — все ступени не выше 0.5 (autostep 0.55).
 func TestMapStairsAutostepable(t *testing.T) {
 	m := mustParseEmbeddedMap(t)

@@ -44,6 +44,10 @@ const (
 	// пока клапан открыт; телеграф перед первым уроном после взвода.
 	gasDPS       = 8.0                     // HP/с
 	gasTelegraph = 1500 * time.Millisecond // мигание перед первым уроном
+
+	// M4 объект 2 «пол-лава» (§14.6, числа v0): постоянный DoT внутри AABB
+	// лужи, без телеграфа и сетевого цикла — лава «ландшафт», не устройство.
+	lavaDPS = 25.0 // HP/с
 )
 
 // deviceStats — железо устройств по kind (§12.2).
@@ -107,14 +111,23 @@ type cable struct {
 	wireless bool // радио-аплинк: на карте рисуется пунктиром
 }
 
+// lavaPool — пол-лава (§14.6): НЕ сетевое устройство — ни owner/vuln, ни
+// графа, ни snap-динамики (лава всегда активна, состояние не меняется).
+// Только AABB, по которому lavaTick считает урон.
+type lavaPool struct {
+	id  string
+	box aabb
+}
+
 // cyberState — граф сети; часть world.
 type cyberState struct {
 	devices map[string]*device
 	order   []string // порядок карты: стабильные снапшоты/сканы
 	cables  []*cable
 	doors   []*device
-	gases   []*device // §14.2: газовые ловушки (DoT-объёмы)
-	cameras []*device // §13.7: сенсоры наблюдения (лента владельцу)
+	gases   []*device   // §14.2: газовые ловушки (DoT-объёмы)
+	cameras []*device   // §13.7: сенсоры наблюдения (лента владельцу)
+	lavas   []*lavaPool // §14.6: лавовые лужи — вне графа, вне сканов, вне снапа
 }
 
 // buildCyber — устройства и кабели из пропсов карты. Радио-точка — точка
@@ -125,6 +138,19 @@ func buildCyber(m *gameMap) *cyberState {
 	cs := &cyberState{devices: make(map[string]*device)}
 	for _, p := range m.props {
 		if p.Kind == "cable" {
+			continue
+		}
+		if p.Kind == "lava" {
+			// §14.6: лава — физическая ловушка, не устройство: мимо device,
+			// cs.order, графа и снапа. pos — центр объёма по всем осям
+			// (конвенция газа).
+			cs.lavas = append(cs.lavas, &lavaPool{
+				id: p.ID,
+				box: aabb{
+					min: vec3{p.Pos[0] - p.Size[0]/2, p.Pos[1] - p.Size[1]/2, p.Pos[2] - p.Size[2]/2},
+					max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1]/2, p.Pos[2] + p.Size[2]/2},
+				},
+			})
 			continue
 		}
 		st := deviceStats[p.Kind]
@@ -960,6 +986,39 @@ func (w *world) gasTick(dt float64) {
 				w.envDamage(pl, whole, g.owner)
 			}
 			w.gasDebt[key] = debt
+		}
+	}
+}
+
+// lavaTick — §14.6: DoT лавовых луж, комната-горутина, сразу после gasTick.
+// Ключевое отличие от газа: лава — физическая ловушка без сети, всегда
+// активна, без телеграфа и arm-цикла. Игрок «в лаве», если его AABB ног
+// (playerBoxAt) пересекает объём пула по всем трём осям — с пола 1-го этажа
+// лужу террасы не «задеть» и наоборот. Шаг урона — как у газа: float-долг на
+// (пул, игрок), целые списания envDamage(owner=0) — килл чисто средовой
+// («ЛОВУШКА», счёт не двигается). Первый тик в пуле только сеет долг.
+func (w *world) lavaTick(dt float64) {
+	if len(w.cyber.lavas) == 0 {
+		return
+	}
+	for _, lv := range w.cyber.lavas {
+		for _, pl := range w.players {
+			if !pl.alive || !boxesOverlap(playerBoxAt(pl.pos), lv.box) {
+				continue
+			}
+			key := lavaDebtKey{pool: lv.id, pl: pl.id}
+			debt, ok := w.lavaDebt[key]
+			if !ok { // свежий ключ: первый тик внутри лужи не начисляет
+				w.lavaDebt[key] = lavaDPS * dt
+				continue
+			}
+			debt += lavaDPS * dt
+			whole := int(debt)
+			if whole > 0 {
+				debt -= float64(whole)
+				w.envDamage(pl, whole, 0) // owner=0: нейтральная среда (§14.6)
+			}
+			w.lavaDebt[key] = debt
 		}
 	}
 }

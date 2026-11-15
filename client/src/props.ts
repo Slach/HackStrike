@@ -1,5 +1,5 @@
 // M2 cyber props (GDD §12.3 / §12.6): terminals, radio points, switches,
-// doors and cables + M4 gas traps (§14.2). Geometry is built from the map
+// doors and cables + M4 gas traps (§14.2) + lava pools (§14.6). Geometry is built from the map
 // data (карта — данные), live state (door/gas-valve open) arrives via
 // snap.props. Collisions
 // are server-side — the door swing here is purely cosmetic, and the cables
@@ -16,7 +16,7 @@ import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import type { Scene } from '@babylonjs/core/scene'
 import type { GameMap } from './map'
 import type { MiniProp } from './minimap'
-import type { PropKind, SnapProp } from './net'
+import type { CyberKind, PropKind, SnapProp } from './net'
 
 const TERMINAL_RANGE = 2 // м, GDD §12.1
 const DEFAULT_RADIO_RANGE = 8
@@ -30,6 +30,11 @@ const GAS_FILL_ACTIVE = new Color3(120 / 255, 1, 80 / 255) // rgba(120,255,80) �
 const GAS_FRAME_IDLE = new Color3(55 / 255, 1, 155 / 255)
 const GAS_FRAME_TELEGRAPH = new Color3(1, 210 / 255, 55 / 255) // #ffd237 — палитровая жёлтая
 const GAS_FRAME_ACTIVE = new Color3(125 / 255, 1, 80 / 255) // #7dff50
+// Лава (M4 §14.6): физическая ловушка-ландшафт, не устройство. Пул — тонкий
+// бокс с эмиссивным оранжевым; «кипение» — дешёвая пульсация яркости 0.6 Гц.
+const LAVA_DEFAULT_SIZE: readonly [number, number, number] = [4, 0.3, 4] // фолбэк по m1: size обязателен на сервере
+const LAVA_BASE = new Color3(1, 106 / 255, 46 / 255) // #ff6a2e — базовое свечение, масштабируется пульсацией
+const LAVA_PULSE_HZ = 0.6
 
 export interface MapProp {
   kind: PropKind
@@ -41,7 +46,7 @@ export interface MapProp {
   points: [number, number, number][]
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'lava']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -66,9 +71,9 @@ function parseMapProps(raw: readonly unknown[]): MapProp[] {
       id,
       pos,
       radius: typeof r.radius === 'number' && r.radius > 0 ? r.radius : DEFAULT_RADIO_RANGE,
-      // у газа свой фолбэк-размер: карта обязана нести size (map_test), но
-      // дверь-дефолт дал бы плоский блин вместо камеры
-      size: tuple3(r.size) ?? (kind === 'gas' ? [...GAS_DEFAULT_SIZE] : [...DOOR_DEFAULT_SIZE]),
+      // у газа и лавы свои фолбэк-размеры: карта обязана нести size (map_test),
+      // но дверь-дефолт дал бы плоский блин вместо камеры и стойку вместо лужи
+      size: tuple3(r.size) ?? (kind === 'gas' ? [...GAS_DEFAULT_SIZE] : kind === 'lava' ? [...LAVA_DEFAULT_SIZE] : [...DOOR_DEFAULT_SIZE]),
       axis: r.axis === 'z' ? 'z' : 'x',
       points: Array.isArray(r.points)
         ? r.points.flatMap((p): [number, number, number][] => {
@@ -137,6 +142,20 @@ interface GasView {
   armedAt: number // ms производительного времени последнего наблюдаемого 0→1; 0 = не было
 }
 
+/** Лава (M4 §14.6): физическая ловушка-ландшафт, НЕ устройство. Состояния в
+ *  снапе нет (всегда активна), в scan/деке не появляется — view минимальный:
+ *  меш+материал ради дешёвой пульсации яркости в tick(). AABB нужен для ховера. */
+interface LavaView {
+  id: string
+  x: number
+  y: number // центр AABB — из pos пропа (низ лужи стоит на плите)
+  z: number
+  w: number
+  h: number
+  d: number
+  mat: StandardMaterial // эмиссив масштабируется в tick()
+}
+
 export class PropsView {
   private readonly terminals = new Map<string, SimpleProp>()
   private readonly radios = new Map<string, SimpleProp>()
@@ -145,6 +164,7 @@ export class PropsView {
   private readonly cables = new Map<string, CableView>()
   private readonly cameras = new Map<string, CameraView>()
   private readonly gases = new Map<string, GasView>()
+  private readonly lavas = new Map<string, LavaView>()
   private readonly mats: Record<string, StandardMaterial>
   private miniCache: MiniProp[] = []
   /** Владелец камеры — своя команда или чужая (ставит main.ts: знает myId и
@@ -203,6 +223,9 @@ export class PropsView {
           break
         case 'gas':
           view.buildGas(prop.id, prop.pos, prop.size)
+          break
+        case 'lava':
+          view.buildLava(prop.id, prop.pos, prop.size)
           break
       }
     }
@@ -383,6 +406,23 @@ export class PropsView {
     }
   }
 
+  /** Лава (M4 §14.6): тонкий светящийся пул на плите. Никакого состояния —
+   *  строится один раз из map props; урон/смерть — на сервере (invariant 1). */
+  private buildLava(id: string, pos: readonly [number, number, number], size: readonly [number, number, number]): void {
+    const [w, h, d] = size
+    const mat = new StandardMaterial(`mat.prop.${id}.lava`, this.scene)
+    mat.disableLighting = true
+    mat.emissiveColor = LAVA_BASE.clone() // clone: tick() мутирует цвет на месте, база общая
+    mat.diffuseColor = Color3.Black()
+    mat.specularColor = Color3.Black()
+    mat.alpha = 0.92 // лёгкая прозрачность: пол под лужей читается, край телеграфа виден
+    const pool = MeshBuilder.CreateBox(`prop.${id}.lava`, { width: w, height: h, depth: d }, this.scene)
+    pool.position.set(pos[0], pos[1], pos[2])
+    pool.material = mat
+    pool.isPickable = false // ховер-метка — через AABB в propAt, не пикинг меша
+    this.lavas.set(id, { id, x: pos[0], y: pos[1], z: pos[2], w, h, d, mat })
+  }
+
   private buildCable(id: string, points: readonly [number, number, number][]): void {
     if (points.length < 2) return
     const cable: CableView = { id, path: points.map((p) => new Vector3(...p)), meshes: [] }
@@ -498,6 +538,9 @@ export class PropsView {
     for (const g of this.gases.values()) {
       boxes.push({ label: `ГАЗ ${g.id.toUpperCase()} — КЛАПАН ${g.open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}`, min: [g.x - g.w / 2, g.y - g.h / 2, g.z - g.d / 2], max: [g.x + g.w / 2, g.y + g.h / 2, g.z + g.d / 2] })
     }
+    for (const l of this.lavas.values()) {
+      boxes.push({ label: `ЛАВА ${l.id.toUpperCase()}`, min: [l.x - l.w / 2, l.y - l.h / 2, l.z - l.d / 2], max: [l.x + l.w / 2, l.y + l.h / 2, l.z + l.d / 2] })
+    }
     for (const c of this.cameras.values()) {
       const state =
         c.owner === null
@@ -566,6 +609,14 @@ export class PropsView {
       const now = performance.now()
       for (const g of this.gases.values()) this.paintGas(g, now)
     }
+    // лава: дешёвое «кипение» — пульсация эмиссива 0.9..1.1 на ~0.6 Гц
+    // (ГДД §14.6). Одна фаза на все пулы: это ambient-телеграф, не состояние.
+    if (this.lavas.size > 0) {
+      const k = 1 + 0.1 * Math.sin((performance.now() / 1000) * Math.PI * 2 * LAVA_PULSE_HZ)
+      for (const l of this.lavas.values()) {
+        l.mat.emissiveColor.copyFromFloats(LAVA_BASE.r * k, LAVA_BASE.g * k, LAVA_BASE.b * k)
+      }
+    }
   }
 
   /** Ближайшая точка джек-ина для хакера (терминал 2 м / радио 8 м, GDD §12.1). */
@@ -613,7 +664,7 @@ export class PropsView {
     return best
   }
 
-  hostKind(id: string): PropKind | null {
+  hostKind(id: string): CyberKind | null {
     if (this.terminals.has(id)) return 'terminal'
     if (this.radios.has(id)) return 'radio'
     if (this.switches.has(id)) return 'switch'
@@ -627,7 +678,7 @@ export class PropsView {
 
   private known(id: string): boolean {
     return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id) ||
-      this.cameras.has(id) || this.gases.has(id)
+      this.cameras.has(id) || this.gases.has(id) || this.lavas.has(id)
   }
 
   private rebuildMini(): void {
@@ -642,6 +693,8 @@ export class PropsView {
     for (const g of this.gases.values()) {
       out.push({ x: g.x, z: g.z, kind: 'gas', open: g.open })
     }
+    // Лава сюда НЕ попадает (ГДД §14.6): статический ландшафт-опасность, не
+    // устройство — миникарта рисует только сеть и управляемые пропсы.
     this.miniCache = out
   }
 }

@@ -27,7 +27,13 @@ export type ClientMessage =
   | { t: 'run'; prog: RunProg; dev?: string }
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas'
+// 'lava' — статическая физическая ловушка (ГДД §14.6): приезжает только из
+// /api/map props, никогда из snap.props и из scan (не сетевое устройство).
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'lava'
+
+/** Сетевые устройства — всё, что бывает в scan/деке. Лава вычтена по построению:
+ *  она не сканируется и не взламывается (§14.6), и в типе деки её быть не может. */
+export type CyberKind = Exclude<PropKind, 'lava'>
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
  *  the server sent them, so an absent "open" means "keep the last
@@ -46,7 +52,7 @@ export interface SnapProp {
 /** Device discovered by portscan (GDD §12.5 "scan"). */
 export interface ScanDevice {
   id: string
-  kind: PropKind
+  kind: CyberKind // lava здесь быть не может: не сетевое устройство (§14.6)
   x: number
   y: number
   z: number
@@ -170,7 +176,10 @@ export interface GameSocketHandlers {
 }
 
 const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas']
+// lava включён в whitelist: map props парсятся через parseMapProps (props.ts),
+// а в snap.props/scan лава по построению не появляется — parseProp просто
+// принимает kind, состояния у неё нет (ГДД §14.6).
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'lava']
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
@@ -246,7 +255,10 @@ function parseDevice(v: unknown): ScanDevice | null {
   if (typeof v !== 'object' || v === null) return null
   const p = v as Record<string, unknown>
   const id = str(p.id)
-  const kind = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
+  // Лава не сканируется (§14.6): физическая ловушка отсечена и типом, и здесь
+  // — scan-протокол её никогда не несёт.
+  const pk = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
+  const kind = pk !== null && pk !== 'lava' ? pk : null
   if (id === null || kind === null) return null
   const dev: ScanDevice = {
     id,

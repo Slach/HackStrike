@@ -40,7 +40,7 @@ type mapProp struct {
 	ID     string       `json:"id"`
 	Pos    [3]float64   `json:"pos"`
 	Radius float64      `json:"radius"` // radio
-	Size   [3]float64   `json:"size"`   // door, gas (§14.2)
+	Size   [3]float64   `json:"size"`   // door, gas (§14.2), lava (§14.6)
 	Axis   string       `json:"axis"`   // door
 	To     string       `json:"to"`     // door|gas → switch
 	From   string       `json:"from"`   // cable
@@ -76,7 +76,7 @@ func (m *gameMap) parseProps() error {
 			return fmt.Errorf("map: prop %d: %w", i, err)
 		}
 		switch p.Kind {
-		case "terminal", "radio", "switch", "door", "gas", "camera", "cable":
+		case "terminal", "radio", "switch", "door", "gas", "lava", "camera", "cable":
 		default:
 			return fmt.Errorf("map: prop %d: unknown kind %q", i, p.Kind)
 		}
@@ -174,9 +174,25 @@ func (m *gameMap) validateProps() error {
 			if kinds[p.To] != "switch" {
 				return fmt.Errorf("map: gas %s must reference a switch via \"to\", got %q", p.ID, p.To)
 			}
+		case "lava":
+			// §14.6: пол-лава — физическая ловушка БЕЗ сети: объём-ловушка,
+			// size [w,h,d] > 0 обязателен; сетевых ссылок нет и быть не должно
+			// (не сканируется, не взламывается, не контролируется) — to/from
+			// запрещены. Axis не нужен: ориентация объёма ни на что не влияет.
+			for ax := 0; ax < 3; ax++ {
+				if !(p.Size[ax] > 0) || math.IsNaN(p.Size[ax]) {
+					return fmt.Errorf("map: lava %s bad size %v", p.ID, p.Size)
+				}
+			}
+			if p.To != "" || p.From != "" {
+				return fmt.Errorf("map: lava %s is not a network device: to/from must be absent", p.ID)
+			}
 		case "cable":
+			// §14.6: лава не устройство — ребро к/от неё недопустимо (иначе
+			// buildCyber схлопнется на nil при «прямом сегменте»).
 			if p.From == p.To || kinds[p.From] == "" || kinds[p.To] == "" ||
-				kinds[p.From] == "cable" || kinds[p.To] == "cable" {
+				kinds[p.From] == "cable" || kinds[p.To] == "cable" ||
+				kinds[p.From] == "lava" || kinds[p.To] == "lava" {
 				return fmt.Errorf("map: cable %s bad endpoints %q..%q", p.ID, p.From, p.To)
 			}
 		}

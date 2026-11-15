@@ -684,9 +684,19 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// M4-объект 2 (§14.4): кибер-слой 2 этажа — +5 устройств (s3, t3, d3,
 	// cam3, cam4) и +5 кабелей (c9 стояк s2—s3, c10 s3—d3, c11 t3—s3,
 	// c12 s3—cam3, c13 s3—cam4).
+	// §14.6: лава lv1..lv3 — НЕ устройство: в cs.lavas, счётчики графа
+	// unchanged (лава не должна протечь в devices/order/cables).
 	if len(cs.order) != 17 || len(cs.cables) != 16 || len(cs.doors) != 3 || len(cs.gases) != 2 {
 		t.Fatalf("m1 M2+M3+M4 props: want 17 devices / 14 cables + 2 radio uplinks / 3 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
+	}
+	if len(cs.lavas) != 3 {
+		t.Fatalf("m1 must carry 3 lava pools lv1..lv3 (§14.6), got %d", len(cs.lavas))
+	}
+	for _, lv := range cs.lavas {
+		if _, leaked := cs.devices[lv.id]; leaked {
+			t.Fatalf("lava %s must not leak into the cyber graph", lv.id)
+		}
 	}
 	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
 	// 2 этаж в графе через стояк c9 s2—s3.
@@ -713,6 +723,19 @@ func TestEmbeddedMapCyber(t *testing.T) {
 			}
 			if boxesOverlap(g.box, aabb{vec3(c.Min), vec3(c.Max)}) {
 				t.Fatalf("gas %s intersects %s collider %v..%v", g.id, c.Kind, c.Min, c.Max)
+			}
+		}
+	}
+	// §14.6: лужи стоят НА плите (низ 1.0 / 8.0 точно по верху floor —
+	// касание, boxesOverlap строгая, не пересекает); floor пропускаем, как у
+	// газа, — все не-floor коллайдеры обязаны быть чисты.
+	for _, lv := range cs.lavas {
+		for _, c := range m.Colliders {
+			if c.Kind == "floor" {
+				continue
+			}
+			if boxesOverlap(lv.box, aabb{vec3(c.Min), vec3(c.Max)}) {
+				t.Fatalf("lava %s intersects %s collider %v..%v", lv.id, c.Kind, c.Min, c.Max)
 			}
 		}
 	}

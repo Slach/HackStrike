@@ -15,6 +15,7 @@ import type {
   ClientMessage,
   DeckProg,
   LogEntry,
+  CyberKind,
   PropKind,
   RadarWho,
   RunProg,
@@ -48,7 +49,9 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   antivirus: 'ANTIVIRUS — УСТАНОВКА TROJAN ОТБИТА',
 }
 
-const KIND_LABEL: Readonly<Record<PropKind, string>> = {
+// Только сетевые устройства: лава (M4 §14.6) — не девайс, в деку не попадает,
+// поэтому в словаре её подписи нет (тип CyberKind это и сторожит).
+const KIND_LABEL: Readonly<Record<CyberKind, string>> = {
   terminal: 'ТЕРМИНАЛ',
   radio: 'РАДИО-ТОЧКА',
   switch: 'SWITCH',
@@ -204,7 +207,7 @@ export class HackView {
 
   private myId: number | null = null
   private host = ''
-  private hostKind: PropKind | null = null
+  private hostKind: CyberKind | null = null
   private netMbps = 0
   private deckRam = 4
   private progs: readonly DeckProg[] = []
@@ -288,7 +291,7 @@ export class HackView {
     this.myId = id
   }
 
-  activate(msg: JackinMsg, hostKind: PropKind | null): void {
+  activate(msg: JackinMsg, hostKind: CyberKind | null): void {
     this._active = true
     this.host = msg.host
     this.hostKind = hostKind
