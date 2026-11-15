@@ -17,6 +17,48 @@ import type { Controls } from './controls'
 export const IS_TOUCH =
   matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0
 
+/** ДЕПЛОЙ на touch: развернуть на весь экран и принудить ландшафт (GDD §15.4).
+ *  Fullscreen-first, затем screen.orientation.lock('landscape') — Chrome на
+ *  Android разрешает lock только в fullscreen, поэтому ждём промис перед локом.
+ *  iOS Safari: requestFullscreen на не-<video> и orientation.lock недоступны —
+ *  там эффект даёт только установка в standalone (PWA «Домой»); вызовы молча
+ *  фолбэкаются. Парный выход — exitLandscapeFullscreen при resetSession. */
+export function enterLandscapeFullscreen(): void {
+  void (async () => {
+    const de = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => void
+    }
+    try {
+      if (typeof de.requestFullscreen === 'function') {
+        await de.requestFullscreen()
+      } else {
+        de.webkitRequestFullscreen?.()
+      }
+    } catch {
+      /* без жеста/разрешения браузер отказал — играем в окне */
+    }
+    const so = screen.orientation as ScreenOrientation & {
+      lock?: (o: string) => Promise<void>
+    }
+    try {
+      await so.lock?.('landscape')
+    } catch {
+      /* нет API (iOS) или запрещён — держим ориентацию как есть */
+    }
+  })()
+}
+
+/** Выход из боя/лобби: снять лок ориентации и fullscreen (§15.4). */
+export function exitLandscapeFullscreen(): void {
+  const so = screen.orientation as unknown as { unlock?: () => Promise<void> | void }
+  void Promise.resolve(so.unlock?.()).catch(() => undefined)
+  const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => void }
+  if (doc.fullscreenElement ?? doc.webkitFullscreenElement) {
+    if (typeof doc.exitFullscreen === 'function') void doc.exitFullscreen().catch(() => undefined)
+    else doc.webkitExitFullscreen?.()
+  }
+}
+
 /** Палитра/оверлеи поднимаются над экранной клавиатурой: --kb держится в CSS
  *  на :root, обновляется на resize visualViewport (mobile.ts — единственный
  *  владелец переменной, hackview читает её через CSS). */
@@ -35,7 +77,9 @@ export function startKeyboardTracker(): void {
 }
 
 // Палец ходит по кругу меньше курсора — touch-пиксель «дороже» мышиного
-// (0.0032 рад/px против 0.0022; чувствительность правится одним числом).
+// (0.0032 рад/px против 0.0022). Чувствительность НЕ меняется при компакции
+// круга (§15.4): pointer capture ведёт drag за пределы элемента, покрытие
+// угла зависит от travel пальца, а не от диаметра кнопки.
 const LOOK_GAIN = 0.0032 / 0.0022
 // Мёртвая зона крестовины (~18% радиуса): центр — нейтраль, чтобы смена
 // направления на проходе пальца через центр не дёргала тело.

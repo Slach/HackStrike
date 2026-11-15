@@ -29,7 +29,7 @@ import type { MiniCyberDev } from './minimap'
 import { PropsView } from './props'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
-import { IS_TOUCH, TouchOverlay, startKeyboardTracker } from './mobile'
+import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen } from './mobile'
 
 const RENDER_DELAY_MS = 100
 const INPUT_INTERVAL_MS = 1000 / 30
@@ -111,6 +111,7 @@ function resetSession(): void {
   hud.crosshairLocked(false)
   hud.scope(false)
   hud.jackinHint(null)
+  exitLandscapeFullscreen() // возврат в лобби — снимаем принудительный ландшафт/fullscreen (§15.4)
 }
 
 function handleShot(msg: ShotMsg): void {
@@ -433,6 +434,8 @@ hud.onJoin = (name, cls, team) => {
   // The deploy click is a user gesture: grab the mouse right away, no extra
   // "click to lock" step.
   controls.requestLock()
+  // Touch: тот же жест разворачивает на весь экран и принудит ландшафт (§15.4)
+  if (IS_TOUCH) enterLandscapeFullscreen()
 }
 hud.onRespawn = (cls) => {
   myCls = cls
