@@ -1600,6 +1600,20 @@
       }
       body.touch .hv-chip { padding: 9px 12px; } /* табы пальцем */
       body.touch .hv-btn { padding: 11px 12px; }
+      /* Дека на тапе: CPU/NPU/RAM/NET «слишком здоровые» (§15.6) — каждая
+         плашка сжимается в одну строку «метка · график · значение»: шапка
+         уходит в display:contents, её дети становятся ячейками ряда, канвас
+         20px. Разметка и drawSpark общие с десктопом — тронут только CSS. */
+      body.touch .hv-sparks { gap: 6px; }
+      body.touch .spark { flex-direction: row; align-items: center; gap: 6px; }
+      body.touch .spark-top { display: contents; } /* inherit (10px/2px) сохраняется */
+      body.touch .spark-label { order: 0; flex: none; letter-spacing: 1px; }
+      body.touch .spark-cv { order: 1; flex: 1; min-width: 0; height: 20px; }
+      body.touch .spark-value { order: 2; flex: none; min-width: 3.5em; text-align: right; }
+      @media (max-width: 560px) {
+        /* портрет: 4 колонки режут значения — переносим в 2×2, график шире */
+        body.touch .hv-sparks { grid-template-columns: repeat(2, 1fr); }
+      }
       /* Join/death-оверлеи на телефоне: скроллятся пальцем до ДЕПЛОЯ (§15.3) */
       body.touch .overlay {
         touch-action: pan-y;
