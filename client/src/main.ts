@@ -198,11 +198,16 @@ function handleSnap(snap: SnapMsg): void {
 }
 
 function handleEnvKill(msg: EnvKillMsg): void {
-  // §14.3: broadcast убийства средой — киллфид «ЛОВУШКА» всем, имя/команда из
-  // meta последнего снапа. Штамп подавляет переходной дубль в handleSnap.
+  // §14.3: broadcast убийства средой. Владелец (trojan) ≠ жертва → обычная
+  // строка «ВЛАДЕЛЕЦ ▸ жертва» (сервер уже начислил +1); без владельца →
+  // «ЛОВУШКА». Штамп подавляет переходной дубль в handleSnap; оверлей жертве
+  // рисует приватный death by:0 (там всегда «ЛОВУШКА» — владелец мог умереть).
   envKillAt.set(msg.victim, performance.now())
   const v = latestMeta.get(msg.victim)
-  if (v) hud.killfeedEnv(v.name, v.team)
+  if (!v) return
+  const o = msg.owner > 0 && msg.owner !== msg.victim ? latestMeta.get(msg.owner) : undefined
+  if (o) hud.killfeed(o.name, o.team, v.name, v.team)
+  else hud.killfeedEnv(v.name, v.team)
 }
 
 function handleDeath(msg: DeathMsg): void {

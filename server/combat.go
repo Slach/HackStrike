@@ -162,10 +162,12 @@ func (w *world) damage(shooter, victim *player, dmg int) bool {
 // envDamage — урон от среды (§14.2): газовая ловушка (и будущая лава).
 // Копия damage без стрелка: hp → смерть → respawnAt +5 с + авто-джек-аут
 // (хакер в газе сгорел в meatspace) + death by=0 жертве + broadcast envkill
-// (killfeed «ЛОВУШКА» всем: death исторически приватен, §14.3); счёт команд
-// НЕ растёт, shot-сообщения нет.
+// (киллфид всем: death исторически приватен, §14.3). owner — trojan-владелец
+// устройства-ловушки (0 = нейтрали): при owner>0 и owner≠victim +1 команде
+// владельца (решение владельца: ценность взлома; «сам в свой газ» не
+// фармится), иначе счёт чист. shot-сообщения нет.
 // Возвращает true, если жертва умерла.
-func (w *world) envDamage(victim *player, dmg int) bool {
+func (w *world) envDamage(victim *player, dmg int, owner uint64) bool {
 	if !victim.alive {
 		return false
 	}
@@ -177,7 +179,12 @@ func (w *world) envDamage(victim *player, dmg int) bool {
 	victim.alive = false
 	victim.respawnAt = w.now().Add(respawnDelay)
 	w.jackout(victim)
+	if owner != 0 && owner != victim.id {
+		if op, ok := w.players[owner]; ok {
+			w.scores[op.team]++
+		}
+	}
 	w.sendTo(victim.id, message{"t": "death", "by": uint64(0), "respawnAt": victim.respawnAt.UnixMilli()})
-	w.broadcast(message{"t": "envkill", "victim": victim.id})
+	w.broadcast(message{"t": "envkill", "victim": victim.id, "owner": owner})
 	return true
 }

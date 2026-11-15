@@ -957,7 +957,7 @@ func (w *world) gasTick(dt float64) {
 			whole := int(debt)
 			if whole > 0 {
 				debt -= float64(whole)
-				w.envDamage(pl, whole)
+				w.envDamage(pl, whole, g.owner)
 			}
 			w.gasDebt[key] = debt
 		}

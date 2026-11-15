@@ -159,8 +159,9 @@ func TestGasDisarmStopsAndRearmRestarts(t *testing.T) {
 	}
 }
 
-// (4) Смерть в газе: respawnAt=now+5s, авто-джек-аут, scores не тронуты,
-// death by=0 жертве + broadcast envkill(victim), ни одного shot.
+// (4) Смерть в НЕЙТРАЛЬНОЙ (без владельца) газовой ловушке: respawnAt=now+5s,
+// авто-джек-аут, scores не тронуты, death by=0 жертве + broadcast
+// envkill(victim, owner=0), ни одного shot.
 func TestGasDeathEnvKill(t *testing.T) {
 	w, clock := gasTestWorld(t)
 	h := w.addPlayer(1, "h", "hacker", -1) // team 0, 100 HP
@@ -211,6 +212,9 @@ func TestGasDeathEnvKill(t *testing.T) {
 			if om.msg["victim"] != h.id {
 				t.Fatalf("envkill.victim = %v, want %d", om.msg["victim"], h.id)
 			}
+			if om.msg["owner"] != uint64(0) {
+				t.Fatalf("neutral trap envkill.owner = %v, want 0", om.msg["owner"])
+			}
 			foundKill = true
 		case "shot":
 			foundShot = true
@@ -224,6 +228,70 @@ func TestGasDeathEnvKill(t *testing.T) {
 	}
 	if foundShot {
 		t.Fatalf("environment kill must not produce shot messages")
+	}
+}
+
+// (4b) Смерть при trojan-владельце: +1 команде владельца (§14.1, решение
+// владельца 2026-11-15), envkill несёт owner. Хакер-владелец стоит ВНЕ
+// объёма — «сам в свой газ» проверяется отдельным тестом.
+func TestGasKillScoresOwnerTeam(t *testing.T) {
+	w, clock := gasTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)   // team 0, вне газы
+	v := w.addPlayer(2, "v", "assault", -1)  // team 1, 125 HP — жертва
+	w.takeOut()
+	jackAt(w, h, "t1")
+	ownGas(t, w, h)
+	w.handleMessage(h, message{"t": "ctrl", "dev": "g1", "action": "toggle"})
+	w.takeOut()
+
+	v.pos = vec3{30, 1, 30}
+	v.hp = 4
+	var out []outMsg
+	for i := 0; i < 300 && v.alive; i++ {
+		*clock = clock.Add(time.Second / tickRate)
+		w.simulateTick()
+		out = append(out, w.takeOut()...)
+	}
+	if v.alive {
+		t.Fatalf("4 HP in gas must die")
+	}
+	if w.scores != [2]int{1, 0} {
+		t.Fatalf("owner team must get the kill, scores=%v", w.scores)
+	}
+	for _, om := range out {
+		if om.msg["t"] == "envkill" {
+			if om.msg["owner"] != h.id || om.msg["victim"] != v.id {
+				t.Fatalf("envkill = %v, want owner=%d victim=%d", om.msg, h.id, v.id)
+			}
+			return
+		}
+	}
+	t.Fatalf("want envkill broadcast")
+}
+
+// (4c) Владелец сгорел в собственном газу: очков нет (фарм «сам в свой газ»
+// отрезан), death/envkill как обычно, оверлей жертве не врёт.
+func TestGasKillOwnerInOwnGasNoScore(t *testing.T) {
+	w, clock := gasTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1) // team 0
+	w.takeOut()
+	jackAt(w, h, "t1")
+	ownGas(t, w, h)
+	w.handleMessage(h, message{"t": "ctrl", "dev": "g1", "action": "toggle"})
+	w.takeOut()
+
+	h.pos = vec3{30, 1, 30} // сам зашёл в свой газ
+	h.hp = 4
+	for i := 0; i < 300 && h.alive; i++ {
+		*clock = clock.Add(time.Second / tickRate)
+		w.simulateTick()
+		w.takeOut()
+	}
+	if h.alive {
+		t.Fatalf("4 HP in gas must die")
+	}
+	if w.scores != [2]int{} {
+		t.Fatalf("owner==victim must never score, scores=%v", w.scores)
 	}
 }
 

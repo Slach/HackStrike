@@ -136,7 +136,7 @@ export type ServerMessage =
   | ({ t: 'snap' } & Snapshot)
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
   | { t: 'death'; by: number; respawnAt: number }
-  | { t: 'envkill'; victim: number } // M4 (GDD §14.3): broadcast, killfeed «ЛОВУШКА» всем
+  | { t: 'envkill'; victim: number; owner: number } // M4 (GDD §14.3): broadcast; owner — trojan-владелец ловушки (0 = нейтрали)
   | { t: 'matchend'; winner: number; scores: [number, number] }
   | { t: 'pong'; c: number; s: number; tick: number }
   // M2 (GDD §12.5)
@@ -349,7 +349,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     case 'envkill': {
       const victim = num(m.victim, -1)
       if (victim < 0) return null
-      return { t: 'envkill', victim }
+      return { t: 'envkill', victim, owner: num(m.owner, 0) }
     }
     case 'matchend':
       // Not spelled out in GDD §9.2 yet: accepted minimally, winner -1 = draw.
