@@ -388,6 +388,7 @@ export class Hud {
     rtt: byId('rtt'),
     snaps: byId('snaps'),
     jackinHint: byId('jackinHint'),
+    hudWarn: byId('hudWarn'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -691,6 +692,7 @@ export class Hud {
   }
 
   private hintText: string | null = null
+  private warnTimer: ReturnType<typeof setTimeout> | undefined = undefined
 
   /** «SPACE — ДЖЕК-ИН» над прицелом, когда хакер у терминала/радио (M2). */
   jackinHint(text: string | null): void {
@@ -702,6 +704,17 @@ export class Hud {
       this.el.jackinHint.textContent = text
       this.el.jackinHint.classList.remove('hidden')
     }
+  }
+
+  /** Предупреждение сервера вне деки (denied enemy_team и т.п., §12.5):
+   *  красная плашка под jackinHint, гаснет сама. Повтор — рестарт таймера. */
+  warn(text: string): void {
+    const el = this.el.hudWarn
+    if (el === null) return
+    el.textContent = text
+    el.classList.remove('hidden')
+    if (this.warnTimer !== undefined) clearTimeout(this.warnTimer)
+    this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
   }
 
   /** Текущее оружие (хакер: пистолет) — рядом с HP. */

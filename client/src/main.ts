@@ -316,6 +316,12 @@ const sock = new GameSocket({
         )
         break
       case 'denied':
+        // enemy_team (§12.5, ред. 2026-11-17) приходит ДО джек-ина — деки ещё
+        // нет, hackview.onDenied молчит; предупреждение — на HUD.
+        if (msg.reason === 'enemy_team') {
+          const dev = msg.dev !== undefined ? ` (${msg.dev.toUpperCase()})` : ''
+          hud.warn(`УСТРОЙСТВО ЗАХВАЧЕНО ДРУГОЙ КОМАНДОЙ${dev}`)
+        }
         hackview.onDenied(msg)
         break
       case 'alert': {

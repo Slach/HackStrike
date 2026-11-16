@@ -46,6 +46,7 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   ram_full: 'RAM ПОЛНА — ОСТАНОВИ ПРОГРАММУ',
   not_vulned: 'НЕТ УЯЗВИМОСТИ — СНАЧАЛА VULNSCAN',
   not_owner: 'НЕ ВЛАДЕЛЕЦ',
+  enemy_team: 'УСТРОЙСТВО ЗАХВАЧЕНО ДРУГОЙ КОМАНДОЙ',
   not_jacked: 'НЕ В СЕТИ',
   no_los: 'НЕТ ПРЯМОЙ ВИДИМОСТИ',
   too_far: 'СЛИШКОМ ДАЛЕКО',

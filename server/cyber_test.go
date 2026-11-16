@@ -838,7 +838,7 @@ func TestJackinContested(t *testing.T) {
 		t.Fatalf("enemy must not jack into a captured terminal")
 	}
 	// NB: jackAt сам consume-ит takeOut — denied ищем в его возврате.
-	assertDeniedOut(t, out, foe, "not_owner")
+	assertDeniedOut(t, out, foe, "enemy_team") // ред. 2026-11-17: по команде
 
 	// С нейтрального t1... уже джекнут h. Проверим: владелец входит в свою точку.
 	out = jackAt(w, h, "t1")
@@ -2358,4 +2358,60 @@ func TestUtilityVulnscanGate(t *testing.T) {
 	if w.cyber.devices["d1"].antivirused != h.id {
 		t.Fatalf("utility on OWN device must install without extra vulnscan")
 	}
+}
+
+// Точки входа contested по КОМАНДЕ (§12.5, ред. 2026-11-17): терминал
+// союзника-хакера открыт для джек-ина своей команды, чужой команды —
+// denied enemy_team.
+func TestJackinTeamContested(t *testing.T) {
+	w, _ := cyberTestWorld(t)
+	ally := w.addPlayer(1, "ally", "hacker", -1)
+	me := w.addPlayer(2, "me", "hacker", -1)
+	foe := w.addPlayer(3, "foe", "hacker", -1)
+	foe.team = 1 - ally.team
+	me.team = ally.team
+	w.takeOut()
+
+	// Терминал t2 захвачен союзником — джек-ин разрешён.
+	w.cyber.devices["t2"].owner = ally.id
+	out := jackAt(w, me, "t2")
+	if !me.jacked {
+		t.Fatalf("teammate-owned entry point must allow jack-in")
+	}
+	for _, om := range out {
+		if om.msg["t"] == "denied" && om.to == me.id {
+			t.Fatalf("teammate-owned entry point must not deny: %v", om.msg)
+		}
+	}
+	w.handleMessage(me, message{"t": "jackout"})
+	w.takeOut()
+
+	// Тот же терминал захвачен врагом — denied enemy_team.
+	w.cyber.devices["t2"].owner = foe.id
+	out = jackAt(w, me, "t2")
+	assertDeniedOut(t, out, me, "enemy_team")
+	if me.jacked {
+		t.Fatalf("enemy-owned entry point must not allow jack-in")
+	}
+
+	// Свой собственный терминал — по-прежнему разрешён.
+	w.cyber.devices["t2"].owner = me.id
+	if !jackOwn(t, w, me) {
+		t.Fatalf("own entry point must allow jack-in")
+	}
+
+	// Хозяин вне players (сессия истекла) — трактуется как вражеский.
+	w.handleMessage(me, message{"t": "jackout"})
+	w.takeOut()
+	delete(w.players, foe.id)
+	w.cyber.devices["t2"].owner = foe.id
+	out = jackAt(w, me, "t2")
+	assertDeniedOut(t, out, me, "enemy_team")
+}
+
+// jackOwn — вспомогательная: джек-ин с ожиданием успеха.
+func jackOwn(t *testing.T, w *world, pl *player) bool {
+	t.Helper()
+	jackAt(w, pl, "t2")
+	return pl.jacked
 }

@@ -689,6 +689,34 @@
         white-space: nowrap;
       }
 
+      /* предупреждение сервера вне деки (denied enemy_team и т.п.) — красное,
+         ниже строки jackinHint; гаснет по таймеру (hud.warn) */
+      #hudWarn {
+        position: absolute;
+        top: calc(42% + 44px);
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 8px 20px;
+        background: rgba(40, 8, 16, 0.85);
+        border: 1px solid rgba(255, 77, 94, 0.7);
+        border-radius: 6px;
+        color: #ff6d80;
+        font-size: 14px;
+        letter-spacing: 3px;
+        text-shadow: 0 0 10px rgba(255, 77, 94, 0.6);
+        box-shadow: 0 0 22px rgba(255, 77, 94, 0.25);
+        pointer-events: none;
+        z-index: 6;
+        white-space: nowrap;
+      }
+      body.touch #hudWarn {
+        top: auto;
+        bottom: calc(168px + env(safe-area-inset-bottom));
+        font-size: 11px;
+        padding: 5px 12px;
+        letter-spacing: 1px;
+      }
+
       /* FPS-элементы прячутся, пока хакер в деке (тело стоит, прицел не нужен) */
       body.hackmode #crosshair,
       body.hackmode #scope,
@@ -2199,6 +2227,7 @@
     <div id="killfeed"></div>
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="jackinHint" class="hidden"></div>
+    <div id="hudWarn" class="hidden"></div>
 
     <div id="hackview" class="hidden"></div>
 
