@@ -805,7 +805,9 @@ export class HackView {
     // Enter на экранной клавиатуре = «Поиск» (запуск), не перевод строки (§15.2)
     input.enterKeyHint = 'search'
     input.placeholder =
-      mode === 'tab' ? 'фильтр устройства — напр. cam2, ENTER ОТКРЫТЬ ТАБ' : 'фильтр устройства + программа — напр. cam1 port'
+      mode === 'tab'
+        ? 'фильтр устройства — напр. cam2, ENTER ОТКРЫТЬ ТАБ'
+        : 'цель и/или программа — напр. cam1 port · portscan cam1'
     input.addEventListener('input', () => {
       this.paletteSel = -1
       this.updatePalette()
@@ -928,15 +930,24 @@ export class HackView {
     const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
     const dq = (tokens[0] ?? '').toLowerCase()
     const pq = (tokens[1] ?? '').toLowerCase()
-    // Хвостовой пробел после устройства = перешли ко второму токену
-    // (иначе «cam1␣» после Tab опять показывает список устройств).
+    // Хвостовой пробел после первого токена = перешли ко второму
+    // (иначе «cam1␣» после Tab опять показывает список первого).
     const secondTok = tokens.length > 1 || /\s$/.test(pal.input.value)
     const cands: PalCand[] = []
     // Режим «таб» (T): только устройства, второго токена нет (§12.6).
     const isTabMode = this.paletteMode === 'tab'
-    this.paletteTok = isTabMode ? 0 : secondTok ? 1 : 0
-    if (this.paletteTok === 0) {
-      // Первый токен: устройства (только из текущего скана), потом программы.
+    // Обратный порядок токенов (плейтест M4): первый токен совпадает с
+    // программой и НЕ совпадает ни с одним устройством → это «prog dev»
+    // («/portscan cam1»); второй токен тогда — список целей.
+    const progFirst =
+      !isTabMode &&
+      dq !== '' &&
+      PALETTE_PROGS.some((p) => p.startsWith(dq)) &&
+      ![...this.devices.values()].some((d) => this.devMatch(d, dq))
+    this.paletteTok = secondTok ? 1 : 0
+    if (isTabMode || (!progFirst && this.paletteTok === 0)) {
+      // Первый токен (порядок «dev prog» / режим таба): устройства из
+      // текущего скана, потом подходящие программы.
       const devs = [...this.devices.values()]
         .filter((d) => this.devMatch(d, dq))
         .sort((a, b) => (a.id < b.id ? -1 : 1))
@@ -954,9 +965,33 @@ export class HackView {
           cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
         }
       }
+    } else if (progFirst && this.paletteTok === 0) {
+      // Первый токен (порядок «prog dev»): программы; Enter уже сейчас
+      // выполнит на текущей цели — говорим об этом в подсказке.
+      for (const p of PALETTE_PROGS) {
+        if (!p.startsWith(dq)) continue
+        const hint =
+          this.target !== null ? `ENTER → ${this.target.toUpperCase()}` : p === 'portscan' ? 'ENTER — ВСЯ СЕТЬ' : 'ENTER — ЦЕЛЬ НЕ ВЫБРАНА'
+        cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint })
+      }
+    } else if (progFirst) {
+      // Второй токен (порядок «prog dev»): список целей с владельцем.
+      const devs = [...this.devices.values()]
+        .filter((d) => this.devMatch(d, pq))
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+      for (const d of devs) {
+        cands.push({
+          kind: 'dev',
+          text: d.id,
+          dev: d.id,
+          label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
+          hint: this.ownerLabel(d.owner),
+        })
+      }
     } else {
-      // Второй токен: ВСЕ программы для выбранного устройства, с подсказкой
-      // готовности (плейтест M3: «нажал CAM1 + Tab — покажи что можно»).
+      // Второй токен (порядок «dev prog»): ВСЕ программы для выбранного
+      // устройства, с подсказкой готовности (плейтест M3: «нажал CAM1 +
+      // Tab — покажи что можно»).
       const dev = [...this.devices.values()].find((d) => this.devMatch(d, dq))
       for (const p of PALETTE_PROGS) {
         if (!p.startsWith(pq)) continue
@@ -1059,17 +1094,28 @@ export class HackView {
       this.schedule(() => this.render())
       return
     }
-    // Цель: выделенный кандидат-устройство, иначе уникальное/точное
-    // совпадение первого токена.
+    // Порядок токенов — тот же детектор, что в updatePalette: первый токен,
+    // совпадающий с программой и не с устройством, — это «prog dev».
+    const t0 = (tokens[0] ?? '').toLowerCase()
+    const progFirst =
+      t0 !== '' &&
+      PALETTE_PROGS.some((p) => p.startsWith(t0)) &&
+      ![...this.devices.values()].some((d) => this.devMatch(d, t0))
+    // Цель: выделенный кандидат-устройство; иначе — токен цели своего
+    // порядка (второй в «prog dev», первый в «dev prog»).
     let dev: string | null = null
     if (sel !== undefined && sel.kind === 'dev' && sel.dev !== undefined) {
       dev = sel.dev
     } else if (tokens.length > 0) {
-      const m = [...this.devices.values()].filter((d) => this.devMatch(d, tokens[0].toLowerCase()))
-      dev = m.length === 1 ? m[0].id : (m.find((d) => d.id === tokens[0].toLowerCase())?.id ?? null)
+      const dq = progFirst ? (tokens[1] ?? '').toLowerCase() : t0
+      if (dq !== '') {
+        const m = [...this.devices.values()].filter((d) => this.devMatch(d, dq))
+        dev = m.length === 1 ? m[0].id : (m.find((d) => d.id === dq)?.id ?? null)
+      }
     }
-    // Программа: выделенный кандидат-программа, иначе фильтр по токену.
-    let pq = tokens.length > 1 ? tokens[1] : (tokens[0] ?? '')
+    // Программа: выделенный кандидат-программа, иначе фильтр по токену
+    // программы своего порядка (первый в «prog dev»).
+    let pq = progFirst ? t0 : (tokens[1] ?? (tokens[0] ?? ''))
     if (sel !== undefined && sel.kind === 'prog' && sel.prog !== undefined) pq = sel.prog
     const progs = PALETTE_PROGS.filter((p) => p.startsWith(pq.toLowerCase()))
     const prog = progs.find((p) => p === pq.toLowerCase()) ?? progs[0]
