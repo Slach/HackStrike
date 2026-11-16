@@ -1168,7 +1168,7 @@ export class HackView {
     if (owner === this.myId) return 'ВЫ'
     // Ник вместо «ИГРОК #171» (плейтест M4: в чужом узле надо видеть, ЧЕЙ он).
     const name = this.deps.nameOf(owner)
-    return (name !== null ? name : `ИГРОК #${owner}`).toUpperCase()
+    return (name !== null ? name : `player_${owner}`).toUpperCase()
   }
 
   /** Окрашенный спан владельца: чужая команда — красным (ownerColor). */
@@ -1188,7 +1188,7 @@ export class HackView {
   private fwLabel(by: number): string {
     if (by === this.myId) return 'СВОЙ'
     const myTeam = this.myId !== null ? this.deps.teamOf(this.myId) : null
-    return myTeam !== null && this.deps.teamOf(by) === myTeam ? 'СОЮЗНИК' : `ВРАГ #${by}`
+    return myTeam !== null && this.deps.teamOf(by) === myTeam ? 'СОЮЗНИК' : `ВРАГ ${this.deps.nameOf(by) ?? `player_${by}`.toUpperCase()}`
   }
 
   /** Цвет бейджа/ореола firewall (§13.5): свой/союзный голубой, чужой красный. */
@@ -1694,10 +1694,10 @@ export class HackView {
   }
 
   /** Имя из журнала: своё — «Я» (журнал — история устройства, свои события
-   *  тоже пишутся); неизвестный (offline-хозяин) — id. */
+   *  тоже пишутся); ник, а меты ещё нет — детерминированный player_N. */
   private logWhoName(who: number): string {
     if (who === this.myId) return 'Я'
-    return this.deps.nameOf(who) ?? `#${who}`
+    return this.deps.nameOf(who) ?? `player_${who}`
   }
 
   /** Блок «ЛОГ СОБЫТИЙ» (§13.1 №1): последние сверху; данные — из

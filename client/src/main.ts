@@ -193,7 +193,7 @@ function handleSnap(snap: SnapMsg): void {
         const hit = lastHits.get(p.id)
         const fresh = hit !== undefined && performance.now() - hit.at <= KILLFEED_ATTRIBUTION_MS
         const killerId = fresh ? hit.by : -1
-        const killer = killerId >= 0 ? latestMeta.get(killerId)?.name ?? `#${killerId}` : '???'
+        const killer = killerId >= 0 ? latestMeta.get(killerId)?.name ?? `player_${killerId}` : '???'
         const killerTeam = killerId >= 0 ? latestMeta.get(killerId)?.team ?? 0 : 0
         hud.killfeed(killer, killerTeam, p.name, p.team)
       }
@@ -235,7 +235,7 @@ function handleDeath(msg: DeathMsg): void {
   if (msg.by === 0) {
     hud.showDeath('ЛОВУШКА', msg.respawnAt, myCls)
   } else {
-    const killer = msg.by >= 0 ? latestMeta.get(msg.by)?.name ?? `#${msg.by}` : '???'
+    const killer = msg.by >= 0 ? latestMeta.get(msg.by)?.name ?? `player_${msg.by}` : '???'
     hud.showDeath(killer, msg.respawnAt, myCls)
   }
   autofire.reset()
@@ -324,7 +324,7 @@ const sock = new GameSocket({
         // (§13.5); antivirus — отбита попытка trojan (§13.6). relay — дубль
         // союзнику хозяина watcher'а (§13.1 №4): понятная строка, не «W ▸».
         // В деке-WM — тост, иначе — HUD.
-        const whoName = latestMeta.get(msg.who)?.name ?? `#${msg.who}`
+        const whoName = latestMeta.get(msg.who)?.name ?? `player_${msg.who}`
         const dev = msg.dev.toUpperCase()
         let text: string
         if (msg.relay === true) {
