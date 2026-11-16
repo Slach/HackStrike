@@ -45,6 +45,9 @@ type mapProp struct {
 	To     string       `json:"to"`     // door|gas|valve → switch; fire → valve
 	From   string       `json:"from"`   // cable
 	Points [][3]float64 `json:"points"` // cable
+	BW     float64      `json:"bw"`     // cable: пропускная способность, МБ/с (§16.3; 0 → дефолт по kind)
+	// Backplane — switch: суммарная шина транзита, МБ/с (§16.3; 0 → дефолт).
+	Backplane float64 `json:"backplane"`
 }
 
 // parseGameMap — парсинг + валидация: карта встроенная, ошибка означает

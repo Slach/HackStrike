@@ -56,6 +56,11 @@ type world struct {
 	// игрок). Лава без arm-цикла, поэтому ключ проще газового (без счётчика
 	// взвода); списания — целыми очками, не зависят от тик-рейта.
 	fireDebt map[fireDebtKey]float64
+
+	// netF — сетевой фактор прогресса программ на ТЕКУЩИЙ тик (§16.3,
+	// честные очереди на линках). Пересчитывается в начале simulateTick по
+	// всем игрокам сразу — конкуренция за bw межигроковая.
+	netF map[*program]float64
 }
 
 // gasDebtKey — ключ накопленного долга: gasArmCount растёт на каждое
@@ -345,6 +350,7 @@ func (w *world) handleRespawn(pl *player, cls string) {
 // снапшот всем.
 func (w *world) simulateTick() {
 	w.tick++
+	w.netF = w.computeNetFactors() // §16.3: конкуренция за bw — до очередей CPU
 	for _, pl := range w.players {
 		if pl.alive {
 			w.movePlayer(pl, tickDT)

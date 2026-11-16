@@ -41,6 +41,17 @@ const (
 	// (чисто отображение: 10 Мбит/с × N / канал точки входа).
 	progNetMbps = 10.0
 
+	// M5 итерация 1 «канал сети» (§16.3, ревизия 1): bw-модель в МБ/с по
+	// рёбрам графа — входной хоп «дека↔точка входа» не считается.
+	cableTrunkBW   = 40.0 // кабель без явного bw в карте (магистраль по умолчанию)
+	radioUplinkBW  = 5.0  // беспроводной аплинк радио-точки (§16.3: радио 5)
+	defaultBackplane = 60.0 // switch без явного backplane (s1/s2-класс)
+	// Спрос сканов: portscan — на каждый линк своего распространения;
+	// vulnscan/trojan — на линках пути к цели. Доля линка = bw/N потребителей;
+	// если доля < спроса, прогресс масштабируется (доля/спрос).
+	scanDemandPortscan = 2.0 // МБ/с на линк
+	scanDemandPath     = 4.0 // МБ/с на линк
+
 	// M4 объект 1 «газовая камера» (§14.2, числа v0): DoT внутри AABB газа,
 	// пока клапан открыт; телеграф перед первым уроном после взвода.
 	gasDPS       = 8.0                     // HP/с
@@ -87,6 +98,11 @@ type device struct {
 	firewalled  uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
 	antivirused uint64          // хозяин antivirus-процесса (§13.6; 0 = нет)
 
+	// backplane — switch: суммарная шина транзита, МБ/с (§16.3). Все
+	// трансферы/сканы ЧЕРЕЗ свитч делят её по-честному; слабый свитч = узкое
+	// место даже при толстых кабелях.
+	backplane float64
+
 	// log — журнал событий watcher'а (§13.1 №1): ring-buffer последних
 	// watcherLogCap записей; пишется пока на устройстве есть хотя бы один
 	// watcher, читается хозяевами в scan.devices[].log.
@@ -104,13 +120,15 @@ type logEntry struct {
 }
 
 // cable — ребро сети (§12.3): полилиния. M2-2: перерубание удалено —
-// кабель только визуализирует топологию и всегда цел.
+// кабель только визуализирует топологию и всегда цел. bw — пропускная
+// способность, МБ/с (§16.3): конкуренты за линк делят её по-честному.
 type cable struct {
 	id       string
 	fromDev  string
 	toDev    string
 	points   []vec3
-	wireless bool // радио-аплинк: на карте рисуется пунктиром
+	wireless bool   // радио-аплинк: на карте рисуется пунктиром
+	bw       float64 // МБ/с (магистраль 40 / доступ 20 / ветка 10 / радио 5)
 }
 
 // firePool — полоса огня (§14.6.1): НЕ сетевое устройство — ни owner/vuln,
@@ -161,8 +179,12 @@ func buildCyber(m *gameMap) *cyberState {
 			id: p.ID, kind: p.Kind,
 			pos: vec3(p.Pos), radius: p.Radius,
 			cpu: st.cpu, npu: st.npu, ram: st.ram, netMbps: st.net,
+			backplane: p.Backplane,
 			vulnedBy:  make(map[uint64]bool),
 			watcherBy: make(map[uint64]bool),
+		}
+		if d.kind == "switch" && d.backplane <= 0 {
+			d.backplane = defaultBackplane // §16.3: s1/s2-класс
 		}
 		if d.kind == "radio" && d.radius <= 0 {
 			d.radius = jackRadioRadius
@@ -205,7 +227,10 @@ func buildCyber(m *gameMap) *cyberState {
 		if p.Kind != "cable" {
 			continue
 		}
-		c := &cable{id: p.ID, fromDev: p.From, toDev: p.To}
+		c := &cable{id: p.ID, fromDev: p.From, toDev: p.To, bw: p.BW}
+		if c.bw <= 0 {
+			c.bw = cableTrunkBW // §16.3: разметка не обязательна — магистраль
+		}
 		for _, pt := range p.Points {
 			c.points = append(c.points, vec3(pt))
 		}
@@ -240,6 +265,7 @@ func buildCyber(m *gameMap) *cyberState {
 			fromDev:  p.ID,
 			toDev:    best.id,
 			wireless: true,
+			bw:       radioUplinkBW, // §16.3: радио 5 — бутылочное горло самой точки
 		})
 	}
 	return cs
@@ -331,6 +357,95 @@ func (w *world) firewallScanHit(pl *player, known map[string]bool) *device {
 	return nil
 }
 
+// cableBetween — кабель-ребро между двумя устройствами (в любом направлении).
+func (cs *cyberState) cableBetween(a, b string) *cable {
+	for _, c := range cs.cables {
+		if (c.fromDev == a && c.toDev == b) || (c.fromDev == b && c.toDev == a) {
+			return c
+		}
+	}
+	return nil
+}
+
+// widestPath — маршрут с максимальным «узким местом» (§16.2, widest-path):
+// бутылочка пути = min(bw кабелей пути, backplane транзитных свитчей);
+// максимизируем её, при равенстве — меньше хопов. Распространение из узла,
+// заблокированного чужим firewall, запрещено — то же правило, что у
+// reachableFor (§13.5), поэтому путь согласован с достижимостью. Возвращает
+// цепочку устройств from..to (nil, если не достичь).
+func (cs *cyberState) widestPath(from, to string, blocked func(string) bool) []string {
+	if from == to {
+		return []string{from}
+	}
+	// Dijkstra на бутылочку: best[v] — лучший bottleneck к v, prev — цепочка.
+	type node struct {
+		bw   float64
+		hops int
+		prev string
+		done bool
+	}
+	best := map[string]*node{from: {bw: math.Inf(1)}}
+	for {
+		// непосещённый узел с максимальной бутылочкой (при равенстве — меньше хопов)
+		cur := ""
+		for id, n := range best {
+			if n.done {
+				continue
+			}
+			if cur == "" {
+				cur = id
+				continue
+			}
+			c := best[cur]
+			if n.bw > c.bw || (n.bw == c.bw && n.hops < c.hops) {
+				cur = id
+			}
+		}
+		if cur == "" {
+			return nil // to не достигнут
+		}
+		if cur == to {
+			var path []string
+			for at := to; ; {
+				path = append([]string{at}, path...)
+				if at == from {
+					break
+				}
+				at = best[at].prev
+			}
+			return path
+		}
+		n := best[cur]
+		n.done = true
+		if blocked(cur) {
+			continue // транзит сквозь чужой firewall не идёт (§13.5)
+		}
+		for _, nb := range cs.neighbors(cur) {
+			if old, ok := best[nb]; ok && old.done {
+				continue
+			}
+			lw := math.Inf(1)
+			if c := cs.cableBetween(cur, nb); c != nil {
+				lw = c.bw
+			}
+			if d := cs.devices[nb]; d != nil && d.kind == "switch" && d.backplane > 0 {
+				lw = math.Min(lw, d.backplane) // транзит через свитч ест его шину
+			}
+			bw := math.Min(n.bw, lw)
+			hops := n.hops + 1
+			old, ok := best[nb]
+			if !ok || bw > old.bw || (bw == old.bw && hops < old.hops) {
+				if !ok {
+					best[nb] = &node{}
+				}
+				best[nb].bw = bw
+				best[nb].hops = hops
+				best[nb].prev = cur
+			}
+		}
+	}
+}
+
 // jackTarget — ближайшее устройство джек-ина: терминал в 2 м, радио — в
 // радиусе (3D-дистанция; LOS по §12.7 не нужен).
 func (cs *cyberState) jackTarget(pos vec3) *device {
@@ -354,13 +469,16 @@ func (cs *cyberState) jackTarget(pos vec3) *device {
 
 // program — процесс на деке джекнутого хакера (§12.4). Прогресс — секунды
 // «работы»; каждый тик растёт на dt/N запущенных (честные очереди: N
-// программ = каждая в N раз медленнее).
+// программ = каждая в N раз медленнее) × сетевой фактор (§16.3: конкуренция
+// за bw линков пути). path — цепочка устройств widest-path до цели
+// (vulnscan/trojan, фиксируется на старте); portscan ест линки фронтира.
 type program struct {
 	id       int
-	prog     string // portscan|vulnscan|trojan
+	prog     string // portscan|vulnscan|trojan|watcher|firewall|antivirus
 	dev      string // цель (пусто у portscan)
 	work     float64
 	progress float64
+	path     []string
 }
 
 func progWork(name string) float64 {
@@ -555,7 +673,18 @@ func (w *world) handleRun(pl *player, msg message) {
 		// плейтеста M3 2026-11-15): switch режет транзитные линки, конечные
 		// устройства — чужой доступ через них. kind-ограничения нет.
 	}
-	pl.progs = append(pl.progs, &program{id: pl.nextProgID, prog: prog, dev: devID, work: work})
+	// §16.2/§16.3: путь widest-path к цели фиксируется на старте (чужие
+	// firewall'ы исключают транзит; бутылочка = bw кабелей + backplane
+	// транзитных свитчей). Сегментация в пути согласована с reachableFor —
+	// цель уже прошла проверку достижимости выше.
+	var path []string
+	if prog != "portscan" {
+		blocked := func(id string) bool {
+			return w.firewallBlocksThrough(w.cyber.devices[id], pl)
+		}
+		path = w.cyber.widestPath(pl.jackHost.id, devID, blocked)
+	}
+	pl.progs = append(pl.progs, &program{id: pl.nextProgID, prog: prog, dev: devID, work: work, path: path})
 	pl.nextProgID++
 	log.Printf("room: player %d run %s %s", pl.id, prog, devID)
 }
@@ -598,8 +727,92 @@ func (w *world) handleCtrl(pl *player, msg message) {
 	log.Printf("room: player %d ctrl %s -> open=%v", pl.id, dev.id, dev.open)
 }
 
-// cyberTick — честные очереди (§12.4): доля каждой программы = 1/N,
-// завершённые выполняют эффект и покидают деку.
+// computeNetFactors — сетевой фактор прогресса каждой активной программы на
+// тик (§16.3, ревизия 1: честные очереди НА ЛИНКАХ — сетевой аналог
+// планировщика CPU §5.1). Каждый скан заявляет спрос: portscan 2 МБ/с на
+// каждый линк фронтира распространения, vulnscan/trojan 4 МБ/с на линках
+// зафиксированного widest-path (кабели + backplane транзитных свитчей).
+// Доля линка = bw/N потребителей; если доля < спроса — прогресс
+// масштабируется (доля/спрос), иначе полная скорость. Тяжёлый слив (M5
+// итерация 2) станет ещё одним потребителем — chaff-контрига из §16.3.
+func (w *world) computeNetFactors() map[*program]float64 {
+	type netLink struct {
+		bw      float64
+		demands map[*program]float64
+	}
+	links := map[string]*netLink{}
+	addUse := func(p *program, key string, bw, demand float64) {
+		l, ok := links[key]
+		if !ok {
+			l = &netLink{bw: bw, demands: map[*program]float64{}}
+			links[key] = l
+		}
+		if _, seen := l.demands[p]; !seen {
+			l.demands[p] = demand
+		}
+	}
+	for _, pl := range w.players {
+		if !pl.jacked || pl.jackHost == nil {
+			continue
+		}
+		for _, p := range pl.progs {
+			switch p.prog {
+			case "portscan":
+				// Фронтир распространения: рёбра от известных устройств к
+				// достижимым соседям (per-player, §13.5) + шины свитчей.
+				reach := w.reachableFor(pl.jackHost.id, pl)
+				for id := range pl.scanned {
+					if !reach[id] {
+						continue
+					}
+					if sw := w.cyber.devices[id]; sw.kind == "switch" && sw.backplane > 0 {
+						addUse(p, "b:"+id, sw.backplane, scanDemandPortscan)
+					}
+					for _, n := range w.cyber.neighbors(id) {
+						if !reach[n] {
+							continue
+						}
+						if c := w.cyber.cableBetween(id, n); c != nil {
+							addUse(p, "c:"+c.id, c.bw, scanDemandPortscan)
+						}
+					}
+				}
+			case "vulnscan", "trojan":
+				for i := 0; i+1 < len(p.path); i++ {
+					a, b := p.path[i], p.path[i+1]
+					if c := w.cyber.cableBetween(a, b); c != nil {
+						addUse(p, "c:"+c.id, c.bw, scanDemandPath)
+					}
+					if i > 0 {
+						if sw := w.cyber.devices[a]; sw.kind == "switch" && sw.backplane > 0 {
+							addUse(p, "b:"+a, sw.backplane, scanDemandPath)
+						}
+					}
+				}
+			}
+		}
+	}
+	factors := make(map[*program]float64)
+	for _, pl := range w.players {
+		for _, p := range pl.progs {
+			factors[p] = 1
+		}
+	}
+	for _, l := range links {
+		n := len(l.demands)
+		alloc := l.bw / float64(n) // честная доля каждого потребителя линка
+		for p, demand := range l.demands {
+			if demand > 0 && alloc < demand {
+				factors[p] = math.Min(factors[p], alloc/demand)
+			}
+		}
+	}
+	return factors
+}
+
+// cyberTick — честные очереди (§12.4): доля каждой программы = 1/N ×
+// сетевой фактор линков (§16.3); завершённые выполняют эффект и покидают
+// деку.
 func (w *world) cyberTick(pl *player, dt float64) {
 	if !pl.jacked || len(pl.progs) == 0 {
 		return
@@ -607,7 +820,11 @@ func (w *world) cyberTick(pl *player, dt float64) {
 	share := dt / float64(len(pl.progs))
 	var finished []*program
 	for _, p := range pl.progs {
-		p.progress += share
+		f := w.netF[p]
+		if f <= 0 {
+			f = 1
+		}
+		p.progress += share * f
 		if p.progress >= p.work {
 			finished = append(finished, p)
 		}
@@ -865,7 +1082,12 @@ func (w *world) deckStatusTick() {
 		n := len(p.progs)
 		progs := make([]deckProg, 0, n)
 		for _, pr := range p.progs {
-			remain := (pr.work - pr.progress) * float64(n) // ETA при текущей доле
+			f := w.netF[pr]
+			if f <= 0 {
+				f = 1
+			}
+			// ETA при текущих долях: CPU-очередь (×N) × канал (÷f, §16.3)
+			remain := (pr.work - pr.progress) * float64(n) / f
 			if remain < 0 {
 				remain = 0
 			}
