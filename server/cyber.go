@@ -651,6 +651,9 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// Скан упёрся в чужой firewall (за фильтром есть неоткрытые соседи) —
 		// один alert хозяину на запуск (§13.5, без спама; живому — §5.5).
 		if hit := w.firewallScanHit(pl, pl.scanned); hit != nil {
+			// Сканер тоже не молчит (плейтест M4): уведомление об усечении
+			// скана — скан при этом не отменяется (открытое остаётся открытым).
+			w.sendTo(pl.id, message{"t": "denied", "reason": "firewall_scan", "dev": hit.id})
 			if owner, ok := w.players[hit.firewalled]; ok && owner.alive {
 				w.sendTo(hit.firewalled, message{"t": "alert", "dev": hit.id, "who": pl.id, "src": "firewall"})
 			}

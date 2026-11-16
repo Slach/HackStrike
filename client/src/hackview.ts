@@ -51,6 +51,9 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   too_far: 'СЛИШКОМ ДАЛЕКО',
   bad_target: 'НЕВЕРНАЯ ЦЕЛЬ',
   antivirus: 'ANTIVIRUS — УСТАНОВКА TROJAN ОТБИТА',
+  // §13.5 (плейтест M4): скан упёрся в чужой фильтр — скан не отменён,
+  // но за хостом из dev ничего нового не открыто.
+  firewall_scan: 'СКАН УПОРСЯ В FIREWALL',
 }
 
 // Только сетевые устройства: fire (M4 §14.6.1) — не девайс, в деку не попадает
@@ -448,7 +451,10 @@ export class HackView {
 
   onDenied(msg: DeniedMsg): void {
     if (!this._active) return
-    this.toast(DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`)
+    const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
+    // firewall_scan несёт хост с фильтром (§13.5) — показываем, ГДЕ упёрся
+    // и что с этим делать (плейтест M4: тост без действия бесполезен).
+    this.toast(msg.dev !== undefined ? `${base} (${msg.dev.toUpperCase()}) — НУЖЕН TROJAN НА ХОСТЕ` : base)
   }
 
   /** Сработал watcher (M3 §13.2): чужой джек-ин в устройство с моим триггером. */

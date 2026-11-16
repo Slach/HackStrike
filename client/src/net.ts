@@ -150,7 +150,8 @@ export type ServerMessage =
   | { t: 'jackin'; host: string; deck: DeckInfo }
   | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
-  | { t: 'denied'; reason: string }
+  // dev (omitempty, §13.5) — где упёрся скан: firewall_scan
+  | { t: 'denied'; reason: string; dev?: string }
   // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
   // into my watched device) from firewall (enemy portscan hit my filter,
   // one alert per scan run) or antivirus (enemy trojan repelled).
@@ -408,8 +409,10 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       }
       return { t: 'scan', devices }
     }
-    case 'denied':
-      return { t: 'denied', reason: str(m.reason) ?? 'unknown' }
+    case 'denied': {
+      const dev = str(m.dev)
+      return { t: 'denied', reason: str(m.reason) ?? 'unknown', ...(dev !== null ? { dev } : {}) }
+    }
     case 'alert': {
       const dev = str(m.dev)
       if (dev === null) return null
