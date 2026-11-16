@@ -1430,6 +1430,9 @@ export class HackView {
     }
     row('ID', d.id.toUpperCase())
     row('ТИП', KIND_LABEL[d.kind])
+    // ШИНА (M5 §16.3, итерация 1.5 — плейтест: bw должен быть виден в табах):
+    // backplane свитча — суммарная шина транзита, её делят все трансферы.
+    if (d.bp !== undefined) row('ШИНА', `${Math.round(d.bp)} МБ/С`)
     // Владелец узла, открытого по связи из SWITCH и т.п.: ник + цвет команды.
     const ownRow = el('div', 'dev-row')
     const ownVal = this.ownerSpan(d.owner)
@@ -1450,7 +1453,9 @@ export class HackView {
           continue
         }
         const chip = el('button', 'dev-link')
-        chip.textContent = l.toUpperCase()
+        const mbps = d.net?.find((n) => n.id === l)?.mbps
+        chip.textContent = mbps !== undefined ? `${l.toUpperCase()} · ${Math.round(mbps)}` : l.toUpperCase()
+        chip.title = mbps !== undefined ? `Канал ${Math.round(mbps)} МБ/с` : ''
         chip.dataset.link = l // для восстановления фокуса после render()
         chip.addEventListener('click', (e) => {
           e.stopPropagation()
@@ -1948,7 +1953,7 @@ export class HackView {
       t.textContent = text
       svg.append(t)
     }
-    const line = (x1: number, y1: number, x2: number, y2: number, cls: string): void => {
+    const line = (x1: number, y1: number, x2: number, y2: number, cls: string, width?: number): void => {
       const l = svgEl('line')
       l.setAttribute('x1', String(x1))
       l.setAttribute('y1', String(y1))
@@ -1958,6 +1963,7 @@ export class HackView {
       // multi-token строкой ('a b') бросает InvalidCharacterError и рендер
       // карты умирает целиком.
       l.setAttribute('class', cls)
+      if (width !== undefined) l.setAttribute('stroke-width', String(Math.round(width * 100) / 100))
       svg.append(l)
     }
 
@@ -1969,11 +1975,12 @@ export class HackView {
     // Проекция мировые XZ→экран. Multi-floor (M4 §13.3.1, ред. плейтеста:
     // ярусы НЕ должны пересекаться — никакой ISO-накидки поверх плана):
     // каждый ярус получает свою горизонтальную полосу и свой fit по своему
-    // bbox — полосы не пересекаются по построению, а стояк c9 (s2→s3) —
-    // единственный мост между ними (голубой пунктир). Ярусы: y<4 → Э1,
-    // y<11 → Э2 (пороги от реальных плит m1: терраса y=8). Одноэтажная
-    // сеть = одна полоса на всю высоту ≈ прежняя проекция.
-    const levelOf = (y: number): number => (y < 4 ? 0 : y < 11 ? 1 : 2)
+    // bbox — полосы не пересекаются по построению, а стояк между этажами —
+    // мост между ними (голубой пунктир). M5-ревизия 1.5 (плейтест): ЯРУСОВ
+    // ДВА — порог один y<4 → Э1, остальное Э2. Прежний порог y<11 создавал
+    // фантомный «Э3»: настенный клапан v3 (подвес y=14.1 под крышей отсека)
+    // уезжал на несуществующий этаж. Одноэтажная сеть = одна полоса.
+    const levelOf = (y: number): number => (y < 4 ? 0 : 1)
     const levels = [...new Set(nodes.map((d) => levelOf(d.y)))].sort((a, b) => a - b)
     const shelfIdx = new Map<number, number>() // levelOf → индекс снизу (0=низ)
     levels.forEach((lv, i) => shelfIdx.set(lv, i))
@@ -2041,8 +2048,10 @@ export class HackView {
     }
 
     const bodies = hostPos !== undefined ? [...nodes.map((d) => ({ id: d.id, lv: levelOf(d.y) })), { id: DECK_ID, lv: hostLevel as number }] : nodes.map((d) => ({ id: d.id, lv: levelOf(d.y) }))
-    const MIN_DIST = 30 * S
-    for (let pass = 0; pass < 16; pass++) {
+    // MIN_DIST 34 и 24 прохода (M5-ревизия 1.5, плейтест: подпись R1
+    // перекрывалась CAM1) + добивка после клампа ниже.
+    const MIN_DIST = 34 * S
+    for (let pass = 0; pass < 24; pass++) {
       let maxPush = 0
       for (let i = 0; i < bodies.length; i++) {
         for (let j = i + 1; j < bodies.length; j++) {
@@ -2078,6 +2087,35 @@ export class HackView {
       p.x = Math.max(14, Math.min(W - 14, p.x))
       p.y = Math.max(f.bandTop + 10, Math.min(f.bandTop + bandH - 6, p.y))
     }
+    // Добивка после клампа (M5-ревизия 1.5, плейтест: R1 перекрывалась
+    // CAM1 у границы полосы): клампа могла свести раздвинутые узлы обратно,
+    // у границы прижимает к стенке, а не к соседу — повторная раздвижка
+    // с вертикальным смещением пары.
+    for (let pass = 0; pass < 8; pass++) {
+      let moved = false
+      for (let i = 0; i < bodies.length; i++) {
+        for (let j = i + 1; j < bodies.length; j++) {
+          const a = pos.get(bodies[i].id)
+          const b = pos.get(bodies[j].id)
+          if (a === undefined || b === undefined || bodies[i].lv !== bodies[j].lv) continue
+          const d = Math.hypot(b.x - a.x, b.y - a.y)
+          if (d >= MIN_DIST) continue
+          // вертикальная разведёнка: у полосы чаще некуда идти по X
+          const dy = (a.y <= b.y ? -1 : 1) * (MIN_DIST - Math.max(d, 2)) / 2
+          a.y = Math.max(a.y + dy, 0)
+          b.y = Math.max(b.y - dy, 0)
+          moved = true
+        }
+      }
+      if (!moved) break
+    }
+    // и финальный кламп (без повторной раздвижки — хотя бы не за краем)
+    for (const b of bodies) {
+      const p = pos.get(b.id)
+      const f = fits.get(b.lv)
+      if (p === undefined || f === undefined) continue
+      p.y = Math.max(f.bandTop + 10, Math.min(f.bandTop + bandH - 6, p.y))
+    }
 
     // Полосы этажей: подложка на всю ширину + подпись. Рисуем до связей —
     // фон. Стояк c9 виден поверх полос и читается как «вертикаль сквозь
@@ -2107,6 +2145,13 @@ export class HackView {
     // связи (дедуп по паре); координаты — после declutter. Связь между
     // полками (стояк c9 s2→s3) — отдельный голубой пунктир: читается как
     // «сквозь перекрытие», а не как соседство на плане (§13.3.1).
+    // M5-ревизия 1.5 (плейтест): ТОЛЩИНА линии = bw канала (§16.3) —
+    // магистраль 40 заметно жирнее ветки 10 и радио-пунктира 5.
+    const linkMbps = (a: ScanDevice, b: ScanDevice): number => {
+      const e = a.net?.find((n) => n.id === b.id) ?? b.net?.find((n) => n.id === a.id)
+      return e !== undefined && e.mbps > 0 ? e.mbps : 20
+    }
+    const bwWidth = (mbps: number): number => (0.8 + mbps / 12) * S
     const seen = new Set<string>()
     const drawLink = (a: ScanDevice, b: ScanDevice): void => {
       const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
@@ -2115,18 +2160,13 @@ export class HackView {
       const pa = pos.get(a.id)
       const pb = pos.get(b.id)
       if (pa === undefined || pb === undefined) return
+      const w = bwWidth(linkMbps(a, b))
       if (levelOf(a.y) !== levelOf(b.y)) {
-        const l = svgEl('line')
-        l.setAttribute('x1', String(pa.x))
-        l.setAttribute('y1', String(pa.y))
-        l.setAttribute('x2', String(pb.x))
-        l.setAttribute('y2', String(pb.y))
-        l.setAttribute('class', 'svg-link svg-riser')
-        svg.append(l)
+        line(pa.x, pa.y, pb.x, pb.y, 'svg-link svg-riser', w)
         return
       }
       const wireless = a.kind === 'radio' || b.kind === 'radio'
-      line(pa.x, pa.y, pb.x, pb.y, wireless ? 'svg-link svg-wireless' : 'svg-link')
+      line(pa.x, pa.y, pb.x, pb.y, wireless ? 'svg-link svg-wireless' : 'svg-link', w)
     }
     for (const d of nodes) {
       for (const l of d.links) {

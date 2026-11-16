@@ -50,6 +50,12 @@ export interface SnapProp {
   owner?: number // camera (M3 §13.7): LED-индикатор владения; отсутствует = нейтральная
 }
 
+/** Link bandwidth of a scanned device (M5 §16.9, iter 1.5). */
+export interface ScanNetLink {
+  id: string // adjacent device id
+  mbps: number // link bandwidth, MB/s
+}
+
 /** Device discovered by portscan (GDD §12.5 "scan"). */
 export interface ScanDevice {
   id: string
@@ -59,6 +65,8 @@ export interface ScanDevice {
   z: number
   owner: number | null // playerId of the last hacker to trojan it
   links: string[] // ids of adjacent devices
+  net?: ScanNetLink[] // bandwidth of each link, MB/s (M5 §16.9, iter 1.5)
+  bp?: number // switch backplane, MB/s (M5 §16.3; omitted for non-switches)
   vulned?: boolean // my vulnscan found an exploit here (omitted when false)
   watched?: boolean // my watcher trigger sits on this device (M3, omitted when false)
   log?: LogEntry[] // watcher event journal (M3 §13.1 №1; only for MY watched devices)
@@ -276,6 +284,21 @@ function parseDevice(v: unknown): ScanDevice | null {
     firewalledBy: typeof p.firewalledBy === 'number' && Number.isFinite(p.firewalledBy) ? p.firewalledBy : undefined,
     antivirused: p.antivirused === true,
   }
+  // bw линков (M5 §16.9, итерация 1.5): парсим защитно, пары без числового
+  // mbps выбрасываем.
+  if (Array.isArray(p.net)) {
+    const net: ScanNetLink[] = []
+    for (const e of p.net) {
+      if (typeof e !== 'object' || e === null) continue
+      const r = e as Record<string, unknown>
+      const nid = str(r.id)
+      const mbps = num(r.mbps, Number.NaN)
+      if (nid === null || !Number.isFinite(mbps) || mbps <= 0) continue
+      net.push({ id: nid, mbps })
+    }
+    if (net.length > 0) dev.net = net
+  }
+  if (typeof p.bp === 'number' && Number.isFinite(p.bp) && p.bp > 0) dev.bp = p.bp
   // Журнал событий watcher'а (§13.1 №1): только у watched-устройств, но парсим
   // защитно — пустой/битый массив просто не даём.
   if (Array.isArray(p.log) && p.log.length > 0) {

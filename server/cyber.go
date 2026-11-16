@@ -991,6 +991,13 @@ func (w *world) resendScanFor(devID string) {
 
 // --- сообщения деки -------------------------------------------------------
 
+// scanNetLink — bw одного линка устройства (§16.9, итерация 1.5): МБ/с для
+// UI табов и ширины линий карты деки.
+type scanNetLink struct {
+	ID   string  `json:"id"`
+	Mbps float64 `json:"mbps"`
+}
+
 type scanDevice struct {
 	ID    string   `json:"id"`
 	Kind  string   `json:"kind"`
@@ -999,6 +1006,11 @@ type scanDevice struct {
 	Z     float64  `json:"z"`
 	Owner any      `json:"owner"` // null = нейтральное
 	Links []string `json:"links"`
+	// Net — bw каждого линка (параллелен Links, §16.3); omitempty: одноэтажные
+	// мини-карты тестов без bw в UI не несут лишнего.
+	Net []scanNetLink `json:"net,omitempty"`
+	// Bp — backplane свитча, МБ/с (§16.3); omitempty: только switch.
+	Bp float64 `json:"bp,omitempty"`
 	// Vulned — уязвимость, найденная МОИМ vulnscan'ом (для этого хакера);
 	// omitempty: поле появляется только когда true (§12.5, доп. 2026-11-14).
 	Vulned bool `json:"vulned,omitempty"`
@@ -1033,6 +1045,14 @@ func (w *world) sendScan(pl *player) {
 			ID: d.id, Kind: d.kind,
 			X: round3(d.pos[0]), Y: round3(d.pos[1]), Z: round3(d.pos[2]),
 			Links: w.cyber.neighbors(id),
+		}
+		if d.kind == "switch" && d.backplane > 0 {
+			sd.Bp = d.backplane
+		}
+		for _, n := range sd.Links {
+			if c := w.cyber.cableBetween(id, n); c != nil {
+				sd.Net = append(sd.Net, scanNetLink{ID: n, Mbps: c.bw})
+			}
 		}
 		if d.owner != 0 {
 			sd.Owner = d.owner
