@@ -8,6 +8,7 @@ package main
 import (
 	"log"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -505,8 +506,14 @@ func (w *world) jackout(pl *player) {
 
 // --- программы ------------------------------------------------------------
 
-func (w *world) denied(pl *player, reason string) {
-	log.Printf("room: player %d denied: %s", pl.id, reason)
+func (w *world) denied(pl *player, reason string, detail ...string) {
+	// detail — только для лога (какая программа/цель отказана); на wire
+	// не влияет (§9.2: denied = reason + optional dev).
+	if len(detail) > 0 {
+		log.Printf("room: player %d denied: %s (%s)", pl.id, reason, strings.Join(detail, " "))
+	} else {
+		log.Printf("room: player %d denied: %s", pl.id, reason)
+	}
 	w.sendTo(pl.id, message{"t": "denied", "reason": reason})
 }
 
@@ -526,22 +533,22 @@ func (w *world) handleRun(pl *player, msg message) {
 	if work == 0 {
 		return // неизвестная программа — мусор в протоколе, игнорируем
 	}
+	devID := str(msg, "dev")
 	if len(pl.progs) >= deckRAM {
-		w.denied(pl, "ram_full")
+		w.denied(pl, "ram_full", prog, devID)
 		return
 	}
-	devID := str(msg, "dev")
 	if prog != "portscan" {
 		dev, ok := w.cyber.devices[devID]
 		// Цель должна быть обнаружена (scanned — туман войны portscan'а) И
 		// оставаться достижимой по текущей сети — достижимость per-player:
 		// чужой firewall на транзитном устройстве отрезает цель (§13.5).
 		if !ok || !pl.scanned[devID] || !w.reachableFor(pl.jackHost.id, pl)[devID] {
-			w.denied(pl, "too_far")
+			w.denied(pl, "too_far", prog, devID)
 			return
 		}
 		if prog == "trojan" && !dev.vulnedBy[pl.id] {
-			w.denied(pl, "not_vulned")
+			w.denied(pl, "not_vulned", prog, devID)
 			return
 		}
 		// NB: firewall ставится на любое сетевое устройство (§13.5, ред.
@@ -567,11 +574,11 @@ func (w *world) handleCtrl(pl *player, msg message) {
 	}
 	dev, ok := w.cyber.devices[str(msg, "dev")]
 	if !ok || (dev.kind != "door" && dev.kind != "gas" && dev.kind != "valve") || dev.owner != pl.id {
-		w.denied(pl, "not_owner")
+		w.denied(pl, "not_owner", str(msg, "action"), str(msg, "dev"))
 		return
 	}
 	if !w.reachableFor(pl.jackHost.id, pl)[dev.id] {
-		w.denied(pl, "too_far")
+		w.denied(pl, "too_far", str(msg, "action"), dev.id)
 		return
 	}
 	if str(msg, "action") != "toggle" {

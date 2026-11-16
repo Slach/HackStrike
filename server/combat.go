@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"math"
 	"sort"
 	"time"
@@ -156,6 +157,9 @@ func (w *world) damage(shooter, victim *player, dmg int) bool {
 	victim.respawnAt = w.now().Add(respawnDelay)
 	w.jackout(victim) // смерть хакера = авто-джек-аут (§12.1)
 	w.scores[shooter.team]++
+	// Смерти в логе не было: «непонятный» jackout у джекнутого хакера не
+	// отличить от ручного CTRL/CMD+ALT+DEL (баг-репорт владельца 2026-11-16).
+	log.Printf("combat: kill player %d -> player %d", shooter.id, victim.id)
 	return true
 }
 
@@ -186,5 +190,6 @@ func (w *world) envDamage(victim *player, dmg int, owner uint64) bool {
 	}
 	w.sendTo(victim.id, message{"t": "death", "by": uint64(0), "respawnAt": victim.respawnAt.UnixMilli()})
 	w.broadcast(message{"t": "envkill", "victim": victim.id, "owner": owner})
+	log.Printf("combat: envkill player %d (trap owner %d)", victim.id, owner)
 	return true
 }
