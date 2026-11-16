@@ -566,9 +566,12 @@
       .card:hover {
         border-color: rgba(55, 255, 155, 0.85);
       }
+      /* Выбранный — жирнее и заметнее hover: двойная рамка + свечение */
       .card.selected {
         border-color: var(--cy);
-        box-shadow: 0 0 16px rgba(55, 255, 155, 0.35);
+        outline: 2px solid var(--cy);
+        outline-offset: 1px;
+        box-shadow: 0 0 16px rgba(55, 255, 155, 0.5);
       }
       .card-name {
         font-size: 13px;
@@ -2008,7 +2011,9 @@
         white-space: nowrap;
       }
       /* Кнопки join-экрана — то же выравнивание: поровну, перенос при узком
-         окне. .btn small (пригласить/настройки) подтягиваем к размеру ДЕПЛОЯ. */
+         окне. Пригласить/настройки полностью подтягиваем к размеру ДЕПЛОЯ:
+         тот же шрифт, letter-spacing и высота; содержимое по центру флексом,
+         иконка крупная и выровнена по линии. */
       .joinBtns {
         flex-wrap: wrap;
       }
@@ -2016,11 +2021,26 @@
         flex: 1 1 auto;
         min-width: 180px;
         white-space: nowrap;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
-      body:not(.touch) .joinBtns .btn.small {
-        padding-top: 12px;
-        padding-bottom: 12px;
-        font-size: 13px;
+      .joinBtns .btn.small {
+        font-size: 16px;
+        letter-spacing: 5px;
+        padding: 16px 24px;
+        min-height: 56px;
+        line-height: 1;
+      }
+      .btnIco {
+        font-size: 44px;
+        line-height: 1;
+        letter-spacing: 0;
+        margin-right: 10px;
+        flex: 0 0 auto;
+        align-self: center;
+        /* Глиф эмодзи висит ниже центра строки — оптически поднимаем */
+        transform: translateY(-0.1em);
       }
       /* Лозунги приглашения: агрессивный акцент, как лого на join */
       .inviteSlogan {
@@ -2215,15 +2235,15 @@
         </div>
         <div id="joinCards" class="cards"></div>
         <div class="joinRow seg" id="teamSeg">
-          <button type="button" data-team="-1" class="segBtn on">(A)UTO</button>
           <button type="button" data-team="0" class="segBtn t0">(W)HITEHAT</button>
+          <button type="button" data-team="-1" class="segBtn on">(A)UTO</button>
           <button type="button" data-team="1" class="segBtn t1">(B)LACKHAT</button>
         </div>
         <div class="btnRow joinBtns">
           <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
           <button id="resumeBtn" class="btn hidden" type="button">ВЕРНУТЬСЯ В БОЙ</button>
-          <button id="inviteBtn" class="btn small ghost" type="button">✉ ПРИГЛАСИТЬ</button>
-          <button id="settingsBtn" class="btn small ghost" type="button">⚙ НАСТРОЙКИ</button>
+          <button id="inviteBtn" class="btn small ghost" type="button"><span class="btnIco">✉</span>ПРИГЛАСИТЬ</button>
+          <button id="settingsBtn" class="btn small ghost" type="button"><span class="btnIco">⚙</span>НАСТРОЙКИ</button>
         </div>
         <div id="joinStatus" class="dim"></div>
       </div>
