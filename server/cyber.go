@@ -43,8 +43,8 @@ const (
 
 	// M5 итерация 1 «канал сети» (§16.3, ревизия 1): bw-модель в МБ/с по
 	// рёбрам графа — входной хоп «дека↔точка входа» не считается.
-	cableTrunkBW   = 40.0 // кабель без явного bw в карте (магистраль по умолчанию)
-	radioUplinkBW  = 5.0  // беспроводной аплинк радио-точки (§16.3: радио 5)
+	cableTrunkBW     = 40.0 // кабель без явного bw в карте (магистраль по умолчанию)
+	radioUplinkBW    = 5.0  // беспроводной аплинк радио-точки (§16.3: радио 5)
 	defaultBackplane = 60.0 // switch без явного backplane (s1/s2-класс)
 	// Спрос сканов: portscan — на каждый линк своего распространения;
 	// vulnscan/trojan — на линках пути к цели. Доля линка = bw/N потребителей;
@@ -127,7 +127,7 @@ type cable struct {
 	fromDev  string
 	toDev    string
 	points   []vec3
-	wireless bool   // радио-аплинк: на карте рисуется пунктиром
+	wireless bool    // радио-аплинк: на карте рисуется пунктиром
 	bw       float64 // МБ/с (магистраль 40 / доступ 20 / ветка 10 / радио 5)
 }
 
@@ -666,6 +666,15 @@ func (w *world) handleRun(pl *player, msg message) {
 			return
 		}
 		if prog == "trojan" && !dev.vulnedBy[pl.id] {
+			w.denied(pl, "not_vulned", prog, devID)
+			return
+		}
+		// Решение владельца (c) 2026-11-16 «vulnscan = отмычка»: утилиты
+		// (watcher/firewall/antivirus) на ЧУЖИХ/НЕЙТРАЛЬНЫХ устройствах тоже
+		// требуют найденной уязвимости — установка софта на не-своё это тот же
+		// взлом. На своих (трояновых) — свободно: админишь без отмычки.
+		if (prog == "watcher" || prog == "firewall" || prog == "antivirus") &&
+			dev.owner != pl.id && !dev.vulnedBy[pl.id] {
 			w.denied(pl, "not_vulned", prog, devID)
 			return
 		}

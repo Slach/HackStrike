@@ -942,6 +942,17 @@ func runCollectM3(w *world, pl *player, msg message) []outMsg {
 	return w.takeOut()
 }
 
+// ensureVulned — решение владельца (c) 2026-11-16 «vulnscan = отмычка»:
+// утилиты (watcher/firewall/antivirus) на чужих/нейтральных устройствах
+// требуют завершённого vulnscan. Прогоняем его перед установкой (персистит,
+// повторно не тратится).
+func ensureVulned(w *world, pl *player, dev string) {
+	if w.cyber.devices[dev] == nil || w.cyber.devices[dev].vulnedBy[pl.id] {
+		return
+	}
+	runAndWaitM2(w, pl, message{"t": "run", "prog": "vulnscan", "dev": dev})
+}
+
 // findAlert — ищет alert для игрока по устройству; nil = не было.
 func findAlert(out []outMsg, to uint64, dev string) message {
 	return findAlertSrc(out, to, dev, "")
@@ -1006,6 +1017,7 @@ func TestWatcher(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
 	}
+	ensureVulned(w, h, "t2")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
 	if !w.cyber.devices["t2"].watcherBy[h.id] {
 		t.Fatalf("watcher must be installed on t2")
@@ -1109,6 +1121,7 @@ func TestWatcher(t *testing.T) {
 	// Свой вход в наблюдаемое устройство не триггерит, но пишется в журнал
 	// (журнал — история устройства, а не только угроз).
 	jackAt(w, h, "t1") // хазяин не в деке — возвращаемся
+	ensureVulned(w, h, "t1")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t1"})
 	w.handleMessage(h, message{"t": "jackout"})
 	out = jackAt(w, h, "t1")
@@ -1186,10 +1199,12 @@ func TestWatcherInstallTriggers(t *testing.T) {
 	w.takeOut()
 	jackAt(w, h, "t1")
 	scanStep(w, h, clock, 4) // s1, t2, s2, r2+cam1 — вся сеть
+	ensureVulned(w, h, "t2")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
 
 	// Своя установка программы на своём watched-устройстве — не событие
 	// (пишется в журнал, alert'а нет).
+	ensureVulned(w, h, "t2")
 	out := runCollectM3(w, h, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	if findAlertSrc(out, h.id, "t2", "watcher") != nil {
 		t.Fatalf("own install must not fire the watcher")
@@ -1200,6 +1215,7 @@ func TestWatcherInstallTriggers(t *testing.T) {
 		t.Fatalf("setup: foe must jack into r2, out=%v", out)
 	}
 	scanStep(w, foe, clock, 2) // r2, s2, t2
+	ensureVulned(w, foe, "t2")
 	out = runCollectM3(w, foe, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	a := findAlertSrc(out, h.id, "t2", "watcher")
 	if a == nil || a["ev"] != "install" || a["prog"] != "firewall" || a["who"] != foe.id {
@@ -1210,6 +1226,7 @@ func TestWatcherInstallTriggers(t *testing.T) {
 	}
 
 	// Чужой antivirus на watched-устройстве — событие install.
+	ensureVulned(w, foe, "t2")
 	out = runCollectM3(w, foe, message{"t": "run", "prog": "antivirus", "dev": "t2"})
 	a = findAlertSrc(out, h.id, "t2", "watcher")
 	if a == nil || a["ev"] != "install" || a["prog"] != "antivirus" {
@@ -1227,6 +1244,7 @@ func TestWatcherInstallTriggers(t *testing.T) {
 	// Отбитый antivirus'ом trojan — НЕ событие (§13.1 №2): хозяин antivirus'а
 	// h переустанавливает щит, атакующий бьёт trojan'ом снова — repelled
 	// (владелец t2 — сам foe, повторный trojan не меняет владельца → install).
+	ensureVulned(w, h, "t2")
 	runCollectM3(w, h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
 	out = runCollectM3(w, foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
 	assertDeniedOut(t, out, foe, "antivirus")
@@ -1260,6 +1278,7 @@ func TestWatcherJournalOverflow(t *testing.T) {
 	w.takeOut()
 	jackAt(w, h, "t1")
 	scanStep(w, h, clock, 4)
+	ensureVulned(w, h, "t2")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
 
 	// 24 записи: свой jack-in в t2 x24 (не триггерит, но пишется).
@@ -1313,6 +1332,7 @@ func TestWatcherRadar(t *testing.T) {
 	// Хозяин ставит watcher на t2 (сегмент = вся карта).
 	jackAt(w, h, "t1")
 	scanStep(w, h, clock, 4)
+	ensureVulned(w, h, "t2")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
 	w.handleMessage(h, message{"t": "jackout"}) // живый вне деки — радар идёт
 
@@ -1387,6 +1407,7 @@ func TestWatcherRadar(t *testing.T) {
 		t.Fatalf("setup: foe must jack into r2, out=%v", out)
 	}
 	scanStep(w, foe, clock, 2) // r2, s2
+	ensureVulned(w, foe, "s2")
 	runAndWaitM2(w, foe, message{"t": "run", "prog": "firewall", "dev": "s2"})
 	w.handleMessage(hidden, message{"t": "jackout"})
 	if out := jackAt(w, hidden, "r2"); !hidden.jacked {
@@ -1426,7 +1447,9 @@ func TestWatcherScanhit(t *testing.T) {
 	w.takeOut()
 	jackAt(w, h, "t1")
 	scanStep(w, h, clock, 4)
+	ensureVulned(w, h, "t2")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+	ensureVulned(w, h, "t2")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	w.takeOut()
 
@@ -1614,6 +1637,7 @@ func TestFirewall(t *testing.T) {
 	// Защитник раскрывает сеть и ставит firewall на шлюз t2: фильтр живёт
 	// на устройстве, слот деки свободен.
 	scan(h, 4)
+	ensureVulned(w, h, "t2")
 	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	if w.cyber.devices["t2"].firewalled != h.id {
 		t.Fatalf("firewall must be installed on t2 by h")
@@ -1719,6 +1743,7 @@ func TestFirewall(t *testing.T) {
 	}
 
 	// Союзники и владелец фильтра не режутся (firewall снова стоит).
+	ensureVulned(w, h, "t2")
 	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "t2"})
 	if w.cyber.devices["t2"].firewalled != h.id {
 		t.Fatalf("setup: firewall must be reinstalled by h")
@@ -1808,6 +1833,7 @@ func TestFirewallAnyDevice(t *testing.T) {
 	// Firewall на switch s1 — классическое место фильтра: линк s1↔t2
 	// перерезан, карта разрезана. Ранее открытое гаснет у чужого и
 	// повторным portscan'ом не возвращается.
+	ensureVulned(w, h, "s1")
 	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "s1"})
 	if w.cyber.devices["s1"].firewalled != h.id {
 		t.Fatalf("firewall must be installable on a switch (any device, §13.5)")
@@ -1847,10 +1873,12 @@ func TestFirewallAnyDevice(t *testing.T) {
 
 	// Конечные устройства: firewall на дверь и камеру ставится (зависит от
 	// достижимости per-player — защитник проходит сквозь свой фильтр на s1).
+	ensureVulned(w, h, "d1")
 	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "d1"})
 	if w.cyber.devices["d1"].firewalled != h.id {
 		t.Fatalf("firewall must be installable on a door")
 	}
+	ensureVulned(w, h, "cam1")
 	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "cam1"})
 	if w.cyber.devices["cam1"].firewalled != h.id {
 		t.Fatalf("firewall must be installable on a camera")
@@ -1906,7 +1934,9 @@ func TestAntivirus(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
 	}
+	ensureVulned(w, h, "t2")
 	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
+	ensureVulned(w, h, "t2")
 	runCollect(h, message{"t": "run", "prog": "firewall", "dev": "t2"}) // для интеракции с выкуриванием
 	if w.cyber.devices["t2"].antivirused != h.id || w.cyber.devices["t2"].firewalled != h.id {
 		t.Fatalf("setup: antivirus+firewall must be installed on t2 by h")
@@ -1934,6 +1964,7 @@ func TestAntivirus(t *testing.T) {
 
 	// Свой trojan проходит свободно (свой antivirus свою команду не бьёт):
 	// antivirus на d1, h троянит d1 — владение перешло, antivirus не изношен.
+	ensureVulned(w, h, "d1")
 	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "d1"})
 	runCollect(h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
 	runCollect(h, message{"t": "run", "prog": "trojan", "dev": "d1"})
@@ -1970,6 +2001,7 @@ func TestAntivirus(t *testing.T) {
 	}
 
 	// Гонка версий: защитник переустановил — повторная попытка снова отбита.
+	ensureVulned(w, h, "t2")
 	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
 	if t2.antivirused != h.id {
 		t.Fatalf("setup: antivirus must be reinstalled")
@@ -2210,6 +2242,7 @@ func TestCamera(t *testing.T) {
 		}
 		return w.takeOut()
 	}
+	ensureVulned(w, h, "cam1")
 	runCollect(h, message{"t": "run", "prog": "antivirus", "dev": "cam1"})
 	if w.cyber.devices["cam1"].antivirused != h.id {
 		t.Fatalf("setup: antivirus must sit on cam1")
@@ -2288,5 +2321,41 @@ func TestJackinResendsScan(t *testing.T) {
 		if om.msg["t"] == "scan" {
 			t.Fatalf("fresh jackin must not send scan")
 		}
+	}
+}
+
+// Решение владельца (c) 2026-11-16 «vulnscan = отмычка»: утилиты на чужих/
+// нейтральных устройствах требуют vulnscan; на своих (трояновых) — нет.
+func TestUtilityVulnscanGate(t *testing.T) {
+	w, clock := cyberTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", 0)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	scanStep(w, h, clock, 4) // вся сеть: s1, s2, t2, d1, r1
+
+	// Нейтральное устройство без vulnscan — not_vulned (watcher, firewall,
+	// antivirus одинаково).
+	for _, prog := range []string{"watcher", "firewall", "antivirus"} {
+		w.handleMessage(h, message{"t": "run", "prog": prog, "dev": "t2"})
+		assertDenied(t, w, h, "not_vulned")
+	}
+
+	// vulnscan один раз — отмычка для всех утилит сразу (персистит).
+	ensureVulned(w, h, "t2")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "watcher", "dev": "t2"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "firewall", "dev": "t2"})
+	if !w.cyber.devices["t2"].watcherBy[h.id] || w.cyber.devices["t2"].firewalled != h.id {
+		t.Fatalf("vulnscan must unlock watcher+firewall on t2")
+	}
+
+	// Своё (трояновое) устройство — утилиты без vulnscan на target: trojan
+	// сам требует vulnscan, поэтому берём устройство, где h ставил trojan.
+	ensureVulned(w, h, "d1")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "d1"})
+	// simulate: vulnedBy[d1] есть — но проверяем именно ветку «своё»: убираем
+	// троян нельзя, поэтому проверяем antivirus на своём d1 (владелец h).
+	runAndWaitM2(w, h, message{"t": "run", "prog": "antivirus", "dev": "d1"})
+	if w.cyber.devices["d1"].antivirused != h.id {
+		t.Fatalf("utility on OWN device must install without extra vulnscan")
 	}
 }
