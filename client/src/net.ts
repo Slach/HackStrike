@@ -428,6 +428,9 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         deck: { cpu: num(d.cpu, 0), npu: num(d.npu, 0), ram: num(d.ram, 0), net: num(d.net, 0) },
       }
     }
+    case 'jackprog':
+      // §12.1 «дорогой вход»: прогресс установки канала (2 Гц).
+      return { t: 'jackprog', dev: str(m.dev) ?? '', s: num(m.s, 0) }
     case 'deck': {
       const progs: DeckProg[] = []
       if (Array.isArray(m.progs)) {
