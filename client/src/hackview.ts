@@ -79,6 +79,8 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   watcher: 'WATCHER',
   firewall: 'FIREWALL',
   antivirus: 'ANTIVIRUS',
+  rsync: 'RSYNC',
+  rm: 'RM',
 }
 
 /** Программы слэш-палитры (ГДД §13.3) — порядок = порядок ряда хоткеев 1..6. */
@@ -89,6 +91,8 @@ const PALETTE_PROGS: readonly RunProg[] = [
   'watcher',
   'firewall',
   'antivirus',
+  'rsync', // §16.2: данные — item@host как цель (второй токен)
+  'rm',
 ]
 
 /** Короткие алиасы kind для фильтра палитры: /term, /cam (ГДД §13.3). */
@@ -104,13 +108,14 @@ const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
   клапан: 'valve',
 }
 
-/** Кандидат слэш-палитры: устройство или программа. */
+/** Кандидат слэш-палитры: устройство, программа или item данных (§16.2). */
 interface PalCand {
-  kind: 'dev' | 'prog'
+  kind: 'dev' | 'prog' | 'item'
   /** Что вставляется в токен при автодополнении. */
   text: string
   dev?: string
   prog?: RunProg
+  data?: string // item: имя данных
   label: string
   hint: string
 }
@@ -670,6 +675,12 @@ export class HackView {
     } else if (e.code === 'Digit6') {
       e.preventDefault()
       this.runProgAt('antivirus', tabDev)
+    } else if (e.code === 'Digit7') {
+      e.preventDefault()
+      this.runDataProg('rsync', tabDev)
+    } else if (e.code === 'Digit8') {
+      e.preventDefault()
+      this.runDataProg('rm', tabDev)
     }
   }
 
@@ -730,6 +741,10 @@ export class HackView {
   /** Запуск программы; dev — до-поленная цель слэш-палитры (null = this.target).
    *  Гейты и протокол те же, что у кнопок/хоткеев деки (§13.3). */
   private runProgAt(prog: RunProg, dev: string | null): void {
+    if (prog === 'rsync' || prog === 'rm') {
+      this.runDataProg(prog, dev)
+      return
+    }
     const needDev = prog !== 'portscan'
     const target = dev ?? this.target
     if (needDev && target === null) {
@@ -742,6 +757,40 @@ export class HackView {
       needDev && target !== null ? { t: 'run', prog, dev: target } : { t: 'run', prog },
     )
     this.toast(`ЗАПУЩЕНО: ${PROG_LABEL[prog] ?? prog}${devSuffix}`)
+  }
+
+  /** Кнопки 7/8 и порядок «host rsync» (§16.2): цель = хост с данными;
+   *  один item — старт сразу, несколько — палитра с «rsync », нет — тост. */
+  private runDataProg(prog: 'rsync' | 'rm', dev: string | null): void {
+    const host = dev ?? this.target
+    if (host === null) {
+      this.toast('ВЫБЕРИТЕ ХОСТ С ДАННЫМИ НА КАРТЕ СЕТИ')
+      return
+    }
+    const d = this.devices.get(host)
+    const items = d !== undefined && d.owner === this.myId ? (d.data ?? []) : []
+    if (items.length === 0) {
+      this.toast('НЕТ ДАННЫХ / НЕ ВЛАДЕЛЕЦ')
+      return
+    }
+    if (items.length === 1) {
+      const it = items[0]
+      if (prog === 'rm') {
+        this.deps.send({ t: 'run', prog: 'rm', dev: host, data: it.n })
+        this.toast(`RM ${it.n.toUpperCase()} @${host.toUpperCase()}`)
+      } else {
+        this.deps.send({ t: 'run', prog: 'rsync', dev: host, dst: 'deck', data: it.n })
+        this.toast(`RSYNC ${it.n.toUpperCase()} → ДЕКА`)
+      }
+      return
+    }
+    // несколько items — уточнение палитрой
+    this.openPalette('run')
+    const pal = this.palette
+    if (pal !== null && pal.input !== null) {
+      pal.input.value = `${prog} `
+      this.updatePalette()
+    }
   }
 
   private toast(text: string): void {
@@ -966,6 +1015,31 @@ export class HackView {
     return d.id.startsWith(q) || d.kind.startsWith(q) || (alias !== undefined && d.kind === alias)
   }
 
+  /** Кандидаты-данные (§16.2): items на моих хостах (+ deck для rm).
+   *  Формат токена — name@host (уникальность хоста при неоднозначности). */
+  private itemCands(prog: 'rsync' | 'rm', q: string): PalCand[] {
+    const out: PalCand[] = []
+    const add = (name: string, host: string, hostLabel: string, mb: number, enc: boolean): void => {
+      if (!name.toLowerCase().startsWith(q) && !`${name}@${host}`.toLowerCase().startsWith(q)) return
+      out.push({
+        kind: 'item',
+        text: `${name}@${host}`,
+        dev: host,
+        data: name,
+        label: `${name.toUpperCase()} ${mb}МБ${enc ? ' 🔒' : ''}`,
+        hint: `@${hostLabel}`,
+      })
+    }
+    for (const d of this.devices.values()) {
+      if (d.owner === null || d.owner !== this.myId || d.data === undefined) continue
+      for (const it of d.data) add(it.n, d.id, d.id.toUpperCase(), it.mb, it.enc)
+    }
+    if (prog === 'rm') {
+      for (const it of this.deckData) add(it.n, 'deck', 'ДЕКА', it.mb, it.enc)
+    }
+    return out.sort((a, b) => (a.text < b.text ? -1 : 1))
+  }
+
   private updatePalette(): void {
     const pal = this.palette
     if (pal === null) return
@@ -1024,18 +1098,25 @@ export class HackView {
         cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint })
       }
     } else if (progFirst) {
-      // Второй токен (порядок «prog dev»): список целей с владельцем.
-      const devs = [...this.devices.values()]
-        .filter((d) => this.devMatch(d, pq))
-        .sort((a, b) => (a.id < b.id ? -1 : 1))
-      for (const d of devs) {
-        cands.push({
-          kind: 'dev',
-          text: d.id,
-          dev: d.id,
-          label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
-          hint: this.ownerLabel(d.owner),
-        })
+      // Данные-программы (§16.2): второй токен — item на СВОИХ хостах
+      // («rsync door_key@t1»); цель-устройство им не нужна.
+      const dataProg = 'rsync'.startsWith(dq) || 'rm'.startsWith(dq) ? ('rsync'.startsWith(dq) && 'rm'.startsWith(dq) ? null : 'rsync'.startsWith(dq) ? 'rsync' : 'rm') : null
+      if (dataProg !== null) {
+        for (const c of this.itemCands(dataProg, pq)) cands.push(c)
+      } else {
+        // Второй токен (порядок «prog dev»): список целей с владельцем.
+        const devs = [...this.devices.values()]
+          .filter((d) => this.devMatch(d, pq))
+          .sort((a, b) => (a.id < b.id ? -1 : 1))
+        for (const d of devs) {
+          cands.push({
+            kind: 'dev',
+            text: d.id,
+            dev: d.id,
+            label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
+            hint: this.ownerLabel(d.owner),
+          })
+        }
       }
     } else {
       // Второй токен (порядок «dev prog»): ВСЕ программы для выбранного
@@ -1181,6 +1262,65 @@ export class HackView {
         return
       }
       this.toast('НЕТ ТАКОЙ ПРОГРАММЫ — TAB ПОКАЖЕТ СПИСОК')
+      return
+    }
+    // Данные-программы (§16.2): «rsync door_key@t1 [dst]» / «rm door_key@t1».
+    if (prog === 'rsync' || prog === 'rm') {
+      let host: string | null = null
+      let data: string | null = null
+      if (sel !== undefined && sel.kind === 'item' && sel.dev !== undefined && sel.data !== undefined) {
+        host = sel.dev
+        data = sel.data
+      } else {
+        const tok = progFirst ? tokens[1] : tokens[1] ?? tokens[0]
+        if (tok !== undefined) {
+          const at = tok.indexOf('@')
+          const name = (at >= 0 ? tok.slice(0, at) : tok).toLowerCase()
+          const hostQ = at >= 0 ? tok.slice(at + 1).toLowerCase() : null
+          const hits = this.itemCands(prog, '').filter(
+            (c) => c.data === name && (hostQ === null || (c.dev !== undefined && c.dev.startsWith(hostQ))),
+          )
+          if (hits.length === 1) {
+            host = hits[0].dev ?? null
+            data = hits[0].data ?? null
+          } else if (hits.length > 1) {
+            this.toast('ДАННЫЕ НА НЕСКОЛЬКИХ ХОСТАХ — УТОЧНИ: NAME@HOST')
+            return
+          }
+        }
+      }
+      // Порядок «host rsync» (t1 rs + Enter): хост уже известен, item один.
+      if ((host === null || data === null) && dev !== null) {
+        const d = this.devices.get(dev)
+        const items = d !== undefined && d.owner === this.myId ? (d.data ?? []) : []
+        if (items.length === 1) {
+          host = dev
+          data = items[0].n
+        }
+      }
+      if (host === null || data === null) {
+        this.toast('НЕТ ТАКИХ ДАННЫХ — TAB ПОКАЖЕТ СПИСОК')
+        return
+      }
+      if (this.cmdHistory[this.cmdHistory.length - 1] !== raw && raw !== '') {
+        this.cmdHistory.push(raw)
+        if (this.cmdHistory.length > 20) this.cmdHistory.shift()
+      }
+      this.histIdx = 0
+      this.closePalette()
+      if (prog === 'rm') {
+        this.deps.send({ t: 'run', prog: 'rm', dev: host, data })
+        this.toast(`RM ${data.toUpperCase()}${host === 'deck' ? ' (ДЕКА)' : ` @${host.toUpperCase()}`}`)
+        return
+      }
+      // rsync: dst — третий токен (хост) или дека.
+      let dst = 'deck'
+      if (tokens.length > 2) {
+        const m = [...this.devices.values()].filter((d) => this.devMatch(d, tokens[2].toLowerCase()))
+        if (m.length === 1) dst = m[0].id
+      }
+      this.deps.send({ t: 'run', prog: 'rsync', dev: host, dst, data })
+      this.toast(`RSYNC ${data.toUpperCase()} → ${dst === 'deck' ? 'ДЕКА' : dst.toUpperCase()}`)
       return
     }
     if (this.cmdHistory[this.cmdHistory.length - 1] !== raw && raw !== '') {
@@ -1386,6 +1526,8 @@ export class HackView {
       ['4 WATCHER', 'watcher'],
       ['5 FIREWALL', 'firewall'],
       ['6 ANTIVIRUS', 'antivirus'],
+      ['7 RSYNC', 'rsync'],
+      ['8 RM 🗑', 'rm'],
     ] as const) {
       const b = el('button', 'hv-btn')
       b.textContent = label + this.targetSuffix()
@@ -1518,7 +1660,7 @@ export class HackView {
         })
         line.append(rs)
         const rm = el('button', 'dev-link')
-        rm.textContent = 'RM'
+        rm.textContent = '🗑 RM'
         rm.addEventListener('click', (e) => {
           e.stopPropagation()
           this.deps.send({ t: 'run', prog: 'rm', dev: d.id, data: it.n })
@@ -1690,6 +1832,14 @@ export class HackView {
       for (const it of this.deckData) {
         const row = el('div', 'hv-prog')
         row.append(txt('span', 'prog-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code ? ` код ${it.code}` : ''}`))
+        const rm = el('button', 'dev-link')
+        rm.textContent = '🗑'
+        rm.title = `rm ${it.n} (с деки)`
+        rm.addEventListener('click', () => {
+          this.deps.send({ t: 'run', prog: 'rm', dev: 'deck', data: it.n })
+          this.toast(`RM ${it.n.toUpperCase()} (ДЕКА)`)
+        })
+        row.append(rm)
         this.deckDataBox.append(row)
       }
     }
