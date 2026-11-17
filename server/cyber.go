@@ -448,27 +448,45 @@ func (cs *cyberState) widestPath(from, to string, blocked func(string) bool) []s
 	}
 }
 
-// jackTarget — ближайшее устройство джек-ина (§12.1 «дорогой вход»,
-// ред. 2026-11-17): ЛЮБОЕ сетевое устройство, чей порт в радиусе; при
-// конкуренции (терминал и камера рядом) побеждает БЛИЖАЙШЕЕ (плейтест
-// 2026-11-17: «space в зоне и точки, и камеры работал только на точку»).
-// Радиусы: точка входа — терминал 2 м / радио свой; прочие устройства — 2 м.
-// Дистанция ГОРИЗОНТАЛЬНАЯ: камеры висят на кронштейнах, клапаны под
-// потолком — 3D-дистанция до точки подвеса в радиус не проходила.
-func (cs *cyberState) jackTarget(pos vec3) *device {
-	var best *device
+// jackTarget — устройство джек-ина (§12.1 «дорогой вход»): ЛЮБОЕ сетевое
+// устройство, чей порт в радиусе (точка входа — терминал 2 м / радио свой;
+// прочие — 2 м, горизонтальная дистанция: камеры висят на кронштейнах).
+// При конкуренции (камера над дверным проёмом) побеждает та, НА КОТОРУЮ
+// СМОТРИМ — конус ~25° вокруг взгляда (плейтест 2026-11-17: «стоял у D1,
+// а джекнулся в CAM3 над проёмом»); вне конуса — ближайшая.
+func (w *world) jackTarget(pl *player) *device {
+	eye := pl.pos.add(vec3{0, eyeHeight, 0})
+	var best *device      // ближайший в радиусе
+	var aimed *device     // лучший в конусе взгляда
 	bestD := math.Inf(1)
-	for _, id := range cs.order {
-		d := cs.devices[id]
+	bestDot := math.Cos(25 * math.Pi / 180)
+	for _, id := range w.cyber.order {
+		d := w.cyber.devices[id]
 		r := jackTerminalRadius
 		if d.kind == "radio" {
 			r = d.radius
 		}
-		dp := d.pos.sub(pos)
+		dp := d.pos.sub(pl.pos)
 		dp[1] = 0
-		if dist := dp.length(); dist <= r && dist < bestD {
+		dist := dp.length()
+		if dist > r {
+			continue
+		}
+		if dist < bestD {
 			best, bestD = d, dist
 		}
+		// Взгляд игрока (yaw/pitch → направление, как в combat).
+		to := d.pos.sub(eye)
+		if to.length() < 0.001 {
+			continue
+		}
+		dot := to.dot(aimDir(pl.yaw, pl.pitch)) / to.length()
+		if dot > bestDot {
+			bestDot, aimed = dot, d
+		}
+	}
+	if aimed != nil {
+		return aimed
 	}
 	return best
 }
@@ -546,7 +564,7 @@ func (w *world) interactTick(pl *player) {
 	if !pressed || !pl.alive || pl.jacked || pl.cls != "hacker" {
 		return // дека только у хакера; мёртвые и уже джекнутые не входят
 	}
-	dev := w.cyber.jackTarget(pl.pos)
+	dev := w.jackTarget(pl)
 	if dev == nil || jackEntry(dev) {
 		if dev != nil {
 			w.jackin(pl, dev)

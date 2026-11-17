@@ -781,29 +781,52 @@ export class PropsView {
   nearestJackPoint(
     x: number,
     z: number,
-    dir?: { x: number; z: number },
+    dir?: { x: number; y: number; z: number },
   ): { id: string; label: string; dist: number; range: number } | null {
-    type P = { id: string; label: string; dist: number; range: number; dx: number; dz: number }
+    type P = { id: string; label: string; dist: number; range: number; dx: number; dz: number; ty: number }
     const pts: P[] = []
     for (const t of this.terminals.values()) {
-      pts.push({ id: t.id, label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, dist: Math.hypot(t.x - x, t.z - z), range: TERMINAL_RANGE, dx: t.x - x, dz: t.z - z })
+      pts.push({ id: t.id, label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, dist: Math.hypot(t.x - x, t.z - z), range: TERMINAL_RANGE, dx: t.x - x, dz: t.z - z, ty: 1.5 })
     }
     for (const r of this.radios.values()) {
       const range = r.radius ?? DEFAULT_RADIO_RANGE
-      pts.push({ id: r.id, label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, dist: Math.hypot(r.x - x, r.z - z), range, dx: r.x - x, dz: r.z - z })
+      pts.push({ id: r.id, label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, dist: Math.hypot(r.x - x, r.z - z), range, dx: r.x - x, dz: r.z - z, ty: 1.5 })
     }
-    // (1) в радиусе — серверный выбор: minby чистой дистанции СРЕДИ ВСЕХ
-    // устройств (§12.1, плейтест 2026-11-17: «space в зоне и точки, и камеры
-    // работал только на точку» — побеждает ближайший порт, тип не важен).
-    let actionable: P | null = null
+    // (1) в радиусе — выбор как у серверного jackTarget: при конкуренции
+    // портов (камера над проёмом двери) побеждает та, НА КОТОРУЮ СМОТРИМ
+    // (конус ~25° по 3D-направлению, dir — полный вектор взгляда камеры);
+    // вне конуса — ближайшая (плейтест 2026-11-17: «стоял у D1, а хинт/джек
+    // был на CAM3 над проёмом»).
+    let nearest: P | null = null
     for (const p of pts) {
-      if (p.dist <= p.range && (actionable === null || p.dist < actionable.dist)) actionable = p
+      if (p.dist <= p.range && (nearest === null || p.dist < nearest.dist)) nearest = p
     }
     const port = this.nearestDevicePort(x, z)
-    if (port !== null && (actionable === null || port.dist < actionable.dist)) {
-      return port
+    const cands: { id: string; label: string; dist: number; range: number; dx: number; dz: number; ty: number }[] = [...pts.filter((p) => p.dist <= p.range)]
+    if (port !== null) cands.push(port)
+    if (cands.length > 0 && dir !== undefined && (dir.x !== 0 || dir.z !== 0 || dir.y !== 0)) {
+      const dl = Math.hypot(dir.x, dir.y, dir.z)
+      const ux = dir.x / dl
+      const uy = dir.y / dl
+      const uz = dir.z / dl
+      let aimed: { id: string; label: string; dist: number; range: number } | null = null
+      let bestCos = Math.cos((25 * Math.PI) / 180)
+      for (const c of cands) {
+        const vx = c.dx
+        const vy = c.ty - 1.6 // глаза ~1.6 м
+        const vz = c.dz
+        const vl = Math.hypot(vx, vy, vz)
+        if (vl < 0.001) continue
+        const cos = (vx * ux + vy * uy + vz * uz) / vl
+        if (cos > bestCos) {
+          bestCos = cos
+          aimed = c
+        }
+      }
+      if (aimed !== null) return aimed
     }
-    if (actionable !== null) return actionable
+    if (port !== null && (nearest === null || port.dist < nearest.dist)) return port
+    if (nearest !== null) return nearest
 
     if (pts.length > 0) {
       // (3) ни одной в радиусе — куда смотрим: maxcos, tie — d/range.
@@ -845,8 +868,10 @@ export class PropsView {
   /** Ближайший порт устройства в 2 м — «дорогой вход» (§12.1, канал 6 с):
    *  свитч/дверь/камера/клапан/газ. Точки входа не участвуют (их радиусы —
    *  свои). */
-  private nearestDevicePort(x: number, z: number): { id: string; label: string; dist: number; range: number } | null {
-    let port: { id: string; label: string; dist: number; range: number } | null = null
+  private nearestDevicePort(x: number, z: number): { id: string; label: string; dist: number; range: number; ty: number; dx: number; dz: number } | null {
+    // ty — примерная высота порта: нужна для конуса взгляда (камера над
+    // проёмом двери — те же x/z, но разные ty, §12.1).
+    let port: { id: string; label: string; dist: number; range: number; ty: number; dx: number; dz: number } | null = null
     let portBest = Number.POSITIVE_INFINITY
     const kinds: [Map<string, { id: string; x: number; z: number }>, string][] = [
       [this.switches, 'СВИТЧ'],
@@ -860,7 +885,13 @@ export class PropsView {
         const d = Math.hypot(p.x - x, p.z - z)
         if (d <= TERMINAL_RANGE && d < portBest) {
           portBest = d
-          port = { id: p.id, label: `${name} ${p.id.toUpperCase()}`, dist: d, range: TERMINAL_RANGE }
+          // высота порта: дверь — середина полотна, клапан/газ — свой y,
+          // камера — кронштейн ~2.6 м, остальное — уровнь груди
+          let ty = 1.2
+          if ('baseY' in p) ty = (p.baseY as number) + 1
+          else if ('y' in p) ty = (p.y as number) + 0.6
+          else if (name === 'КАМЕРА') ty = 2.6
+          port = { id: p.id, label: `${name} ${p.id.toUpperCase()}`, dist: d, range: TERMINAL_RANGE, ty, dx: p.x - x, dz: p.z - z }
         }
       }
     }
