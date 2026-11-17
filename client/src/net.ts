@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' // GDD §12.4, §13.1, §13.5, §13.6
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'rsync' | 'rm' // GDD §12.4, §13.1-13.6, §16.2
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -24,7 +24,7 @@ export type ClientMessage =
   | { t: 'ping'; c: number }
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
-  | { t: 'run'; prog: RunProg; dev?: string }
+  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2: rsync/rm — dst/data
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
@@ -74,6 +74,9 @@ export interface ScanDevice {
   firewalledBy?: number // firewall owner id (M3 §13.5: whose filter — for the own/ally/enemy badge; sent together with firewalled)
   antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
   soft?: ScanSoft[] // resident software with owners (§9.2; ONLY to the device owner)
+  mem?: number // MEM capacity, MB (§16.1)
+  memFree?: number // free MEM including active rsync reservations
+  data?: DataItem[] // data listing — ONLY to the trojan owner (§16.9)
 }
 
 /** Одна запись списка процессов устройства (панель «ПРОЦЕССЫ», §13.1). */
@@ -115,6 +118,18 @@ export interface DeckProg {
   prog: string
   dev: string | null
   etaMs: number
+  dst?: string // rsync: приёмник ("deck" | hostId)
+  data?: string // rsync/rm: имя item
+  mbLeft?: number // rsync: остаток МБ
+  mbps?: number // rsync: текущая скорость МБ/с
+}
+
+/** Один item данных в MEM (§16.1). */
+export interface DataItem {
+  n: string
+  mb: number
+  enc: boolean
+  code?: string
 }
 
 export interface DeckInfo {
@@ -164,7 +179,7 @@ export type ServerMessage =
   // M2 (GDD §12.5)
   | { t: 'jackin'; host: string; deck: DeckInfo }
   | { t: 'jackprog'; dev: string; s: number } // установка канала «дорогого входа», 2 Гц (§12.1)
-  | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
+  | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; memUsed?: number; mem?: number; data?: DataItem[]; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   // dev (omitempty, §13.5) — где упёрся скан: firewall_scan
   | { t: 'denied'; reason: string; dev?: string }
@@ -309,6 +324,23 @@ function parseDevice(v: unknown): ScanDevice | null {
   if (typeof p.bp === 'number' && Number.isFinite(p.bp) && p.bp > 0) dev.bp = p.bp
   // Список процессов (§9.2, панель «ПРОЦЕССЫ»): защитно, только владельцу
   // сервер и так его шлёт; битые записи выбрасываем.
+  if (typeof p.mem === 'number' && Number.isFinite(p.mem) && p.mem > 0) dev.mem = p.mem
+  if (typeof p.memFree === 'number' && Number.isFinite(p.memFree) && p.memFree >= 0) dev.memFree = p.memFree
+  if (Array.isArray(p.data)) {
+    const data: DataItem[] = []
+    for (const e of p.data) {
+      if (typeof e !== 'object' || e === null) continue
+      const r = e as Record<string, unknown>
+      const n = str(r.n)
+      const mb = num(r.mb, Number.NaN)
+      if (n === null || !Number.isFinite(mb)) continue
+      const item: DataItem = { n, mb, enc: r.enc === true }
+      const code = str(r.code)
+      if (code !== null) item.code = code
+      data.push(item)
+    }
+    if (data.length > 0) dev.data = data
+  }
   if (Array.isArray(p.soft)) {
     const soft: ScanSoft[] = []
     for (const e of p.soft) {
@@ -347,12 +379,21 @@ function parseDeckProg(v: unknown): DeckProg | null {
   const p = v as Record<string, unknown>
   const prog = str(p.prog)
   if (prog === null) return null
-  return {
+  const d: DeckProg = {
     id: num(p.id, 0),
     prog,
     dev: str(p.dev),
     etaMs: Math.max(0, num(p.etaMs, 0)),
   }
+  const dst = str(p.dst)
+  if (dst !== null) d.dst = dst
+  const data = str(p.data)
+  if (data !== null) d.data = data
+  const mbLeft = num(p.mbLeft, Number.NaN)
+  if (Number.isFinite(mbLeft) && mbLeft >= 0) d.mbLeft = mbLeft
+  const mbps = num(p.mbps, Number.NaN)
+  if (Number.isFinite(mbps) && mbps > 0) d.mbps = mbps
+  return d
 }
 
 export function parseServerMessage(raw: unknown): ServerMessage | null {
@@ -439,12 +480,31 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
           if (parsed !== null) progs.push(parsed)
         }
       }
+      let data: DataItem[] | undefined
+      if (Array.isArray(m.data)) {
+        data = []
+        for (const e of m.data) {
+          if (typeof e !== 'object' || e === null) continue
+          const r = e as Record<string, unknown>
+          const n = str(r.n)
+          const mb = num(r.mb, Number.NaN)
+          if (n === null || !Number.isFinite(mb)) continue
+          const item: DataItem = { n, mb, enc: r.enc === true }
+          const code = str(r.code)
+          if (code !== null) item.code = code
+          data.push(item)
+        }
+        if (data.length === 0) data = undefined
+      }
       return {
         t: 'deck',
         cpuLoad: num(m.cpuLoad, 0),
         npuLoad: num(m.npuLoad, 0),
         ramUsed: num(m.ramUsed, 0),
         netLoad: num(m.netLoad, 0),
+        memUsed: typeof m.memUsed === 'number' ? m.memUsed : undefined,
+        mem: typeof m.mem === 'number' ? m.mem : undefined,
+        data,
         progs,
       }
     }

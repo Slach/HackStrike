@@ -92,6 +92,7 @@ type player struct {
 	jacking      *device // устройство, у которого ставится канал джек-ина (§12.1 «дорогой вход»; nil = нет)
 	jackT        float64 // прогресс установки канала, с
 	progs        []*program
+	items        []dataItem // MEM деки: скопированные данные (§16.1; смерть стирает)
 	nextProgID   int
 	scanned      map[string]bool
 	prevInteract bool // edge-детект space между тиками

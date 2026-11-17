@@ -158,6 +158,7 @@ func (w *world) damage(shooter, victim *player, dmg int) bool {
 	victim.alive = false
 	victim.respawnAt = w.now().Add(respawnDelay)
 	w.jackout(victim) // смерть хакера = авто-джек-аут (§12.1)
+	victim.items = nil // §16.1: MEM деки умирает с хакером
 	w.scores[shooter.team]++
 	// Смерти в логе не было: «непонятный» jackout у джекнутого хакера не
 	// отличить от ручного CTRL/CMD+ALT+DEL (баг-репорт владельца 2026-11-16).
@@ -185,6 +186,7 @@ func (w *world) envDamage(victim *player, dmg int, owner uint64) bool {
 	victim.alive = false
 	victim.respawnAt = w.now().Add(respawnDelay)
 	w.jackout(victim)
+	victim.items = nil // §16.1: MEM деки умирает с хакером
 	if owner != 0 && owner != victim.id {
 		if op, ok := w.players[owner]; ok {
 			w.scores[op.team]++

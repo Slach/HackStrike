@@ -14,6 +14,7 @@ import { IS_TOUCH } from './mobile'
 import type {
   CamSeen,
   ClientMessage,
+  DataItem,
   DeckProg,
   LogEntry,
   CyberKind,
@@ -245,6 +246,11 @@ export class HackView {
   private netMbps = 0
   private deckRam = 4
   private progs: readonly DeckProg[] = []
+  private deckData: readonly DataItem[] = [] // §16.1: инвентарь MEM деки
+  private deckMemUsed = 0
+  private deckMemCap = 0
+  private deckDataBox: HTMLElement | null = null // живой список в табе ДЕКА
+  private deckMemLine: HTMLElement | null = null
   private readonly hist = {
     cpu: [] as number[],
     npu: [] as number[],
@@ -387,6 +393,9 @@ export class HackView {
     this.push('ram', msg.ramUsed)
     this.push('net', msg.netLoad)
     this.progs = msg.progs
+    this.deckData = msg.data ?? []
+    this.deckMemUsed = msg.memUsed ?? this.deckMemUsed
+    this.deckMemCap = msg.mem ?? this.deckMemCap
     this.schedule(() => this.updateDeckData())
   }
 
@@ -1358,6 +1367,17 @@ export class HackView {
     this.progLists.push(progsBox)
     left.append(progsBox)
 
+    // §16.1: MEM деки — занято/ёмкость + инвентарь данных (живой список)
+    const memBox = el('div', 'hv-progs')
+    memBox.append(txt('div', 'hv-dim', 'MEM ДЕКИ'))
+    const memLine = txt('div', 'prog-name', '0/0 МБ')
+    memBox.append(memLine)
+    const inv = el('div', 'hv-progs')
+    memBox.append(inv)
+    this.deckDataBox = inv
+    this.deckMemLine = memLine
+    left.append(memBox)
+
     const run = el('div', 'hv-run')
     for (const [label, prog] of [
       ['1 PORTSCAN', 'portscan'],
@@ -1476,6 +1496,40 @@ export class HackView {
     // ШИНА (M5 §16.3, итерация 1.5 — плейтест: bw должен быть виден в табах):
     // backplane свитча — суммарная шина транзита, её делят все трансферы.
     if (d.bp !== undefined) row('ШИНА', `${Math.round(d.bp)} МБ/С`)
+    // MEM (M5 §16.1): ёмкость и свободно (резервации rsync учтены сервером).
+    if (d.mem !== undefined) {
+      row('MEM', `${d.memFree ?? '—'}/${d.mem} МБ`)
+    }
+    // Данные (§16.9): листинг — только владельцу (сервер не шлёт чужим);
+    // рядом кнопки RSYNC → ДЕКА и RM (chaff-игра §16.2).
+    if (d.data !== undefined && d.data.length > 0) {
+      const dr = el('div', 'dev-row')
+      dr.append(txt('span', 'dev-k', 'ДАННЫЕ'))
+      const dv = el('span', 'dev-v')
+      for (const it of d.data) {
+        const line = el('div', 'dev-data-row')
+        line.append(txt('span', 'dev-data-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`))
+        const rs = el('button', 'dev-link')
+        rs.textContent = '→ ДЕКА'
+        rs.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.deps.send({ t: 'run', prog: 'rsync', dev: d.id, dst: 'deck', data: it.n })
+          this.toast(`RSYNC ${it.n.toUpperCase()} → ДЕКА`)
+        })
+        line.append(rs)
+        const rm = el('button', 'dev-link')
+        rm.textContent = 'RM'
+        rm.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.deps.send({ t: 'run', prog: 'rm', dev: d.id, data: it.n })
+          this.toast(`RM ${it.n.toUpperCase()}`)
+        })
+        line.append(rm)
+        dv.append(line)
+      }
+      dr.append(dv)
+      info.append(dr)
+    }
     // Владелец узла, открытого по связи из SWITCH и т.п.: ник + цвет команды.
     const ownRow = el('div', 'dev-row')
     const ownVal = this.ownerSpan(d.owner)
@@ -1624,6 +1678,21 @@ export class HackView {
         r.key === 'ram' ? `${last(this.hist.ram)}/${this.deckRam}` : `${Math.round(last(this.hist[r.key]) * 100)}%`
     }
     for (const list of this.progLists) this.fillProgs(list)
+    // §16.1: MEM деки + инвентарь (точечно, 2 Гц)
+    if (this.deckMemLine !== null) {
+      this.deckMemLine.textContent = `${this.deckMemUsed}/${this.deckMemCap} МБ`
+    }
+    if (this.deckDataBox !== null) {
+      this.deckDataBox.replaceChildren()
+      if (this.deckData.length === 0) {
+        this.deckDataBox.append(txt('div', 'hv-dim', 'ДАННЫХ НЕТ — RSYNC [ПАЛИТРА]'))
+      }
+      for (const it of this.deckData) {
+        const row = el('div', 'hv-prog')
+        row.append(txt('span', 'prog-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code ? ` код ${it.code}` : ''}`))
+        this.deckDataBox.append(row)
+      }
+    }
   }
 
   private fillProgs(list: HTMLElement): void {
@@ -1635,7 +1704,12 @@ export class HackView {
       const row = el('div', 'hv-prog')
       const name = `${PROG_LABEL[p.prog] ?? p.prog}${p.dev !== null ? ` → ${p.dev.toUpperCase()}` : ''}`
       row.append(txt('span', 'prog-name', `#${p.id} ${name}`))
-      row.append(txt('span', 'prog-eta', `${(p.etaMs / 1000).toFixed(1)}с`))
+      if (p.prog === 'rsync' && p.data !== undefined) {
+        // §16.9: остаток МБ и скорость трансфера
+        row.append(txt('span', 'prog-eta', `${p.data} ${p.mbLeft ?? '?'}МБ · ${p.mbps ?? '?'}МБ/с`))
+      } else {
+        row.append(txt('span', 'prog-eta', `${(p.etaMs / 1000).toFixed(1)}с`))
+      }
       list.append(row)
     }
   }

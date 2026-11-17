@@ -2565,3 +2565,215 @@ func TestExpensiveJackin(t *testing.T) {
 		t.Fatalf("device jack-in deck net = %v, want worst cable (<100)", net)
 	}
 }
+
+// ── M5 итерация 2: MEM + rsync + rm (§16.1/§16.2) ────────────────────────
+
+// rsyncSetup — хакер захватил t1 (там seed-данные door_key 60 МБ) и стоит
+// в джек-ине. Возвращает мир, игрока и часы.
+func rsyncSetup(t *testing.T) (*world, *player, *time.Time) {
+	t.Helper()
+	w, clock := cyberTestWorld(t)
+	h := w.addPlayer(1, "h1", "hacker", 0)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	ensureVulned(w, h, "t1")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "t1"})
+	w.takeOut()
+	return w, h, clock
+}
+
+func findProg(pl *player, prog string) *program {
+	for _, p := range pl.progs {
+		if p.prog == prog {
+			return p
+		}
+	}
+	return nil
+}
+
+// TestRsyncDeckTransfer — §16.2: rsync door_key из троянового t1 в деку:
+// 60 МБ по доступу 20 МБ/с = 3 с чистой полосы; item переезжает (не копия).
+func TestRsyncDeckTransfer(t *testing.T) {
+	w, h, clock := rsyncSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t1", "dst": "deck"})
+	p := findProg(h, "rsync")
+	if p == nil {
+		t.Fatalf("rsync not started")
+	}
+	// Локальный трансфер (t1 = точка входа деки): полоса = входной канал
+	// хоста; в cyberTestWorld c1 без явного bw → дефолт-магистраль 40.
+	if p.mb != 60 || p.mbps != 40 {
+		t.Fatalf("rsync mb/mbps = %d/%v, want 60/40", p.mb, p.mbps)
+	}
+	// Резервация в деку: 60 из 256 занято сразу.
+	if used := w.deckItemsUsed(h); used != 60 {
+		t.Fatalf("deck reservation = %d, want 60", used)
+	}
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.items) != 1 || h.items[0].Name != "door_key" || h.items[0].MB != 60 {
+		t.Fatalf("door_key must land in deck, items=%v", h.items)
+	}
+	if hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("door_key must leave t1 (transfer, not copy)")
+	}
+	if used := w.deckItemsUsed(h); used != 60 {
+		t.Fatalf("deck after transfer = %d, want 60 (item, reservation gone)", used)
+	}
+}
+
+// TestRsyncDenied — §16.2: dup и mem_full.
+func TestRsyncDenied(t *testing.T) {
+	w, h, clock := rsyncSetup(t)
+	// первый трансфер резервировал 60 — второй такой же упрётся в dup.
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t1", "dst": "deck"})
+	w.takeOut()
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t1", "dst": "deck"})
+	out := w.takeOut()
+	if !hasDenied(out, h.id, "dup") {
+		t.Fatalf("second rsync of same item must be denied dup")
+	}
+	// mem_full: докачать до отказа нельзя (t1 один item) — вместо этого
+	// деку почти заполняем и пробуем второй item большего размера: seed
+	// дополнительного item'а на t2 (владелец h) через прямой доступ.
+	w2dev := w.cyber.devices["t2"]
+	w2dev.owner = h.id
+	w2dev.items = append(w2dev.items, dataItem{Name: "big", MB: 220, Enc: true})
+	// t2 открыть сканом (прогрессивно: s1 → s2 → t2 — три хопа).
+	for i := 0; i < 3; i++ {
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t2", "dst": "deck", "data": "big"})
+	if findProg(h, "rsync") == nil {
+		// 60 уже зарезервировано, 220 не влезает в 256 — mem_full
+		out = w.takeOut()
+		if !hasDenied(out, h.id, "mem_full") {
+			t.Fatalf("oversized transfer must be denied mem_full")
+		}
+	} else {
+		t.Fatalf("220+60 > 256 must be denied before start")
+	}
+	// Дождёмся первого трансфера — он не пострадал (резервации честные).
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.items) != 1 || h.items[0].Name != "door_key" {
+		t.Fatalf("reserved transfer must complete despite second denied one")
+	}
+}
+
+func hasDenied(out []outMsg, to uint64, reason string) bool {
+	for _, m := range out {
+		if m.to == to && m.msg["t"] == "denied" && m.msg["reason"] == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRsyncCancelFirewall — §16.2 «отмена»: чужой firewall встал на линке
+// зафиксированного маршрута — трансфер умирает, резервация ушла.
+func TestRsyncCancelFirewall(t *testing.T) {
+	w, h, clock := rsyncSetup(t)
+	// h захватил t1; перелогинимся в t2, чтобы маршрут t1→дека шёл через s1.
+	w.handleMessage(h, message{"t": "jackout"})
+	w.takeOut()
+	jackAt(w, h, "t2")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	// Тяжёлый item (200 МБ = 5 с по магистрали 40): firewall успеет в середину.
+	w.cyber.devices["t1"].items = append(w.cyber.devices["t1"].items, dataItem{Name: "blob", MB: 200, Enc: true})
+	// Враг (id 2, другая команда) входит через радио r1: вся подготовка ДО
+	// старта трансфера (портсканы+вулнскан ~7 с симуляции), firewall — после.
+	foe := w.addPlayer(2, "f2", "hacker", 1)
+	w.takeOut()
+	jackAt(w, foe, "r1")
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	ensureVulned(w, foe, "s1")
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t1", "dst": "deck", "data": "blob"})
+	p := findProg(h, "rsync")
+	if p == nil {
+		t.Fatalf("rsync not started")
+	}
+	if len(p.path) == 0 || p.path[1] != "s1" {
+		t.Fatalf("setup: route must go through s1, path=%v", p.path)
+	}
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "firewall", "dev": "s1"})
+	for i := 0; i < 5*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.progs) != 0 {
+		t.Fatalf("rsync must be cancelled by enemy firewall on route")
+	}
+	if len(h.items) != 0 {
+		t.Fatalf("cancelled transfer must not deliver data")
+	}
+	if used := w.deckItemsUsed(h); used != 0 {
+		t.Fatalf("reservation must be released on cancel, used=%d", used)
+	}
+}
+
+// TestRmAndDupChaff — §16.2: rm удаляет item с хоста; chaff-цикл
+// «слить → rm → слить снова» легален (dup снимается удалением).
+func TestRmAndDupChaff(t *testing.T) {
+	w, h, clock := rsyncSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t1", "dst": "deck"})
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	// Слить обратно на t1 (chaff-закладка) и удалить с деки.
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "deck", "dst": "t1", "data": "door_key"})
+	if findProg(h, "rsync") == nil {
+		t.Fatalf("deck->host rsync must start (chaff)")
+	}
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !hostHasItem(w.cyber.devices["t1"], "door_key") || len(h.items) != 0 {
+		t.Fatalf("chaff: door_key must move back to t1")
+	}
+	// rm на своём хосте, 0.5 с.
+	w.handleMessage(h, message{"t": "run", "prog": "rm", "dev": "t1", "data": "door_key"})
+	if p := findProg(h, "rm"); p == nil || p.work != 0.5 {
+		t.Fatalf("rm must run 0.5s")
+	}
+	for i := 0; i < 30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("rm must delete the item")
+	}
+	// И снова rsync с t1 легален (item вернулся через seed? нет — item
+	// удалён; dup уже не мешает, но и качать нечего).
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t1", "dst": "deck"})
+	if findProg(h, "rsync") != nil {
+		t.Fatalf("rsync of removed item must not start")
+	}
+}
+
+// TestDeathWipesDeckMEM — §16.1: смерть хакера стирает MEM его деки.
+func TestDeathWipesDeckMEM(t *testing.T) {
+	w, h, _ := rsyncSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "rsync", "dev": "t1", "dst": "deck"})
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	if len(h.items) != 1 {
+		t.Fatalf("setup: door_key in deck")
+	}
+	foe := w.addPlayer(2, "f2", "assault", 1)
+	foe.pos = h.pos
+	w.damage(foe, h, 500)
+	if len(h.items) != 0 {
+		t.Fatalf("death must wipe deck MEM, items=%v", h.items)
+	}
+}

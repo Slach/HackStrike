@@ -97,7 +97,7 @@ type session struct {
 }
 
 func newWorld(m *gameMap) *world {
-	return &world{
+	w := &world{
 		m:         m,
 		players:   make(map[uint64]*player),
 		sessions:  make(map[string]*session),
@@ -108,7 +108,10 @@ func newWorld(m *gameMap) *world {
 		gasDebt:   make(map[gasDebtKey]float64),
 		fireDebt:  make(map[fireDebtKey]float64),
 	}
+	w.seedData() // §16.1: стартовые данные матча (итерация 2: door_key на t1)
+	return w
 }
+
 
 func (w *world) sendTo(id uint64, msg message) { w.out = append(w.out, outMsg{id, msg}) }
 func (w *world) broadcast(msg message)         { w.out = append(w.out, outMsg{0, msg}) }
