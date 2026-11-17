@@ -472,6 +472,12 @@ func (w *world) jackTarget(pl *player) *device {
 		if dist > r {
 			continue
 		}
+		// Тот же этаж (§12.1, плейтест 2026-11-17 «в комнате только D1/D2,
+		// а джек — D3»): устройство на другом этаже с теми же x/z не цель —
+		// вертикальный гейт по глазам (±2.6 м).
+		if d.pos[1] > pl.pos[1]+eyeHeight+2.6 || d.pos[1] < pl.pos[1]-2.6 {
+			continue
+		}
 		if dist < bestD {
 			best, bestD = d, dist
 		}
