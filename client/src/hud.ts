@@ -405,18 +405,22 @@ export class Hud {
     return Math.min(4, Math.max(0.3, Number(this.el.lookSens.value) / 100))
   }
 
-  /** Персист + live-применение слайдера (§15.5). В конструкторе колбэк
-   *  main.ts ещё не назначен (он ниже по файлу) и sensScale бы молча
-   *  остался 1 при загруженной из localStorage сенсе — отсюда повторный
-   *  вызов из main после wiring и из deploy() на каждом заходе. */
+  /** §15.21: load и apply РАЗДЕЛЕНЫ. Реგრессия f6ae181: reapplySens делал и
+   *  то и то, а вешался на input — перетянутое значение мгновенно откатывалось
+   *  к сохранённому (snap-back, «слайдеры не двигаются»). Load (reapply*) —
+   *  только на загрузке после wiring и на deploy; input вешает apply*. */
+  private applySens(): void {
+    localStorage.setItem('hs.lookSens', this.el.lookSens.value)
+    this.el.lookSensVal.textContent = `${this.lookScale.toFixed(1)}×`
+    this.onSensScale(this.lookScale)
+  }
+
   reapplySens(): void {
     const saved = Number(localStorage.getItem('hs.lookSens'))
     if (Number.isFinite(saved) && saved >= 30 && saved <= 400) {
       this.el.lookSens.value = String(saved)
     }
-    localStorage.setItem('hs.lookSens', this.el.lookSens.value)
-    this.el.lookSensVal.textContent = `${this.lookScale.toFixed(1)}×`
-    this.onSensScale(this.lookScale)
+    this.applySens()
   }
 
   /** Множитель размера мобильных контролов (0.75..1.5, слайдер §15.16):
@@ -426,18 +430,20 @@ export class Hud {
     return Math.min(1.5, Math.max(0.75, Number(this.el.ctlScale.value) / 100))
   }
 
-  /** Персист + live-применение слайдера размера (§15.16), по образцу
-   *  reapplySens: в конструкторе --ctl применяется сразу (оверлей читает
-   *  переменную при первом же layout, колбэк не нужен). */
+  /** §15.21: те же load/apply, что у сенсы (та же snap-back-ловушка). */
+  private applyCtl(): void {
+    localStorage.setItem('hs.ctlScale', this.el.ctlScale.value)
+    const k = this.ctlScaleK
+    this.el.ctlScaleVal.textContent = `${k.toFixed(2).replace(/0$/, '')}×`
+    document.documentElement.style.setProperty('--ctl', String(k))
+  }
+
   reapplyCtl(): void {
     const saved = Number(localStorage.getItem('hs.ctlScale'))
     if (Number.isFinite(saved) && saved >= 75 && saved <= 150) {
       this.el.ctlScale.value = String(saved)
     }
-    localStorage.setItem('hs.ctlScale', this.el.ctlScale.value)
-    const k = this.ctlScaleK
-    this.el.ctlScaleVal.textContent = `${k.toFixed(2).replace(/0$/, '')}×`
-    document.documentElement.style.setProperty('--ctl', String(k))
+    this.applyCtl()
   }
 
   /** Множитель зоны тапа (1.0..1.8, §15.18): хит-тест контролов шире самой
@@ -446,15 +452,48 @@ export class Hud {
     return Math.min(1.8, Math.max(1, Number(this.el.tapScale.value) / 100))
   }
 
+  /** §15.21: тач-слой для range — Safari не поддерживает drag бегунка пальцем
+   *  родным жестом; ставим значение по X-позиции указателя и шлём input.
+   *  Десктоп не затронут (вызываемся только под IS_TOUCH). */
+  private enableTouchDrag(r: HTMLInputElement): void {
+    const setFromPointer = (clientX: number): void => {
+      const b = r.getBoundingClientRect()
+      const frac = Math.min(1, Math.max(0, (clientX - b.left) / b.width))
+      const min = Number(r.min), max = Number(r.max), step = Number(r.step) || 1
+      const raw = min + frac * (max - min)
+      const stepped = Math.round(raw / step) * step
+      r.value = String(Math.min(max, Math.max(min, stepped)))
+      r.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    r.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      try {
+        r.setPointerCapture(e.pointerId)
+      } catch {
+        /* синтетический указатель без активного pointerId — просто ставим */
+      }
+      setFromPointer(e.clientX)
+    })
+    r.addEventListener('pointermove', (e) => {
+      if (!r.hasPointerCapture(e.pointerId)) return
+      e.preventDefault()
+      setFromPointer(e.clientX)
+    })
+  }
+
+  private applyTap(): void {
+    localStorage.setItem('hs.tapScale', this.el.tapScale.value)
+    const k = this.tapScaleK
+    this.el.tapScaleVal.textContent = `${k.toFixed(1)}×`
+    document.documentElement.style.setProperty('--tap', String(k))
+  }
+
   reapplyTap(): void {
     const saved = Number(localStorage.getItem('hs.tapScale'))
     if (Number.isFinite(saved) && saved >= 100 && saved <= 180) {
       this.el.tapScale.value = String(saved)
     }
-    localStorage.setItem('hs.tapScale', this.el.tapScale.value)
-    const k = this.tapScaleK
-    this.el.tapScaleVal.textContent = `${k.toFixed(1)}×`
-    document.documentElement.style.setProperty('--tap', String(k))
+    this.applyTap()
   }
 
   constructor() {
@@ -462,11 +501,17 @@ export class Hud {
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
     this.el.invertY.checked = localStorage.getItem('hs.invertY') === '1'
     this.reapplySens()
-    this.el.lookSens.addEventListener('input', () => this.reapplySens())
+    this.el.lookSens.addEventListener('input', () => this.applySens())
     this.reapplyCtl()
-    this.el.ctlScale.addEventListener('input', () => this.reapplyCtl())
+    this.el.ctlScale.addEventListener('input', () => this.applyCtl())
     this.reapplyTap()
-    this.el.tapScale.addEventListener('input', () => this.reapplyTap())
+    this.el.tapScale.addEventListener('input', () => this.applyTap())
+    // §15.21: iOS Safari не тянет бегунок range пальцем (только тап по треку)
+    // — touch-слой на Pointer Events. touch-action:none на body.touch (§15.18)
+    // отдаёт жест слайдеру, pointermove льётся непрерывно.
+    if (IS_TOUCH) {
+      for (const r of [this.el.lookSens, this.el.ctlScale, this.el.tapScale]) this.enableTouchDrag(r)
+    }
     // Единый экран настроек (§15.5): кнопка под ДЕПЛОЕМ → модалка; клик по
     // затемнению и ESC закрывают. Одна механика на desktop и touch.
     this.el.settingsBtn.addEventListener('click', () => this.el.settings.classList.remove('hidden'))
