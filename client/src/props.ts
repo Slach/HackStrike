@@ -735,24 +735,67 @@ export class PropsView {
     }
   }
 
-  /** Ближайшая точка джек-ина для хакера (терминал 2 м / радио 8 м, GDD §12.1). */
-  /** Ближайшая точка входа вообще (для подсказки «подойди ближе»). */
-  nearestJackPoint(x: number, z: number): { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null {
-    let best: { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null = null
-    let bestScore = Number.POSITIVE_INFINITY
+  /** Цель jack-in-подсказки (GDD §12.1, ревебр owner §15.12). Две честные
+   *  очереди:
+   *  1) есть точка в своём радиусе — та, которую реально заджекит сервер
+   *     (minby по чистой дистанции, как cyber.go jackTarget): «SPACE —
+   *     ДЖЕК-ИН» не должна врать о цели;
+   *  2) ни одной в радиусе — точка, в которую СМОТРИМ (dir по XZ), а не та,
+   *     что за спиной: отвернулся от радио — подсказка тут же про терминал.
+   *     За спиной (cos < 0.2, ~78°) не подсказываем; при паритете — ближе по
+   *     d/range. Если в конусе взгляда пусто — прежний nearest-by-score. */
+  nearestJackPoint(
+    x: number,
+    z: number,
+    dir?: { x: number; z: number },
+  ): { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null {
+    type P = { id: string; kind: 'terminal' | 'radio'; dist: number; range: number; dx: number; dz: number }
+    const pts: P[] = []
     for (const t of this.terminals.values()) {
-      const d = Math.hypot(t.x - x, t.z - z)
-      if (d / TERMINAL_RANGE < bestScore) {
-        bestScore = d / TERMINAL_RANGE
-        best = { id: t.id, kind: 'terminal', dist: d, range: TERMINAL_RANGE }
-      }
+      pts.push({ id: t.id, kind: 'terminal', dist: Math.hypot(t.x - x, t.z - z), range: TERMINAL_RANGE, dx: t.x - x, dz: t.z - z })
     }
     for (const r of this.radios.values()) {
-      const d = Math.hypot(r.x - x, r.z - z)
       const range = r.radius ?? DEFAULT_RADIO_RANGE
-      if (d / range < bestScore) {
-        bestScore = d / range
-        best = { id: r.id, kind: 'radio', dist: d, range }
+      pts.push({ id: r.id, kind: 'radio', dist: Math.hypot(r.x - x, r.z - z), range, dx: r.x - x, dz: r.z - z })
+    }
+    if (pts.length === 0) return null
+
+    // (1) в радиусе — серверный выбор: minby чистой дистанции.
+    let actionable: P | null = null
+    for (const p of pts) {
+      if (p.dist <= p.range && (actionable === null || p.dist < actionable.dist)) actionable = p
+    }
+    if (actionable !== null) return actionable
+
+    // (2) ни одной в радиусе — куда смотрим: maxcos (порог ~78°), при
+    // равенстве углов — ближе по d/range.
+    if (dir !== undefined && (dir.x !== 0 || dir.z !== 0)) {
+      const dl = Math.hypot(dir.x, dir.z)
+      const ux = dir.x / dl
+      const uz = dir.z / dl
+      let best: P | null = null
+      let bestCos = 0.2
+      let bestScore = Number.POSITIVE_INFINITY
+      for (const p of pts) {
+        const c = (p.dx * ux + p.dz * uz) / Math.max(p.dist, 0.001)
+        if (c < bestCos) continue
+        const score = p.dist / p.range
+        // главный критерий — угол; score только при равных (eps) углах
+        if (c > bestCos + 1e-9 || (Math.abs(c - bestCos) <= 1e-9 && score < bestScore)) {
+          bestCos = Math.max(bestCos, c)
+          bestScore = score
+          best = p
+        }
+      }
+      if (best !== null) return best
+    }
+
+    let best: P | null = null
+    let bestScore = Number.POSITIVE_INFINITY
+    for (const p of pts) {
+      if (p.dist / p.range < bestScore) {
+        bestScore = p.dist / p.range
+        best = p
       }
     }
     return best

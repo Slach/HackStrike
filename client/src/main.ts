@@ -598,7 +598,10 @@ engine.runRenderLoop(() => {
 
   let hint: string | null = null
   if (playing && alive && !matchOver && !hackview.active && propsView !== null && me !== undefined) {
-    const near = propsView.nearestJackPoint(me.x, me.z)
+    // Цель подсказки — с учётом взгляда (§15.12): вне радиуса подсказываем ту
+    // точку, в которую смотрим, а не ту, что осталась за спиной.
+    const hf = camera.getDirection(Vector3.Forward())
+    const near = propsView.nearestJackPoint(me.x, me.z, { x: hf.x, z: hf.z })
     if (near !== null) {
       const label = `${near.kind === 'radio' ? 'РАДИО-ТОЧКА' : 'ТЕРМИНАЛ'} ${near.id.toUpperCase()}`
       if (myCls !== 'hacker') {

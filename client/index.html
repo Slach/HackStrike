@@ -669,31 +669,38 @@
         margin-bottom: 4px;
       }
 
-      /* jack-in hint (hacker near terminal/radio, M2) */
+      /* jack-in hint (hacker near terminal/radio, M2). Ревебр owner §15.12:
+         убран с центра экрана (перекрывал прицел) вниз; вместо чёрной панели
+         — лёгкий стиль как у propLabel: светлый текст с тёмной обводкой
+         (тень+stroke), читается и на светлых стенах, и на тёмных. */
       #jackinHint {
         position: absolute;
-        top: 42%;
+        bottom: 10px;
         left: 50%;
         transform: translateX(-50%);
-        padding: 8px 20px;
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 6px;
-        color: var(--ink);
-        font-size: 14px;
-        letter-spacing: 3px;
-        text-shadow: 0 0 10px rgba(55, 255, 155, 0.6);
-        box-shadow: 0 0 22px rgba(55, 255, 155, 0.18);
+        padding: 4px 10px;
+        background: rgba(2, 10, 6, 0.25);
+        border: 1px solid rgba(55, 255, 155, 0.25);
+        border-radius: 5px;
+        color: #d8ffe9;
+        font-size: 13px;
+        letter-spacing: 2px;
+        -webkit-text-stroke: 0.4px rgba(1, 12, 7, 0.75);
+        text-shadow:
+          0 0 2px #02150c,
+          0 1px 2px #000,
+          0 0 8px rgba(55, 255, 155, 0.5);
         pointer-events: none;
         z-index: 6;
         white-space: nowrap;
       }
 
       /* предупреждение сервера вне деки (denied enemy_team и т.п.) — красное,
-         ниже строки jackinHint; гаснет по таймеру (hud.warn) */
+         над строкой jackinHint (§15.12: тултип уехал вниз, пара за ним);
+         гаснет по таймеру (hud.warn) */
       #hudWarn {
         position: absolute;
-        top: calc(42% + 44px);
+        bottom: 56px;
         left: 50%;
         transform: translateX(-50%);
         padding: 8px 20px;
