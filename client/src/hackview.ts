@@ -1964,7 +1964,9 @@ export class HackView {
       // multi-token строкой ('a b') бросает InvalidCharacterError и рендер
       // карты умирает целиком.
       l.setAttribute('class', cls)
-      if (width !== undefined) l.setAttribute('stroke-width', String(Math.round(width * 100) / 100))
+      // через style, не setAttribute: presentation-атрибут перебивается
+      // CSS-правилами .svg-link/.svg-riser (плейтест M5: толщины «не работали»)
+      if (width !== undefined) l.style.strokeWidth = String(Math.round(width * 100) / 100)
       svg.append(l)
     }
 
@@ -2152,7 +2154,7 @@ export class HackView {
       const e = a.net?.find((n) => n.id === b.id) ?? b.net?.find((n) => n.id === a.id)
       return e !== undefined && e.mbps > 0 ? e.mbps : 20
     }
-    const bwWidth = (mbps: number): number => (0.8 + mbps / 12) * S
+    const bwWidth = (mbps: number): number => (1 + mbps / 10) * S
     const seen = new Set<string>()
     const drawLink = (a: ScanDevice, b: ScanDevice): void => {
       const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
