@@ -335,37 +335,45 @@ export class PropsView {
     panel.edgesWidth = 2.2
     panel.edgesColor = new Color4(0.22, 1.0, 0.6, 0.7)
     // Сервисный порт двери (§12.1 «дорогой вход», плейтест 2026-11-17:
-    // «странно в стенку стоять и смотреть»): щиток с проводами и LED на
-    // полотне у пола — куда физически втыкаешься джек-ином. Едет с полотном.
+    // «странно в стенку стоять и смотреть»; ревизия: «на одной двери замок
+    // изнутри, на второй снаружи») — щиток с проводами и LED на ОБЕИХ
+    // сторонах полотна у пола: замок виден, с какой стороны ни подошёл.
+    // Едет с полотном.
     const portOff = w / 2 - 0.25 // у края полотна по его длинной оси
-    const port = MeshBuilder.CreateBox(`prop.${id}.port`, { width: 0.26, height: 0.36, depth: 0.08 }, this.scene)
-    port.parent = panel
-    port.position.set(axis === 'x' ? portOff : 0, -h / 2 + 0.5, axis === 'x' ? depth / 2 + 0.04 : 0)
-    if (axis === 'z') port.position.x = depth / 2 + 0.04
-    port.material = this.mats.body
-    port.isPickable = false
-    // Пара проводов от щитка вниз к порогу.
-    for (const wx of [-0.06, 0.06]) {
-      const wire = MeshBuilder.CreateCylinder(`prop.${id}.wire`, { diameter: 0.025, height: 0.42 }, this.scene)
-      wire.parent = panel
-      wire.position.set(
-        (axis === 'x' ? portOff : 0) + (axis === 'x' ? wx : depth / 2 + 0.04),
-        -h / 2 + 0.24,
-        axis === 'x' ? depth / 2 + 0.04 : wx,
-      )
-      wire.material = this.mats.antenna
-      wire.isPickable = false
-    }
-    // LED порта — тускло-зелёный «порт жив».
     const ledMat = new StandardMaterial(`mat.prop.${id}.portled`, this.scene)
     ledMat.emissiveColor = new Color3(0.15, 0.7, 0.35)
     ledMat.disableLighting = true
-    const led = MeshBuilder.CreateBox(`prop.${id}.portled`, { width: 0.08, height: 0.05, depth: 0.03 }, this.scene)
-    led.parent = panel
-    led.position.set(port.position.x, -h / 2 + 0.72, port.position.z + (axis === 'x' ? 0.05 : 0) + (axis === 'z' ? 0.05 : 0))
-    if (axis === 'z') led.position.x = port.position.x + 0.05
-    led.material = ledMat
-    led.isPickable = false
+    for (const face of [1, -1]) {
+      // face=1 — «передняя» сторона по нормали (z для axis x, x для axis z)
+      const px = axis === 'x' ? portOff : (depth / 2 + 0.04) * face
+      const pz = axis === 'x' ? (depth / 2 + 0.04) * face : portOff
+      const port = MeshBuilder.CreateBox(`prop.${id}.port${face}`, { width: 0.26, height: 0.36, depth: 0.08 }, this.scene)
+      port.parent = panel
+      port.position.set(px, -h / 2 + 0.5, pz)
+      if (axis === 'z') port.rotation.y = Math.PI / 2 // тонкой стороной из полотна
+      port.material = this.mats.body
+      port.isPickable = false
+      for (const wx of [-0.06, 0.06]) {
+        const wire = MeshBuilder.CreateCylinder(`prop.${id}.wire${face}`, { diameter: 0.025, height: 0.42 }, this.scene)
+        wire.parent = panel
+        wire.position.set(
+          px + (axis === 'x' ? wx : 0),
+          -h / 2 + 0.24,
+          pz + (axis === 'x' ? 0 : wx),
+        )
+        wire.material = this.mats.antenna
+        wire.isPickable = false
+      }
+      const led = MeshBuilder.CreateBox(`prop.${id}.portled${face}`, { width: 0.08, height: 0.05, depth: 0.03 }, this.scene)
+      led.parent = panel
+      led.position.set(
+        px + (axis === 'x' ? 0 : 0.05 * face),
+        -h / 2 + 0.72,
+        pz + (axis === 'x' ? 0.05 * face : 0),
+      )
+      led.material = ledMat
+      led.isPickable = false
+    }
     this.doors.set(id, { id, pivot, x: pos[0], z: pos[2], axis, len: w, h, baseY: pos[1], open: false, angle: 0 })
   }
 

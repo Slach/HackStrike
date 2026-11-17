@@ -675,7 +675,7 @@
          (тень+stroke), читается и на светлых стенах, и на тёмных. */
       #jackinHint {
         position: absolute;
-        bottom: 10px;
+        bottom: 64px; /* единая высота с режимом канала — тултип не прыгает (плейтест 2026-11-17) */
         left: 50%;
         transform: translateX(-50%);
         padding: 4px 10px;
@@ -705,7 +705,6 @@
          2026-11-17: «ниже находится и не видно нифига»): выше, крупнее,
          мигающая оранжевая рамка, свечение растёт с --jp */
       #jackinHint.hv-channel {
-        bottom: 64px;
         font-size: 15px;
         color: #ffd9a0;
         border: 2px solid rgba(255, 165, 40, 0.75);
@@ -2207,7 +2206,9 @@
           полосой контролов в мёртвой зоне между крестиной и прицелом */
       body.touch #jackinHint {
         top: auto;
-        bottom: calc(132px + env(safe-area-inset-bottom));
+        /* низ экрана, как desktop (плейтест 2026-11-17): над жест-зоной,
+           с учётом safe-area */
+        bottom: calc(64px + env(safe-area-inset-bottom));
         font-size: 11px;
         padding: 5px 12px;
         letter-spacing: 1px;
