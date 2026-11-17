@@ -1925,6 +1925,29 @@
         align-items: center;
         gap: 10px;
       }
+      /* §15.19: на телефоне панель 359–380px — строка «метка+range+значение»
+         не влезает (мин-содержимое ~370px), значение «3.0×» выползало за
+         рамку. Метка уходит на свою строку, ползунок и значение — вторая
+         строка; desktop (панель та же, но жалоб не было) не трогаем */
+      body.touch .setRow {
+        flex-wrap: wrap;
+      }
+      body.touch .setRow .setLabel {
+        flex: 1 1 100%;
+      }
+      body.touch .setRow input[type='range'] {
+        flex: 1 1 auto;
+      }
+      /* §15.19 (desktop): range не сжимался ниже UA-ширины 129px
+         (min-width:auto) — строка вылезала за панель на ~18px; min-width:0
+         возвращает flex-сжатие, компоновка «метка · ползунок · значение»
+         остается однострочной */
+      .setRow input[type='range'] {
+        min-width: 0;
+      }
+      .setRow .setVal {
+        flex: none;
+      }
       /* §15.18: iOS Safari ломает touch-drag бегунка range под
          -webkit-user-select:none (body.touch) — чекбокс (тап) жив, слайдеры
          мертвы (ревебр owner). Возвращаем auto точечно; на touch — none
