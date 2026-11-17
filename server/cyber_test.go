@@ -895,7 +895,19 @@ func TestSessionRestore(t *testing.T) {
 	// Отключение → новое подключение с тем же именем и новым id.
 	w.removePlayer(h.id)
 	w.takeOut()
+	// Ревизия 2026-11-17: явно выбранный ДРУГОЙ класс уважается (владелец:
+	// «выбираю хакер — всё равно не хакер») — assault остаётся assault.
 	h2 := w.addPlayer(7, "Slach", "assault", -1)
+	if h2.cls != "assault" {
+		t.Fatalf("explicitly chosen different class must be honored, got %s", h2.cls)
+	}
+	// Для проверки ремапа знаний перезаходим тем же классом, что в сессии.
+	w.removePlayer(h2.id)
+	w.takeOut()
+	h2 = w.addPlayer(7, "Slach", "hacker", -1)
+	if h2.cls != "hacker" {
+		t.Fatalf("same-class rejoin must restore session class, got %s", h2.cls)
+	}
 	if h2.team != homeTeam {
 		t.Fatalf("team must be restored, got %d want %d", h2.team, homeTeam)
 	}

@@ -858,9 +858,11 @@ export class Hud {
   /** Team rosters under each score: t0/t1 класс на каждом имени (WhiteHat —
    *  белое, BlackHat — чёрное на белой плашке); свой ник — жирным. */
   setRoster(players: readonly SnapPlayer[], myId: number | null): void {
-    const sig = players.map((p) => `${p.team}:${p.name}:${p.alive ? 1 : 0}`).join('|')
+    // класс в сигнатуре: смена класса должна перерисовать ростер
+    const sig = players.map((p) => `${p.team}:${p.name}:${p.cls}:${p.alive ? 1 : 0}`).join('|')
     if (sig === this.rosterSig) return
     this.rosterSig = sig
+    const clsLabel = (k: string): string => CLASSES.find((c) => c.key === k)?.label ?? k
     const cols = [this.el.roster0, this.el.roster1]
     for (const col of cols) col.textContent = ''
     for (const team of [0, 1] as const) {
@@ -870,9 +872,9 @@ export class Hud {
         s.classList.add(`t${team}`)
         if (p.id === myId) {
           s.className = 'me'
-          s.textContent = `▸ ${p.name}`
+          s.textContent = `▸ ${p.name} · ${clsLabel(p.cls)}`
         } else {
-          s.textContent = p.name
+          s.textContent = `${p.name} · ${clsLabel(p.cls)}`
           if (!p.alive) s.classList.add('dead')
         }
         cols[team].append(s)
