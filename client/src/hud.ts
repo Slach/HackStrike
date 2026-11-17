@@ -709,8 +709,10 @@ export class Hud {
       // (заливка слева направо через CSS-var --jp, 0..1; <0 = без полоски).
       if (progress >= 0) {
         this.el.jackinHint.style.setProperty('--jp', String(Math.min(1, Math.max(0, progress))))
+        this.el.jackinHint.classList.add('hv-channel')
       } else {
         this.el.jackinHint.style.removeProperty('--jp')
+        this.el.jackinHint.classList.remove('hv-channel')
       }
     }
   }

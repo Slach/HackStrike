@@ -701,6 +701,28 @@
         white-space: nowrap;
       }
 
+      /* §12.1 «дорогой вход»: режим установки канала — заметность (плейтест
+         2026-11-17: «ниже находится и не видно нифига»): выше, крупнее,
+         мигающая оранжевая рамка, свечение растёт с --jp */
+      #jackinHint.hv-channel {
+        bottom: 64px;
+        font-size: 15px;
+        color: #ffd9a0;
+        border: 2px solid rgba(255, 165, 40, 0.75);
+        box-shadow: 0 0 calc(8px + 22px * var(--jp, 0)) rgba(255, 165, 40, 0.5);
+        animation: jackPulse 0.9s ease-in-out infinite;
+      }
+
+      @keyframes jackPulse {
+        0%,
+        100% {
+          border-color: rgba(255, 165, 40, 0.35);
+        }
+        50% {
+          border-color: rgba(255, 200, 90, 0.95);
+        }
+      }
+
       /* предупреждение сервера вне деки (denied enemy_team и т.п.) — красное,
          над строкой jackinHint (§15.12: тултип уехал вниз, пара за ним);
          гаснет по таймеру (hud.warn) */
