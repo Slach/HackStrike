@@ -369,6 +369,7 @@ func (w *world) simulateTick() {
 		}
 		w.cyberTick(pl, tickDT)
 		w.interactTick(pl)
+		w.jackChannelTick(pl, tickDT) // §12.1 «дорогой вход»: канал не-точки входа
 	}
 	w.gasTick(tickDT)  // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
 	w.fireTick(tickDT) // §14.6.1: DoT огня (сразу за газом, тот же порядок)

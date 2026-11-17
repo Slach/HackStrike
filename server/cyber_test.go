@@ -2500,3 +2500,55 @@ func TestScanSoftOnlyOwnerVisible(t *testing.T) {
 		t.Fatalf("foreign soft entries = %d, want 0 (hidden)", got)
 	}
 }
+
+// TestExpensiveJackin — §12.1 «дорогой вход» (решение владельца 2026-11-17):
+// джек-ин у камеры (не точка входа) требует 6 с установки канала: до 6 с —
+// не джекнут (прогресс идёт), отход из радиуса прерывает; после 6 с —
+// джекнут, NET деки = худший кабель устройства. Чужой владелец камеры
+// enemy_team НЕ ставит (contested только у точек входа).
+func TestExpensiveJackin(t *testing.T) {
+	w, clock := cyberTestWorld(t)
+	h := w.addPlayer(1, "h1", "hacker", 0)
+	// d1 — дверь, НЕ точка входа. Владелец — враг: contested enemy_team
+	// должен НЕ применяться к не-точкам входа (§12.1).
+	w.cyber.devices["d1"].owner = 99
+	w.players[99] = &player{id: 99, team: 1}
+	// Хакер у двери, жмёт space.
+	h.pos = w.cyber.devices["d1"].pos
+	h.keys.interact = true
+	w.interactTick(h)
+	if h.jacking == nil || h.jacked {
+		t.Fatalf("device jack-in must start a channel, jacking=%v jacked=%v", h.jacking, h.jacked)
+	}
+	h.keys.interact = false
+	// 3 с: ещё в канале.
+	for i := 0; i < 90; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if h.jacked {
+		t.Fatalf("channel must take 6s, jacked early")
+	}
+	// Отход из радиуса — отмена.
+	h.pos = h.pos.add(vec3{0, 5, 0})
+	w.simulateTick()
+	if h.jacking != nil {
+		t.Fatalf("walking away must cancel the channel")
+	}
+	// Завершение: обратно, снова space, 6.5 с.
+	h.pos = w.cyber.devices["d1"].pos
+	h.keys.interact = true
+	w.interactTick(h)
+	h.keys.interact = false
+	for i := 0; i < 200; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !h.jacked || h.jackHost.id != "d1" {
+		t.Fatalf("after 6.5s must be jacked into d1: jacked=%v host=%v", h.jacked, h.jackHost)
+	}
+	// NET деки камеры — худший кабель (не паспортные 100).
+	if net := w.deckNet(h); net >= 100 {
+		t.Fatalf("device jack-in deck net = %v, want worst cable (<100)", net)
+	}
+}

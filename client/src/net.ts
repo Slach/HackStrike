@@ -163,6 +163,7 @@ export type ServerMessage =
   | { t: 'pong'; c: number; s: number; tick: number }
   // M2 (GDD §12.5)
   | { t: 'jackin'; host: string; deck: DeckInfo }
+  | { t: 'jackprog'; dev: string; s: number } // установка канала «дорогого входа», 2 Гц (§12.1)
   | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   // dev (omitempty, §13.5) — где упёрся скан: firewall_scan

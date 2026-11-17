@@ -737,14 +737,14 @@ export class PropsView {
 
   /** Ближайшая точка джек-ина для хакера (терминал 2 м / радио 8 м, GDD §12.1). */
   /** Ближайшая точка входа вообще (для подсказки «подойди ближе»). */
-  nearestJackPoint(x: number, z: number): { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null {
-    let best: { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null = null
+  nearestJackPoint(x: number, z: number): { id: string; label: string; dist: number; range: number } | null {
+    let best: { id: string; label: string; dist: number; range: number } | null = null
     let bestScore = Number.POSITIVE_INFINITY
     for (const t of this.terminals.values()) {
       const d = Math.hypot(t.x - x, t.z - z)
       if (d / TERMINAL_RANGE < bestScore) {
         bestScore = d / TERMINAL_RANGE
-        best = { id: t.id, kind: 'terminal', dist: d, range: TERMINAL_RANGE }
+        best = { id: t.id, label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, dist: d, range: TERMINAL_RANGE }
       }
     }
     for (const r of this.radios.values()) {
@@ -752,10 +752,32 @@ export class PropsView {
       const range = r.radius ?? DEFAULT_RADIO_RANGE
       if (d / range < bestScore) {
         bestScore = d / range
-        best = { id: r.id, kind: 'radio', dist: d, range }
+        best = { id: r.id, label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, dist: d, range }
       }
     }
-    return best
+    if (best !== null) return best
+    // §12.1 «дорогой вход» (2026-11-17): прочие устройства — тоже порт
+    // (жёсткий радиус 2 м, канал ставится 6 с). Точки входа в радиусе —
+    // приоритет (совпадает с серверным jackTarget).
+    let port: { id: string; label: string; dist: number; range: number } | null = null
+    let portBest = Number.POSITIVE_INFINITY
+    const kinds: [Map<string, { id: string; x: number; z: number }>, string][] = [
+      [this.switches, 'СВИТЧ'],
+      [this.doors, 'ДВЕРЬ'],
+      [this.cameras, 'КАМЕРА'],
+      [this.valves, 'КЛАПАН'],
+      [this.gases, 'ГАЗ'],
+    ]
+    for (const [m, name] of kinds) {
+      for (const p of m.values()) {
+        const d = Math.hypot(p.x - x, p.z - z)
+        if (d <= TERMINAL_RANGE && d < portBest) {
+          portBest = d
+          port = { id: p.id, label: `${name} ${p.id.toUpperCase()}`, dist: d, range: TERMINAL_RANGE }
+        }
+      }
+    }
+    return port
   }
 
   nearestJackIn(x: number, z: number): { id: string; kind: 'terminal' | 'radio' } | null {
