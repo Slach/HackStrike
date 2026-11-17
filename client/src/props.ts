@@ -767,8 +767,16 @@ export class PropsView {
         if (p.dist <= p.range && (actionable === null || p.dist < actionable.dist)) actionable = p
       }
       if (actionable !== null) return actionable
+    }
+    // (2) «дорогой вход» (§12.1): порт устройства в 2 м. Выше точек входа
+    // вне радиуса — взгляд мимо камеры не должен прятать подсказку у ног
+    // (плейтест 2026-11-17: «у камеры/свитча нет подсказок, тултип показывает
+    // дальний терминал»). Совпадает с серверным jackTarget.
+    const port = this.nearestDevicePort(x, z)
+    if (port !== null) return port
 
-      // (2) ни одной в радиусе — куда смотрим: maxcos, tie — d/range.
+    if (pts.length > 0) {
+      // (3) ни одной в радиусе — куда смотрим: maxcos, tie — d/range.
       if (dir !== undefined && (dir.x !== 0 || dir.z !== 0)) {
         const dl = Math.hypot(dir.x, dir.z)
         const ux = dir.x / dl
@@ -801,11 +809,13 @@ export class PropsView {
       }
       return legacy
     }
-    // (4) «дорогой вход»: прочие устройства — тоже порт (жёсткий радиус 2 м,
-    // канал ставится 6 с). Точки входа выше имеют приоритет (как jackTarget).
-    // §12.1 «дорогой вход» (2026-11-17): прочие устройства — тоже порт
-    // (жёсткий радиус 2 м, канал ставится 6 с). Точки входа в радиусе —
-    // приоритет (совпадает с серверным jackTarget).
+    return null
+  }
+
+  /** Ближайший порт устройства в 2 м — «дорогой вход» (§12.1, канал 6 с):
+   *  свитч/дверь/камера/клапан/газ. Точки входа не участвуют (их радиусы —
+   *  свои). */
+  private nearestDevicePort(x: number, z: number): { id: string; label: string; dist: number; range: number } | null {
     let port: { id: string; label: string; dist: number; range: number } | null = null
     let portBest = Number.POSITIVE_INFINITY
     const kinds: [Map<string, { id: string; x: number; z: number }>, string][] = [

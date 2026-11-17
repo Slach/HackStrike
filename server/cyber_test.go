@@ -2529,8 +2529,9 @@ func TestExpensiveJackin(t *testing.T) {
 	if h.jacked {
 		t.Fatalf("channel must take 6s, jacked early")
 	}
-	// Отход из радиуса — отмена.
-	h.pos = h.pos.add(vec3{0, 5, 0})
+	// Отход из радиуса (по горизонтали — вертикаль не считается, камера
+	// висит выше) — отмена.
+	h.pos = h.pos.add(vec3{5, 0, 0})
 	w.simulateTick()
 	if h.jacking != nil {
 		t.Fatalf("walking away must cancel the channel")

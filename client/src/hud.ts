@@ -692,17 +692,26 @@ export class Hud {
   }
 
   private hintText: string | null = null
+  private hintProgress = -1
   private warnTimer: ReturnType<typeof setTimeout> | undefined = undefined
 
   /** «SPACE — ДЖЕК-ИН» над прицелом, когда хакер у терминала/радио (M2). */
-  jackinHint(text: string | null): void {
-    if (this.hintText === text) return // called every frame — dedupe
+  jackinHint(text: string | null, progress = -1): void {
+    if (this.hintText === text && progress === this.hintProgress) return // called every frame — dedupe
     this.hintText = text
+    this.hintProgress = progress
     if (text === null) {
       this.el.jackinHint.classList.add('hidden')
     } else {
       this.el.jackinHint.textContent = text
       this.el.jackinHint.classList.remove('hidden')
+      // §12.1 «дорогой вход»: фон подсказки — полоска прогресса канала
+      // (заливка слева направо через CSS-var --jp, 0..1; <0 = без полоски).
+      if (progress >= 0) {
+        this.el.jackinHint.style.setProperty('--jp', String(Math.min(1, Math.max(0, progress))))
+      } else {
+        this.el.jackinHint.style.removeProperty('--jp')
+      }
     }
   }
 

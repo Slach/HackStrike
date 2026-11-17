@@ -471,12 +471,17 @@ func (cs *cyberState) jackTarget(pos vec3) *device {
 		return best
 	}
 	// Точек входа рядом нет — берём прочее устройство в 2 м (§12.1).
+	// Дистанция ГОРИЗОНТАЛЬНАЯ: камеры висят на кронштейнах, клапаны под
+	// потолком — 3D-дистанция до точки подвеса в радиус не проходила
+	// (плейтест 2026-11-17: «джек у камеры/свитча не работает»).
 	for _, id := range cs.order {
 		d := cs.devices[id]
 		if d.kind == "radio" || d.kind == "terminal" {
 			continue
 		}
-		if dist := d.pos.sub(pos).length(); dist <= jackTerminalRadius && dist < bestD {
+		dp := d.pos.sub(pos)
+		dp[1] = 0
+		if dist := dp.length(); dist <= jackTerminalRadius && dist < bestD {
 			best, bestD = d, dist
 		}
 	}
@@ -563,20 +568,25 @@ func (w *world) interactTick(pl *player) {
 		}
 		return
 	}
-	// §12.1 «дорогой вход»: старт установки канала.
+	// §12.1 «дорогой вход»: старт установки канала. Первый jackprog — сразу
+	// (иначе клиент полсекунды без прогресса).
 	pl.jacking = dev
 	pl.jackT = 0
+	w.sendTo(pl.id, message{"t": "jackprog", "dev": dev.id, "s": jackChannelWork})
 }
 
 // jackChannelTick — установка канала «дорогого входа» (§12.1): 6 с стояния
 // рядом; смерть/отход из радиуса прерывают (прогресс не персистит), урон —
-// нет. Прогресс — клиенту 2 Гц (jackprog).
+// нет. Прогресс — клиенту 2 Гц (jackprog). Отход — по горизонтали: порт
+// может быть выше игрока (камера/клапан, см. jackTarget).
 func (w *world) jackChannelTick(pl *player, dt float64) {
 	if pl.jacking == nil {
 		return
 	}
 	dev := pl.jacking
-	if !pl.alive || pl.jacked || dev.pos.sub(pl.pos).length() > jackTerminalRadius+0.5 {
+	dp := dev.pos.sub(pl.pos)
+	dp[1] = 0
+	if !pl.alive || pl.jacked || dp.length() > jackTerminalRadius+0.5 {
 		pl.jacking = nil
 		return
 	}

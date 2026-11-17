@@ -659,16 +659,19 @@ engine.runRenderLoop(() => {
       }
     }
   }
-  hud.jackinHint(hint)
   // §12.1 «дорогой вход»: свежий jackprog перекрывает подсказку прогрессом
-  // канала; 1.5 с без апдейта = канал сорван, показываем обычную подсказку.
+  // канала (фон строки — полоска 0..1); 1.5 с без апдейта = канал сорван,
+  // показываем обычную подсказку.
+  let channelProgress = -1
   if (jackChannel !== null) {
     if (performance.now() - jackChannel.at < 1500) {
-      hud.jackinHint(`УСТАНОВКА КАНАЛА // ${jackChannel.dev.toUpperCase()} — ${Math.max(0, jackChannel.s).toFixed(1)} С`)
+      hint = `УСТАНОВКА КАНАЛА // ${jackChannel.dev.toUpperCase()} — ${Math.max(0, jackChannel.s).toFixed(1)} С`
+      channelProgress = 1 - Math.max(0, jackChannel.s) / 6 // §12.1: канал 6 с
     } else {
       jackChannel = null
     }
   }
+  hud.jackinHint(hint, channelProgress)
 
   let fired = false
   // Авто-зум снайпера: враг в конусе ~25°, ближе 20 м и в прямой видимости
