@@ -196,30 +196,43 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 		delete(w.sessions, canon)
 		team = s.team
 		pl.team = team
-		pl.cls, pl.pos, pl.vy, pl.grounded = s.cls, s.pos, s.vy, s.grounded
+		// Класс: сессия хранит прежний, НО явно выбранный на экране входа
+		// другой класс уважается (плейтест 2026-11-17: «выбираю хакер — всё
+		// равно не хакер»; смена класса законна и у живого игрока).
+		if cls != "" && cls != s.cls {
+			pl.cls = cls
+		} else {
+			pl.cls = s.cls
+		}
+		pl.pos, pl.vy, pl.grounded = s.pos, s.vy, s.grounded
 		pl.hp, pl.alive, pl.scanned = s.hp, s.alive, s.scanned
-		for _, d := range w.cyber.devices {
-			if d.owner == s.oldID {
-				d.owner = id
-			}
-			if d.vulnedBy[s.oldID] {
-				d.vulnedBy[id] = true
-				delete(d.vulnedBy, s.oldID)
-			}
-			if d.watcherBy[s.oldID] { // §13.1: F5 не снимает watcher'ы
-				d.watcherBy[id] = true
-				delete(d.watcherBy, s.oldID)
-			}
-			for i := range d.log { // §13.1 №1: журнал перемапливает «кто» на новый id
-				if d.log[i].Who == s.oldID {
-					d.log[i].Who = id
+		// Ремап нужен только при смене id: реконнект под тем же id (быстрый
+		// рестарт страницы) при безусловном delete стирал бы метки
+		// vulnedBy/watcherBy (плейтест 2026-11-17, TestSessionRestore).
+		if s.oldID != id {
+			for _, d := range w.cyber.devices {
+				if d.owner == s.oldID {
+					d.owner = id
 				}
-			}
-			if d.firewalled == s.oldID { // §13.5: F5 не снимает firewall
-				d.firewalled = id
-			}
-			if d.antivirused == s.oldID { // §13.6: F5 не снимает antivirus
-				d.antivirused = id
+				if d.vulnedBy[s.oldID] {
+					d.vulnedBy[id] = true
+					delete(d.vulnedBy, s.oldID)
+				}
+				if d.watcherBy[s.oldID] { // §13.1: F5 не снимает watcher'ы
+					d.watcherBy[id] = true
+					delete(d.watcherBy, s.oldID)
+				}
+				for i := range d.log { // §13.1 №1: журнал перемапливает «кто» на новый id
+					if d.log[i].Who == s.oldID {
+						d.log[i].Who = id
+					}
+				}
+				if d.firewalled == s.oldID { // §13.5: F5 не снимает firewall
+					d.firewalled = id
+				}
+				if d.antivirused == s.oldID { // §13.6: F5 не снимает antivirus
+					d.antivirused = id
+				}
 			}
 		}
 		if !pl.alive {
