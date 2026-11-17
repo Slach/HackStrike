@@ -791,13 +791,15 @@ export class Hud {
 
   private hintText: string | null = null
   private hintProgress = -1
+  private hintError = false
   private warnTimer: ReturnType<typeof setTimeout> | undefined = undefined
 
   /** «SPACE — ДЖЕК-ИН» над прицелом, когда хакер у терминала/радио (M2). */
-  jackinHint(text: string | null, progress = -1): void {
-    if (this.hintText === text && progress === this.hintProgress) return // called every frame — dedupe
+  jackinHint(text: string | null, progress = -1, error = false): void {
+    if (this.hintText === text && progress === this.hintProgress && error === this.hintError) return // called every frame — dedupe
     this.hintText = text
     this.hintProgress = progress
+    this.hintError = error
     if (text === null) {
       this.el.jackinHint.classList.add('hidden')
     } else {
@@ -812,6 +814,8 @@ export class Hud {
         this.el.jackinHint.style.removeProperty('--jp')
         this.el.jackinHint.classList.remove('hv-channel')
       }
+      // не-хакер у устройства нажал «действие» — тултип мигает красным
+      this.el.jackinHint.classList.toggle('hv-error', error)
     }
   }
 

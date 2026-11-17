@@ -728,6 +728,26 @@
         }
       }
 
+      /* не-хакер нажал «действие» у устройства — мигание красным ~1.2 с
+         (плейтест 2026-11-17: «надо чтобы тултип мигал красным») */
+      #jackinHint.hv-error {
+        color: #ffb3bd;
+        border: 2px solid rgba(255, 77, 94, 0.85);
+        animation: jackError 0.3s steps(2, end) 4;
+        background: rgba(40, 8, 16, 0.55);
+      }
+
+      @keyframes jackError {
+        0% {
+          border-color: rgba(255, 77, 94, 0.95);
+          box-shadow: 0 0 14px rgba(255, 77, 94, 0.6);
+        }
+        100% {
+          border-color: rgba(255, 77, 94, 0.15);
+          box-shadow: none;
+        }
+      }
+
       /* предупреждение сервера вне деки (denied enemy_team и т.п.) — красное,
          над строкой jackinHint (§15.12: тултип уехал вниз, пара за ним);
          гаснет по таймеру (hud.warn) */

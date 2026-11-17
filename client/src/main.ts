@@ -79,6 +79,9 @@ let propsView: PropsView | null = null
 // §12.1 «дорогой вход»: последний jackprog (2 Гц); at — штамп свежести,
 // протухает без апдейта (сервер молчит при отмене канала).
 let jackChannel: { dev: string; s: number; at: number } | null = null
+// Не-хакер жмёт «действие» у устройства: красная вспышка тултипа до этого штампа
+let jackErrorUntil = 0
+let prevInteractUi = 0
 let myId: number | null = null
 let myTeam = -1
 let myCls: Cls = 'assault'
@@ -663,11 +666,20 @@ engine.runRenderLoop(() => {
   }
 
   let hint: string | null = null
+  let hintError = false
   if (playing && alive && !matchOver && !hackview.active && propsView !== null && me !== undefined) {
     // Цель подсказки — с учётом взгляда (§15.12): вне радиуса подсказываем ту
     // точку, в которую смотрим, а не ту, что осталась за спиной.
     const hf = camera.getDirection(Vector3.Forward())
     const near = propsView.nearestJackPoint(me.x, me.z, { x: hf.x, y: hf.y, z: hf.z }, me.y)
+    // Не-хакер жмёт «действие» у устройства — тултип мигает красным, чтобы
+    // было видно, в чём косяк (плейтест 2026-11-17). Edge по interact покрывает
+    // и SPACE, и мобильную кнопку (обе идут через controls.keys.interact).
+    const it = controls.keys.interact
+    if (it === 1 && prevInteractUi === 0 && myCls !== 'hacker' && near !== null && near.dist <= 2) {
+      jackErrorUntil = performance.now() + 1200
+    }
+    prevInteractUi = it
     if (near !== null) {
       const label = near.label
       if (myCls !== 'hacker') {
@@ -681,6 +693,9 @@ engine.runRenderLoop(() => {
       }
     }
   }
+  if (performance.now() < jackErrorUntil && hint !== null) {
+    hintError = true
+  }
   // §12.1 «дорогой вход»: свежий jackprog перекрывает подсказку прогрессом
   // канала (фон строки — полоска 0..1); 1.5 с без апдейта = канал сорван,
   // показываем обычную подсказку.
@@ -693,7 +708,7 @@ engine.runRenderLoop(() => {
       jackChannel = null
     }
   }
-  hud.jackinHint(hint, channelProgress)
+  hud.jackinHint(hint, channelProgress, hintError)
 
   let fired = false
   // Авто-зум снайпера: враг в конусе ~25°, ближе 20 м и в прямой видимости
