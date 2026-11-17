@@ -515,7 +515,14 @@ export class Hud {
     // Единый экран настроек (§15.5): кнопка под ДЕПЛОЕМ → модалка; клик по
     // затемнению и ESC закрывают. Одна механика на desktop и touch.
     this.el.settingsBtn.addEventListener('click', () => this.el.settings.classList.remove('hidden'))
-    this.el.settingsClose.addEventListener('click', () => this.el.settings.classList.add('hidden'))
+    // §15.22: кнопка «ПРИМЕНИТЬ» — честный смысл: прогоняет apply* (идемпотентно,
+    // значения и так live на input) и закрывает панель.
+    this.el.settingsClose.addEventListener('click', () => {
+      this.applySens()
+      this.applyCtl()
+      this.applyTap()
+      this.el.settings.classList.add('hidden')
+    })
     this.el.settings.addEventListener('click', (e) => {
       if (e.target === this.el.settings) this.el.settings.classList.add('hidden')
     })
