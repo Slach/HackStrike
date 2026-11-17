@@ -198,6 +198,20 @@ function keyIndex(code: string, prefix: 'Digit' | 'F'): number | null {
   return Number.isInteger(n) && n >= 1 && n <= 9 ? n - 1 : null
 }
 
+/** Раскладка не EN-US → латинская буква по физкоду (плейтест M5, desktop).
+ *  Строки палитры — латинские токены (id/программы), а клавиатурный ввод из
+ *  русской раскладки даёт кириллицу («саш1» вместо «cam1»), которая не матчит
+ *  ничего — тестирование превращалось в жонглирование раскладками. e.code
+ *  надёжен во всех раскладках (тот же принцип, что у '/' — §13.3), поэтому
+ *  для Key[A-Z] берём букву из кода. Возвращает символ для вставки или null
+ *  (null = раскладка уже латинская / не буква → дефолтный ввод браузера). */
+function latinForKey(e: KeyboardEvent): string | null {
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return null
+  if (!/^Key[A-Z]$/.test(e.code)) return null
+  if (/^[a-zA-Z]$/.test(e.key)) return null // EN-US и другие латинские раскладки не трогаем
+  return e.shiftKey ? e.code.slice(3) : e.code.slice(3).toLowerCase()
+}
+
 function gridClass(panes: number, dir: 'h' | 'v'): string {
   if (panes <= 1) return 'g1'
   if (panes === 2) return dir === 'h' ? 'g2h' : 'g2v'
@@ -776,6 +790,22 @@ export class HackView {
     if (e.key === 'Enter') {
       e.preventDefault()
       this.paletteRun()
+    }
+    // Раскладка не латинская → клавиши Key[A-Z] вводим латиницей по физкоду
+    // (плейтест M5, desktop): тестировать палитру с русской раскладкой было
+    // нельзя, вводился мусор вместо токенов — см. latinForKey().
+    const ch = latinForKey(e)
+    if (ch !== null) {
+      e.preventDefault()
+      const v = pal.input.value
+      const s = pal.input.selectionStart ?? v.length
+      const en = pal.input.selectionEnd ?? s
+      pal.input.value = v.slice(0, s) + ch + v.slice(en)
+      const pos = s + ch.length
+      pal.input.setSelectionRange(pos, pos)
+      this.paletteSel = -1
+      this.updatePalette()
+      return
     }
     // Остальное — обычный ввод в строку фильтра (input-событие обновит список).
   }
@@ -1495,19 +1525,39 @@ export class HackView {
     this.appendWatchPanel(body, dev, d)
   }
 
-  /** Панель разведки watched-устройства (§13.1 №1/№3): радар-срез (1 Гц,
-   *  сервер шлёт только живому хозяину) + журнал событий. Добавляется к
-   *  любому контенту таба — устройство под watcher'ом остаётся устройством
-   *  (дверь так и управляется, лента камеры — идёт). */
+  /** Панель «ПРОЦЕССЫ» (§13.1, ред. 2026-11-17 — бывш. «РАДАР СЕГМЕНТА»):
+   *  секция «СОФТ» (что на устройстве запущено и кем — только владельцу,
+   *  §9.2 soft), «СЕТЬ» (радар-срез 1 Гц, сервер шлёт только живому хозяину
+   *  watcher'а) и журнал событий. На watched-устройстве добавляется к любому
+   *  контенту таба — устройство остаётся устройством (дверь управляется,
+   *  лента камеры идёт). */
   private appendWatchPanel(body: HTMLElement, dev: string, d: ScanDevice): void {
     if (d.watched !== true) return
     const wrap = el('div', 'watch-ui')
     const watchOwn = el('div', 'watch-owner')
     watchOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner), ' · WATCHER АКТИВЕН')
     wrap.append(watchOwn)
+    const soft = el('div', 'watch-radar')
+    const shead = el('div', 'watch-radar-head')
+    shead.append(txt('span', 'watch-radar-title', 'СОФТ'))
+    const slist = el('div', 'watch-radar-list')
+    if (d.soft !== undefined && d.soft.length > 0) {
+      for (const s of d.soft) {
+        const row = el('div', 'watch-radar-row')
+        row.append(txt('span', 'radar-prog', s.p.toUpperCase()))
+        const own = txt('span', 'radar-host', this.ownerLabel(s.o))
+        own.style.color = this.ownerColor(s.o)
+        row.append(own)
+        slist.append(row)
+      }
+    } else {
+      slist.append(txt('div', 'hv-dim', 'НЕТ ДАННЫХ (НЕ ВЛАДЕЛЕЦ)'))
+    }
+    soft.append(shead, slist)
+    wrap.append(soft)
     const radar = el('div', 'watch-radar')
     const rhead = el('div', 'watch-radar-head')
-    rhead.append(txt('span', 'watch-radar-title', 'РАДАР СЕГМЕНТА'))
+    rhead.append(txt('span', 'watch-radar-title', 'СЕТЬ'))
     const rcount = txt('span', 'watch-radar-count', 'В СЕТИ: 0')
     rhead.append(rcount)
     const rlist = el('div', 'watch-radar-list')

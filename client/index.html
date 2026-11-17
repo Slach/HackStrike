@@ -1662,10 +1662,20 @@
         align-items: center;
         gap: 8px;
       }
+      /* ГДД §15.13: в flex-колонке .tc-right кнопка blockify'ится — текст с
+         letter-spacing (70.2px natural) не влезал в фикс-68px и резался по
+         краям, плюс прижимался к верху. Flex-центрирование + авто-ширина. */
       .tc-act {
         pointer-events: auto;
         touch-action: none;
-        width: 68px; height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        white-space: nowrap;
+        text-indent: 1px; /* компенсации хвостового letter-spacing при center */
+        min-width: 68px;
+        padding: 0 9px;
+        height: 32px;
         border-radius: 8px;
         background: rgba(55, 255, 155, 0.1);
         border: 1px solid rgba(55, 255, 155, 0.5);

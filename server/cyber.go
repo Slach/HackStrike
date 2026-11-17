@@ -8,6 +8,7 @@ package main
 import (
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -16,6 +17,7 @@ import (
 const (
 	jackTerminalRadius = 2.0 // м: джек-ин у терминала
 	jackRadioRadius    = 8.0 // м: радиус радио-точки по умолчанию
+	jackChannelWork    = 6.0 // §12.1 «дорогой вход»: установка канала у не-точки входа, с
 
 	deckCPU = 1.0 // дека хакера (§12.2)
 	deckNPU = 0.5
@@ -446,8 +448,9 @@ func (cs *cyberState) widestPath(from, to string, blocked func(string) bool) []s
 	}
 }
 
-// jackTarget — ближайшее устройство джек-ина: терминал в 2 м, радио — в
-// радиусе (3D-дистанция; LOS по §12.7 не нужен).
+// jackTarget — ближайшее устройство джек-ина (§12.1 «дорогой вход»,
+// ред. 2026-11-17): ЛЮБОЕ сетевое устройство в 2 м (сервисный порт), радио —
+// в своём радиусе (3D-дистанция; LOS по §12.7 не нужен).
 func (cs *cyberState) jackTarget(pos vec3) *device {
 	var best *device
 	bestD := math.Inf(1)
@@ -464,7 +467,50 @@ func (cs *cyberState) jackTarget(pos vec3) *device {
 			best, bestD = d, dist
 		}
 	}
+	if best != nil {
+		return best
+	}
+	// Точек входа рядом нет — берём прочее устройство в 2 м (§12.1).
+	for _, id := range cs.order {
+		d := cs.devices[id]
+		if d.kind == "radio" || d.kind == "terminal" {
+			continue
+		}
+		if dist := d.pos.sub(pos).length(); dist <= jackTerminalRadius && dist < bestD {
+			best, bestD = d, dist
+		}
+	}
 	return best
+}
+
+// jackEntry — точка входа (мгновенный джек-ин, contested enemy_team):
+// терминал/радио. Прочие устройства — «дорогой вход» (§12.1).
+func jackEntry(d *device) bool { return d.kind == "terminal" || d.kind == "radio" }
+
+// deckNet — NET канала деки игрока (§12.1): у точки входа — паспортный
+// netMbps (100/20), у «дорогого входа» — худший кабель устройства.
+func (w *world) deckNet(pl *player) float64 {
+	if pl.jackHost == nil {
+		return 1
+	}
+	if !jackEntry(pl.jackHost) {
+		return w.cyber.worstCableBW(pl.jackHost)
+	}
+	return pl.jackHost.netMbps
+}
+
+// worstCableBW — худший из кабелей устройства (§12.1: NET деки при «дорогом
+// входе»); у бесшовных входов не вызывается. Запас 20 — устройство без
+// кабелей в графе не бывает (кроме радио, а она точка входа).
+func (cs *cyberState) worstCableBW(d *device) float64 {
+	worst := 20.0
+	first := true
+	for _, n := range cs.neighbors(d.id) {
+		if c := cs.cableBetween(d.id, n); c != nil && (first || c.bw < worst) {
+			worst, first = c.bw, false
+		}
+	}
+	return worst
 }
 
 // program — процесс на деке джекнутого хакера (§12.4). Прогресс — секунды
@@ -501,15 +547,47 @@ func progWork(name string) float64 {
 
 // --- джек-ин / джек-аут ---------------------------------------------------
 
-// interactTick — edge клавиши interact (space): джек-ин хакера у
-// терминала/радио (§12.5). Клиент ничего отдельного не шлёт.
+// interactTick — edge клавиши interact (space): джек-ин хакера у устройства
+// (§12.5). Точка входа — мгновенно; прочие устройства — «дорогой вход»:
+// канал ставится 6 с (jackChannelTick). Клиент ничего отдельного не шлёт.
 func (w *world) interactTick(pl *player) {
 	pressed := pl.keys.interact && !pl.prevInteract
 	pl.prevInteract = pl.keys.interact
 	if !pressed || !pl.alive || pl.jacked || pl.cls != "hacker" {
 		return // дека только у хакера; мёртвые и уже джекнутые не входят
 	}
-	if dev := w.cyber.jackTarget(pl.pos); dev != nil {
+	dev := w.cyber.jackTarget(pl.pos)
+	if dev == nil || jackEntry(dev) {
+		if dev != nil {
+			w.jackin(pl, dev)
+		}
+		return
+	}
+	// §12.1 «дорогой вход»: старт установки канала.
+	pl.jacking = dev
+	pl.jackT = 0
+}
+
+// jackChannelTick — установка канала «дорогого входа» (§12.1): 6 с стояния
+// рядом; смерть/отход из радиуса прерывают (прогресс не персистит), урон —
+// нет. Прогресс — клиенту 2 Гц (jackprog).
+func (w *world) jackChannelTick(pl *player, dt float64) {
+	if pl.jacking == nil {
+		return
+	}
+	dev := pl.jacking
+	if !pl.alive || pl.jacked || dev.pos.sub(pl.pos).length() > jackTerminalRadius+0.5 {
+		pl.jacking = nil
+		return
+	}
+	prevHalf := int(pl.jackT * 2)
+	pl.jackT += dt
+	if int(pl.jackT*2) != prevHalf && pl.jackT < jackChannelWork {
+		w.sendTo(pl.id, message{"t": "jackprog", "dev": dev.id,
+			"s": math.Round((jackChannelWork-pl.jackT)*10) / 10})
+	}
+	if pl.jackT >= jackChannelWork {
+		pl.jacking = nil
 		w.jackin(pl, dev)
 	}
 }
@@ -520,9 +598,11 @@ func (w *world) jackin(pl *player, dev *device) {
 	// (решение 2026-11-17: владение per-player, доступ — по команде, иначе
 	// второй хакер команды заперт, плейтест 2026-11-16). Хозяин вне players
 	// (сессия истекла) — считаем вражеским, безопаснее.
+	// §12.1 «дорогой вход»: contested проверяем ТОЛЬКО у точек входа —
+	// физический порт чужого устройства законом не закрыт, влез и ты внутри.
 	// NB: firewall джек-ин не фильтрует (§13.5, редакция 2026-11-15):
 	// защита сегмента, а не входа — замок убран.
-	if dev.owner != 0 && dev.owner != pl.id {
+	if jackEntry(dev) && dev.owner != 0 && dev.owner != pl.id {
 		owner, ok := w.players[dev.owner]
 		if !ok || owner.team != pl.team {
 			w.denied(pl, "enemy_team", dev.id)
@@ -531,11 +611,18 @@ func (w *world) jackin(pl *player, dev *device) {
 	}
 	pl.jacked = true
 	pl.jackHost = dev
+	pl.jacking = nil
 	pl.progs = nil
+	net := dev.netMbps
+	if !jackEntry(dev) {
+		// §12.1 «дорогой вход»: NET деки = худший кабель устройства,
+		// а не паспортные 100.
+		net = w.cyber.worstCableBW(dev)
+	}
 	w.sendTo(pl.id, message{
 		"t":    "jackin",
 		"host": dev.id,
-		"deck": message{"cpu": deckCPU, "npu": deckNPU, "ram": deckRAM, "net": dev.netMbps},
+		"deck": message{"cpu": deckCPU, "npu": deckNPU, "ram": deckRAM, "net": net},
 	})
 	// Накопленные знания переживают jackout (сессия, §12.5): повторный вход
 	// сразу показывает карту сети и восстанавливает табы захваченных
@@ -986,10 +1073,20 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// перезаписывает хозяина (переустановка после износа — гонка версий).
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.antivirused = pl.id
+			// §13.6 (ред. 2026-11-17): установка antivirus стирает ЧУЖИЕ
+			// vuln-метки («пере-вскрытие после AV») — устройство откатывается
+			// в закрытое состояние; свой метка остаётся (он вскрыл, чтобы
+			// поставить). Правка M2 «навсегда»: навсегда, пока не встал AV.
+			for uid := range dev.vulnedBy {
+				if uid != pl.id {
+					delete(dev.vulnedBy, uid)
+				}
+			}
 			// §13.1 №2: установка antivirus — кибер-событие для watcher'ов
-			// (ev=install). Пишем до resendScanFor.
+			// (ev=install); wipe чужих меток — отдельная строка журнала.
 			w.fireWatchers(dev, pl, "install", "antivirus")
-			w.resendScanFor(p.dev) // на карте появится ореол antivirused
+			w.logWatcherEvent(dev, "wipe", pl, "antivirus")
+			w.resendScanFor(p.dev) // ореол antivirused + vulned=false у чужих
 		}
 	}
 }
@@ -1045,6 +1142,29 @@ type scanDevice struct {
 	// Резидентный процесс наблюдаем из сети — виден всем, кто открыл
 	// устройство (как firewalled).
 	Antivirused bool `json:"antivirused,omitempty"`
+	// Soft — состав резидентного софта с хозяевами (§9.2, ред. 2026-11-17):
+	// [{p:"trojan|watcher|firewall|antivirus", o:id}]; omitempty. Виден
+	// ТОЛЬКО владельцу устройства (трояновому хозяину) — чужой состав не
+	// раскрываем, иначе watcher/firewall теряют ценность (панель «ПРОЦЕССЫ»).
+	Soft []scanSoft `json:"soft,omitempty"`
+}
+
+// scanSoft — одна запись списка процессов устройства (панель «ПРОЦЕССЫ»,
+// §13.1): программа + хозяин процесса.
+type scanSoft struct {
+	P string `json:"p"`
+	O uint64 `json:"o"`
+}
+
+// sortedWatcherUIDs — детерминированный порядок обхода watcherBy (снапшоты
+// сканов стабильны между тиками).
+func sortedWatcherUIDs(m map[uint64]bool) []uint64 {
+	uids := make([]uint64, 0, len(m))
+	for uid := range m {
+		uids = append(uids, uid)
+	}
+	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	return uids
 }
 
 // sendScan — кибер-карта хакера: только открытые его portscan'ом устройства
@@ -1071,6 +1191,20 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.owner != 0 {
 			sd.Owner = d.owner
+		}
+		// Состав софта — только владельцу устройства (§9.2): trojan (он сам)
+		// + резидентные процессы с хозяевами. Порядок стабильный.
+		if d.owner == pl.id {
+			sd.Soft = append(sd.Soft, scanSoft{P: "trojan", O: d.owner})
+			if d.firewalled != 0 {
+				sd.Soft = append(sd.Soft, scanSoft{P: "firewall", O: d.firewalled})
+			}
+			if d.antivirused != 0 {
+				sd.Soft = append(sd.Soft, scanSoft{P: "antivirus", O: d.antivirused})
+			}
+			for _, uid := range sortedWatcherUIDs(d.watcherBy) {
+				sd.Soft = append(sd.Soft, scanSoft{P: "watcher", O: uid})
+			}
 		}
 		if d.vulnedBy[pl.id] {
 			sd.Vulned = true
@@ -1133,7 +1267,9 @@ func (w *world) deckStatusTick() {
 			"cpuLoad": round3(math.Min(1, float64(n)/deckRAM)),
 			"npuLoad": 0.0, // NPU-программ в M2 нет
 			"ramUsed": n,
-			"netLoad": round3(math.Min(1, float64(n)*progNetMbps/p.jackHost.netMbps)),
+			// §12.1 «дорогой вход»: канал не-точки входа — худший кабель, а
+			// не паспортный netMbps устройства.
+			"netLoad": round3(math.Min(1, float64(n)*progNetMbps/w.deckNet(p))),
 			"progs":   progs,
 		})
 	}

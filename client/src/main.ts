@@ -31,7 +31,9 @@ import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
 import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen } from './mobile'
 
-const RENDER_DELAY_MS = 100
+// 66 мс (было 100; ×1.5 ревебр owner 2026-11-17, ГДД §15.13): тап-движение
+// на мобиле. Серверная lag-compensation синхронизирована — rewindTicks=3.
+const RENDER_DELAY_MS = 66
 const INPUT_INTERVAL_MS = 1000 / 30
 const KILLFEED_ATTRIBUTION_MS = 3000
 const SNIPER_FOV_COS = Math.cos((25 * Math.PI) / 180) // конус «в поле зрения» для авто-зума
@@ -74,6 +76,9 @@ const effects = new Effects(scene)
 let world: MapWorld | null = null
 let minimap: Minimap | null = null
 let propsView: PropsView | null = null
+// §12.1 «дорогой вход»: последний jackprog (2 Гц); at — штамп свежести,
+// протухает без апдейта (сервер молчит при отмене канала).
+let jackChannel: { dev: string; s: number; at: number } | null = null
 let myId: number | null = null
 let myTeam = -1
 let myCls: Cls = 'assault'
@@ -288,6 +293,11 @@ const sock = new GameSocket({
         break
       case 'jackin':
         hackviewOn(msg)
+        jackChannel = null // канал установлен — подсказку прогресса гасим
+        break
+      case 'jackprog':
+        // §12.1 «дорогой вход»: прогресс установки канала (2 Гц).
+        jackChannel = { dev: msg.dev, s: msg.s, at: performance.now() }
         break
       case 'deck':
         hackview.onDeck(msg)
@@ -465,8 +475,12 @@ hud.onRespawn = (cls) => {
 // NB: never grab the pointer from UI controls (respawn button, class cards):
 // engaging pointer-lock mid-gesture makes Chrome swallow the button's click
 // event, so the respawn overlay would never close on mouse click.
+// NB: tc-* (стик/прицел/ДЕЙСТВИЕ) — тоже UI: короткий тап по ним не должен
+// открывать меню паузы, иначе «палец лёг и оторвался» замораживает игрока
+// frozen-меню посреди движения (баг-фикс 2026-11-17, ГДД §15.12).
 const isUiTarget = (e: Event): boolean =>
-  e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null
+  e.target instanceof HTMLElement &&
+  e.target.closest('button, input, .card, .chk, .segBtn, .tc-pad, .tc-look, .tc-act') !== null
 const tryRelock = (e: Event) => {
   // Меню паузы открыто — курсор нужен для выбора команды/класса; никакой
   // перекламки указателя (иначе любой keydown в меню возвращает mlook).
@@ -509,14 +523,27 @@ window.addEventListener('keydown', (e) => {
 })
 // Клик в FPS (курсор ещё захвачен) — открыть меню; мёртвым — death-оверлей,
 // не меню
-document.addEventListener('mousedown', () => {
+document.addEventListener('mousedown', (e) => {
+  // Compat-мышь после тача (~300 мс) не в счёт: touchend уже решил, иначе
+  // тап-тогл открывал бы меню и сразу сам закрывал (§15.12).
+  if (performance.now() - lastTouchAt < 700) return
+  // Клик по фону открытого меню — закрыть (§15.12: тогл симметричен «~»);
+  // клики внутри .panel/модалок — их дела (выбор класса, настройки, инвайт).
+  if (menuOpen) {
+    if (e.target instanceof HTMLElement && e.target.closest('.panel, .settings') === null) gameMenu(false)
+    return
+  }
   if (!hud.deathVisible() && playing && !hackview.active && controls.locked) gameMenu(true)
 })
-// Тап (короткий, без движения) по игровому экрану на мобиле — то же самое
+// Тап (короткий, без движения) по игровому экрану на мобиле — то же самое.
+// compat-мышь после тача глушим по времени: touchend уже отработал тогл,
+// synthetic mousedown не должен тут же закрыть/переоткрыть меню (§15.12).
+let lastTouchAt = 0
 let tapStart: { x: number; y: number; t: number } | null = null
 document.addEventListener(
   'touchstart',
   (e) => {
+    lastTouchAt = performance.now()
     if (e.touches.length === 1) {
       const t = e.touches[0]
       tapStart = { x: t.clientX, y: t.clientY, t: performance.now() }
@@ -534,7 +561,12 @@ document.addEventListener(
     tapStart = null
     if (moved > 12 || dt > 350) return // это был look-жест, не тап
     if (isUiTarget(e)) return
-    if (!hud.deathVisible() && playing && !hackview.active && !menuOpen) gameMenu(true)
+    // Тап по фону открытого меню — закрыть (§15.12); внутри панели — её дела.
+    if (menuOpen) {
+      if (e.target instanceof HTMLElement && e.target.closest('.panel, .settings') === null) gameMenu(false)
+      return
+    }
+    if (!hud.deathVisible() && playing && !hackview.active) gameMenu(true)
   },
   { capture: true },
 )
@@ -559,13 +591,25 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
 
 // Input stream to the server: ~30/s, latest keys + view angles. Пока хакер
 // в деке — тело стоит: ни input, ни fire не отправляем (ГДД §12.1).
-window.setInterval(() => {
+// Мгновенный flush при смене контрольного состояния (pointerdown/смена
+// сектора/keydown-keyup) — не ждём следующего слота 30 Гц, иначе короткий
+// тач-тап двигает тело уже после отпускания пальца (ГДД §15.13). Слот по
+// таймеру — fallback keepalive; серверный кламп 60/с (§15.4) не страдает:
+// флешей не больше одного на изменение.
+let lastInputSentAt = 0
+function sendInputNow(): void {
   if (!playing || hackview.active) return
+  lastInputSentAt = performance.now()
   // Touch ДЕЙСТВИЕ — edge как у Space: 1 в ближайший тик (сервер видит rising
   // edge interact); controls.keys.interact при этом остаётся 0 (§15.1).
   if (touch !== null) controls.keys.interact = touch.consumeInteract()
   sock.sendInput(controls.keys, controls.yaw, controls.pitch)
+}
+window.setInterval(() => {
+  if (performance.now() - lastInputSentAt >= INPUT_INTERVAL_MS / 2) sendInputNow()
 }, INPUT_INTERVAL_MS)
+controls.onActivity = sendInputNow
+if (touch !== null) touch.onActivity = sendInputNow
 
 engine.runRenderLoop(() => {
   const nowSec = performance.now() / 1000
@@ -603,7 +647,7 @@ engine.runRenderLoop(() => {
     const hf = camera.getDirection(Vector3.Forward())
     const near = propsView.nearestJackPoint(me.x, me.z, { x: hf.x, z: hf.z })
     if (near !== null) {
-      const label = `${near.kind === 'radio' ? 'РАДИО-ТОЧКА' : 'ТЕРМИНАЛ'} ${near.id.toUpperCase()}`
+      const label = near.label
       if (myCls !== 'hacker') {
         // «Только хакер» — вплотную (2 м), издалека подсказка не нужна
         // (плейтест M2-2), чтобы не засорять HUD чужим классом.
@@ -616,6 +660,15 @@ engine.runRenderLoop(() => {
     }
   }
   hud.jackinHint(hint)
+  // §12.1 «дорогой вход»: свежий jackprog перекрывает подсказку прогрессом
+  // канала; 1.5 с без апдейта = канал сорван, показываем обычную подсказку.
+  if (jackChannel !== null) {
+    if (performance.now() - jackChannel.at < 1500) {
+      hud.jackinHint(`УСТАНОВКА КАНАЛА // ${jackChannel.dev.toUpperCase()} — ${Math.max(0, jackChannel.s).toFixed(1)} С`)
+    } else {
+      jackChannel = null
+    }
+  }
 
   let fired = false
   // Авто-зум снайпера: враг в конусе ~25°, ближе 20 м и в прямой видимости

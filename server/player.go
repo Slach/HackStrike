@@ -89,6 +89,8 @@ type player struct {
 	// устройства, открытые своим portscan'ом (кибер-карта, туман войны).
 	jacked       bool
 	jackHost     *device
+	jacking      *device // устройство, у которого ставится канал джек-ина (§12.1 «дорогой вход»; nil = нет)
+	jackT        float64 // прогресс установки канала, с
 	progs        []*program
 	nextProgID   int
 	scanned      map[string]bool

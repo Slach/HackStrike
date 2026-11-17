@@ -735,70 +735,96 @@ export class PropsView {
     }
   }
 
-  /** Цель jack-in-подсказки (GDD §12.1, ревебр owner §15.12). Две честные
-   *  очереди:
-   *  1) есть точка в своём радиусе — та, которую реально заджекит сервер
-   *     (minby по чистой дистанции, как cyber.go jackTarget): «SPACE —
-   *     ДЖЕК-ИН» не должна врать о цели;
-   *  2) ни одной в радиусе — точка, в которую СМОТРИМ (dir по XZ), а не та,
-   *     что за спиной: отвернулся от радио — подсказка тут же про терминал.
-   *     За спиной (cos < 0.2, ~78°) не подсказываем; при паритете — ближе по
-   *     d/range. Если в конусе взгляда пусто — прежний nearest-by-score. */
+  /** Цель jack-in-подсказки (GDD §12.1 «дорогой вход», ревебр owner §15.12).
+   *  Честные очереди:
+   *  1) точка входа в своём радиусе — minby чистой дистанции, как серверный
+   *     jackTarget (cyber.go): «SPACE — ДЖЕК-ИН» не врёт о цели;
+   *  2) ни одной в радиусе — та, в которую СМОТРИМ (dir по XZ, cos ≥ 0.2
+   *     ≈ 78°, за спиной не подсказываем; при равных углах — ближе по d/range):
+   *     отвернулся от радио — подсказка тут же про терминал, а не про то, что
+   *     осталось за спиной;
+   *  3) в конусе взгляда пусто — ближайшая по d/range (прежнее поведение);
+   *  4) точек входа на карте нет вовсе — порт прочего устройства в 2 м
+   *     (§12.1 «дорогой вход», канал 6 с). */
   nearestJackPoint(
     x: number,
     z: number,
     dir?: { x: number; z: number },
-  ): { id: string; kind: 'terminal' | 'radio'; dist: number; range: number } | null {
-    type P = { id: string; kind: 'terminal' | 'radio'; dist: number; range: number; dx: number; dz: number }
+  ): { id: string; label: string; dist: number; range: number } | null {
+    type P = { id: string; label: string; dist: number; range: number; dx: number; dz: number }
     const pts: P[] = []
     for (const t of this.terminals.values()) {
-      pts.push({ id: t.id, kind: 'terminal', dist: Math.hypot(t.x - x, t.z - z), range: TERMINAL_RANGE, dx: t.x - x, dz: t.z - z })
+      pts.push({ id: t.id, label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, dist: Math.hypot(t.x - x, t.z - z), range: TERMINAL_RANGE, dx: t.x - x, dz: t.z - z })
     }
     for (const r of this.radios.values()) {
       const range = r.radius ?? DEFAULT_RADIO_RANGE
-      pts.push({ id: r.id, kind: 'radio', dist: Math.hypot(r.x - x, r.z - z), range, dx: r.x - x, dz: r.z - z })
+      pts.push({ id: r.id, label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, dist: Math.hypot(r.x - x, r.z - z), range, dx: r.x - x, dz: r.z - z })
     }
-    if (pts.length === 0) return null
-
-    // (1) в радиусе — серверный выбор: minby чистой дистанции.
-    let actionable: P | null = null
-    for (const p of pts) {
-      if (p.dist <= p.range && (actionable === null || p.dist < actionable.dist)) actionable = p
-    }
-    if (actionable !== null) return actionable
-
-    // (2) ни одной в радиусе — куда смотрим: maxcos (порог ~78°), при
-    // равенстве углов — ближе по d/range.
-    if (dir !== undefined && (dir.x !== 0 || dir.z !== 0)) {
-      const dl = Math.hypot(dir.x, dir.z)
-      const ux = dir.x / dl
-      const uz = dir.z / dl
-      let best: P | null = null
-      let bestCos = 0.2
-      let bestScore = Number.POSITIVE_INFINITY
+    if (pts.length > 0) {
+      // (1) в радиусе — серверный выбор: minby чистой дистанции.
+      let actionable: P | null = null
       for (const p of pts) {
-        const c = (p.dx * ux + p.dz * uz) / Math.max(p.dist, 0.001)
-        if (c < bestCos) continue
-        const score = p.dist / p.range
-        // главный критерий — угол; score только при равных (eps) углах
-        if (c > bestCos + 1e-9 || (Math.abs(c - bestCos) <= 1e-9 && score < bestScore)) {
-          bestCos = Math.max(bestCos, c)
-          bestScore = score
-          best = p
+        if (p.dist <= p.range && (actionable === null || p.dist < actionable.dist)) actionable = p
+      }
+      if (actionable !== null) return actionable
+
+      // (2) ни одной в радиусе — куда смотрим: maxcos, tie — d/range.
+      if (dir !== undefined && (dir.x !== 0 || dir.z !== 0)) {
+        const dl = Math.hypot(dir.x, dir.z)
+        const ux = dir.x / dl
+        const uz = dir.z / dl
+        let gaze: P | null = null
+        let bestCos = 0.2
+        let bestScore = Number.POSITIVE_INFINITY
+        for (const p of pts) {
+          const c = (p.dx * ux + p.dz * uz) / Math.max(p.dist, 0.001)
+          if (c < bestCos) continue
+          const score = p.dist / p.range
+          // главный критерий — угол; score только при равных (eps) углах
+          if (c > bestCos + 1e-9 || (Math.abs(c - bestCos) <= 1e-9 && score < bestScore)) {
+            bestCos = Math.max(bestCos, c)
+            bestScore = score
+            gaze = p
+          }
+        }
+        if (gaze !== null) return gaze
+      }
+
+      // (3) взгляд пуст/не передан — ближайшая по d/range (прежнее §12.1).
+      let legacy: P | null = null
+      let legacyScore = Number.POSITIVE_INFINITY
+      for (const p of pts) {
+        if (p.dist / p.range < legacyScore) {
+          legacyScore = p.dist / p.range
+          legacy = p
         }
       }
-      if (best !== null) return best
+      return legacy
     }
-
-    let best: P | null = null
-    let bestScore = Number.POSITIVE_INFINITY
-    for (const p of pts) {
-      if (p.dist / p.range < bestScore) {
-        bestScore = p.dist / p.range
-        best = p
+    // (4) «дорогой вход»: прочие устройства — тоже порт (жёсткий радиус 2 м,
+    // канал ставится 6 с). Точки входа выше имеют приоритет (как jackTarget).
+    // §12.1 «дорогой вход» (2026-11-17): прочие устройства — тоже порт
+    // (жёсткий радиус 2 м, канал ставится 6 с). Точки входа в радиусе —
+    // приоритет (совпадает с серверным jackTarget).
+    let port: { id: string; label: string; dist: number; range: number } | null = null
+    let portBest = Number.POSITIVE_INFINITY
+    const kinds: [Map<string, { id: string; x: number; z: number }>, string][] = [
+      [this.switches, 'СВИТЧ'],
+      [this.doors, 'ДВЕРЬ'],
+      [this.cameras, 'КАМЕРА'],
+      [this.valves, 'КЛАПАН'],
+      [this.gases, 'ГАЗ'],
+    ]
+    for (const [m, name] of kinds) {
+      for (const p of m.values()) {
+        const d = Math.hypot(p.x - x, p.z - z)
+        if (d <= TERMINAL_RANGE && d < portBest) {
+          portBest = d
+          port = { id: p.id, label: `${name} ${p.id.toUpperCase()}`, dist: d, range: TERMINAL_RANGE }
+        }
       }
     }
-    return best
+    return port
   }
 
   nearestJackIn(x: number, z: number): { id: string; kind: 'terminal' | 'radio' } | null {

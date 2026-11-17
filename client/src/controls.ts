@@ -71,12 +71,20 @@ export class Controls {
     if (!this.locked) this.resetKeys()
   }
 
+  /** Мгновенный flush input при смене контрольного состояния (ГДД §15.13):
+   *  main вешает sendInputNow; без коллбэка (тесты) — тихий noop. */
+  onActivity: (() => void) | null = null
+
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (this.setKey(e.code, 1) && this.locked) e.preventDefault()
+    // autorepeat (e.repeat) не флешим — состояние не менялось, слот 30 Гц
+    // и так его передаёт; flush только на rising edge клавиши.
+    if (!e.repeat) this.onActivity?.()
   }
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
     this.setKey(e.code, 0)
+    this.onActivity?.()
   }
 
   /** Public: main.ts clears stale keys when entering/leaving the hacker view. */

@@ -111,6 +111,10 @@ export class TouchOverlay {
    *  автоогня (§3.2/§15.1). */
   aiming = false
 
+  /** Мгновенный flush input при смене контрольного состояния (ГДД §15.13):
+   *  pointerdown/смена сектора/pointerup/ДЕЙСТВИЕ. Без коллбэка — noop. */
+  onActivity: (() => void) | null = null
+
   private readonly root: HTMLElement
   private readonly pad: HTMLElement
   private readonly segs: Record<'up' | 'down' | 'left' | 'right', HTMLElement>
@@ -158,6 +162,7 @@ export class TouchOverlay {
     act.addEventListener('pointerdown', (e) => {
       e.preventDefault()
       this.interactQueued = true
+      this.onActivity?.() // edge interact уходит в ближайший же кадр, не со слота (§15.13)
     })
 
     this.look = document.createElement('div')
@@ -206,6 +211,8 @@ export class TouchOverlay {
     if (this.padId !== null) return // второй палец на крестовине — игнор
     this.padId = e.pointerId
     this.pad.setPointerCapture(e.pointerId)
+    // padApply сам флешит при смене сектора (§15.13) — здесь отдельный flush
+    // не нужен: палец в мёртвой зоне не менял состояние, флешить нечего.
     this.padApply(e)
   }
 
@@ -221,6 +228,7 @@ export class TouchOverlay {
     this.segHot(null)
     const k = this.controls.keys
     k.w = k.a = k.s = k.d = 0
+    this.onActivity?.() // стоп тоже мгновенно, иначе тело «докатится» до слота
   }
 
   /** Индекс активного 45°-сектора стика, -1 = нейтраль. Держится между
@@ -234,12 +242,14 @@ export class TouchOverlay {
     const k = this.controls.keys
     k.w = k.a = k.s = k.d = 0
 
+    const prev = this.padSec
     // Нейтраль — не по Chebyshev, а по радиусу: палец у края по диагонали даёт
     // больший dx,dy, чем у края по прямой, и Chebyshev-порог резал бы углы.
     const rad = Math.hypot(dx, dy)
     if (rad < PAD_DEAD) {
       this.padSec = -1
       this.segHot(null)
+      if (prev !== -1) this.onActivity?.() // сектор → нейтраль = смена состояния
       return
     }
     const ang = Math.atan2(dy, dx) // (−π, π]; 0 = вправо, π/2 = вниз
@@ -260,6 +270,7 @@ export class TouchOverlay {
 
     for (const key of PAD_DIRS[sec]) k[key] = 1
     this.segHot(k)
+    if (sec !== prev) this.onActivity?.() // смена направления — без ожидания слота (§15.13)
   }
 
   /** Подсветка стрелок по активным флагам клавиш: диагональ жжёт две стрелки

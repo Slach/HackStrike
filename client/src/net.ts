@@ -73,6 +73,13 @@ export interface ScanDevice {
   firewalled?: boolean // someone's firewall sits on this device (M3 §13.5, visible to everyone who scanned it)
   firewalledBy?: number // firewall owner id (M3 §13.5: whose filter — for the own/ally/enemy badge; sent together with firewalled)
   antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
+  soft?: ScanSoft[] // resident software with owners (§9.2; ONLY to the device owner)
+}
+
+/** Одна запись списка процессов устройства (панель «ПРОЦЕССЫ», §13.1). */
+export interface ScanSoft {
+  p: string // trojan | watcher | firewall | antivirus
+  o: number // process owner playerId
 }
 
 /** Запись журнала событий watcher'а (M3 §13.1 №1): тик + что + кто + программа. */
@@ -156,6 +163,7 @@ export type ServerMessage =
   | { t: 'pong'; c: number; s: number; tick: number }
   // M2 (GDD §12.5)
   | { t: 'jackin'; host: string; deck: DeckInfo }
+  | { t: 'jackprog'; dev: string; s: number } // установка канала «дорогого входа», 2 Гц (§12.1)
   | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   // dev (omitempty, §13.5) — где упёрся скан: firewall_scan
@@ -299,6 +307,20 @@ function parseDevice(v: unknown): ScanDevice | null {
     if (net.length > 0) dev.net = net
   }
   if (typeof p.bp === 'number' && Number.isFinite(p.bp) && p.bp > 0) dev.bp = p.bp
+  // Список процессов (§9.2, панель «ПРОЦЕССЫ»): защитно, только владельцу
+  // сервер и так его шлёт; битые записи выбрасываем.
+  if (Array.isArray(p.soft)) {
+    const soft: ScanSoft[] = []
+    for (const e of p.soft) {
+      if (typeof e !== 'object' || e === null) continue
+      const r = e as Record<string, unknown>
+      const prog = str(r.p)
+      const o = num(r.o, Number.NaN)
+      if (prog === null || !Number.isFinite(o)) continue
+      soft.push({ p: prog, o })
+    }
+    if (soft.length > 0) dev.soft = soft
+  }
   // Журнал событий watcher'а (§13.1 №1): только у watched-устройств, но парсим
   // защитно — пустой/битый массив просто не даём.
   if (Array.isArray(p.log) && p.log.length > 0) {
