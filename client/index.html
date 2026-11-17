@@ -1648,12 +1648,16 @@
       /* §15.4 (ревебр owner): в ландшафте контролы в самих углах под большие
          пальцы, компактнее (112px вместо «в пол-экрана») и плотнее по фону —
          фон почти непрозрачный, рамка/глифы приглушены (не «слишком сильные») */
+      /* §15.16: размеры контролов — пользовательские: --ctl задает слайдер
+         настроек (0.75..1.5, hud пишет на :root + localStorage). Все размеры
+         стика/прицела/ДЕЙСТВИЕ — через calc от базовой 112px, хит-тест в
+         mobile.ts работает по getBoundingClientRect — масштаб прозрачен */
       .tc-pad {
         position: absolute;
         left: calc(8px + env(safe-area-inset-left));
         bottom: calc(8px + env(safe-area-inset-bottom));
-        width: 112px;
-        height: 112px;
+        width: calc(112px * var(--ctl, 1));
+        height: calc(112px * var(--ctl, 1));
         pointer-events: auto;
         touch-action: none;
         border-radius: 50%;
@@ -1664,16 +1668,17 @@
       .tc-seg {
         position: absolute;
         color: rgba(190, 255, 226, 0.85);
-        font-size: 14px;
+        font-size: calc(14px * var(--ctl, 1));
         text-shadow: 0 0 6px rgba(55, 255, 155, 0.55);
         display: flex;
         align-items: center;
         justify-content: center;
       }
-      .tc-seg.up { top: 4px; left: 0; right: 0; height: 30px; }
-      .tc-seg.down { bottom: 4px; left: 0; right: 0; height: 30px; }
-      .tc-seg.left { left: 4px; top: 0; bottom: 0; width: 30px; }
-      .tc-seg.right { right: 4px; top: 0; bottom: 0; width: 30px; }
+      /* §15.16: проценты вместо px — стрелки масштабируются вместе со стилем */
+      .tc-seg.up { top: 3.5%; left: 0; right: 0; height: 27%; }
+      .tc-seg.down { bottom: 3.5%; left: 0; right: 0; height: 27%; }
+      .tc-seg.left { left: 3.5%; top: 0; bottom: 0; width: 27%; }
+      .tc-seg.right { right: 3.5%; top: 0; bottom: 0; width: 27%; }
       .tc-seg.hot {
         color: #37ff9b;
         background: rgba(55, 255, 155, 0.3);
@@ -1709,15 +1714,15 @@
         justify-content: center;
         white-space: nowrap;
         text-indent: 1px; /* компенсации хвостового letter-spacing при center */
-        min-width: 112px;
+        min-width: calc(112px * var(--ctl, 1));
         padding: 0 9px;
-        height: 48px;
+        height: calc(48px * var(--ctl, 1));
         border-radius: 10px;
         background: rgba(55, 255, 155, 0.1);
         border: 1px solid rgba(55, 255, 155, 0.5);
         color: #baffdd;
         font: inherit;
-        font-size: 12px;
+        font-size: calc(12px * var(--ctl, 1));
         letter-spacing: 1px;
       }
       .tc-act:active { background: rgba(55, 255, 155, 0.3); }
@@ -1725,7 +1730,8 @@
         pointer-events: auto;
         touch-action: none;
         position: relative;
-        width: 112px; height: 112px;
+        width: calc(112px * var(--ctl, 1));
+        height: calc(112px * var(--ctl, 1));
         border-radius: 50%;
         background: radial-gradient(circle, rgba(2, 18, 10, 0.28), rgba(2, 18, 10, 0.46));
         border: 2px solid rgba(55, 255, 155, 0.6);
@@ -1740,7 +1746,7 @@
         align-items: center;
         justify-content: center;
         color: rgba(190, 255, 226, 0.8);
-        font-size: 10px;
+        font-size: calc(10px * var(--ctl, 1));
         letter-spacing: 2px;
       }
       .tc-look.aiming .tc-look-ring {
@@ -1918,6 +1924,14 @@
         display: flex;
         align-items: center;
         gap: 10px;
+      }
+      /* §15.16: слайдер размера контролов — только на touch (на десктопе
+         оверлея нет, крутить нечего) */
+      .ctlRow {
+        display: none;
+      }
+      body.touch .ctlRow {
+        display: flex;
       }
       .setLabel {
         font-size: 11px;
@@ -2378,6 +2392,13 @@
             <span class="setLabel">ЧУВСТВИТЕЛЬНОСТЬ<span class="dskl"> МЫШИ</span><span class="tskl"> ПРИЦЕЛА</span></span>
             <input id="lookSens" type="range" min="30" max="400" step="10" value="100" />
             <span id="lookSensVal" class="setVal">1.0×</span>
+          </div>
+          <!-- §15.16: размер и зона тапа мобильных контролов (стик/прицел/
+               ДЕЙСТВИЕ) — row виден только на touch -->
+          <div class="setRow ctlRow">
+            <span class="setLabel">РАЗМЕР КОНТРОЛОВ</span>
+            <input id="ctlScale" type="range" min="75" max="150" step="5" value="100" />
+            <span id="ctlScaleVal" class="setVal">1.0×</span>
           </div>
           <button id="settingsClose" class="btn small" type="button">ЗАКРЫТЬ</button>
         </div>

@@ -810,10 +810,13 @@ export class HackView {
     // Остальное — обычный ввод в строку фильтра (input-событие обновит список).
   }
 
-  private openPalette(mode: 'run' | 'tab'): void {
+  /** seedDev (тап-палитра из таба, §15.17): дерево сразу на уровне программ
+   *  этого устройства — «внутри таба» есть чем запустить софт, аналог
+   *  десктопной «/<dev> <prog>». */
+  private openPalette(mode: 'run' | 'tab', seedDev: string | null = null): void {
     if (this.palette !== null) return
     this.paletteMode = mode
-    this.paletteDev = null
+    this.paletteDev = mode === 'run' ? seedDev : null
     const wrap = el('div', 'hv-palette')
     const list = el('div', 'hv-pal-list')
     if (IS_TOUCH) {
@@ -1267,6 +1270,15 @@ export class HackView {
       if (this.panes.some((p) => p.tabKey === tab.key)) chip.classList.add('on')
       chip.textContent = i === 0 ? 'F1 ДЕКА' : `F${i + 1} ${this.tabTitle(tab)}`
       chip.addEventListener('click', () => {
+        // §15.17 (тап): повторный тап по АКТИВНОМУ табу устройства открывает
+        // палитру действий, уже сидящую на этом устройстве, — на тапе из
+        // открытого таба нечем было запустить софт (десктоп для этого жмёт
+        // «/<dev> <prog>», tree-палитра §15.7 требовала тыкать дерево заново).
+        const isActive = this.panes[this.activePane].tabKey === tab.key
+        if (IS_TOUCH && isActive && tab.dev !== null && tab.dev !== undefined) {
+          this.openPalette('run', tab.dev)
+          return
+        }
         this.panes[this.activePane].tabKey = tab.key
         this.schedule(() => this.render())
       })

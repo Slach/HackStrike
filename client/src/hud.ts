@@ -335,6 +335,8 @@ export class Hud {
     invertY: byId<HTMLInputElement>('invertY'),
     lookSens: byId<HTMLInputElement>('lookSens'),
     lookSensVal: byId('lookSensVal'),
+    ctlScale: byId<HTMLInputElement>('ctlScale'),
+    ctlScaleVal: byId('ctlScaleVal'),
     settingsBtn: byId('settingsBtn'),
     settings: byId('joinSettings'),
     settingsClose: byId('settingsClose'),
@@ -415,12 +417,35 @@ export class Hud {
     this.onSensScale(this.lookScale)
   }
 
+  /** Множитель размера мобильных контролов (0.75..1.5, слайдер §15.16):
+   *  стик/прицел/ДЕЙСТВИЕ масштабятся через CSS --ctl на :root; зона тапа
+   *  растет вместе с картинкой (хит-тест стика — getBoundingClientRect). */
+  get ctlScaleK(): number {
+    return Math.min(1.5, Math.max(0.75, Number(this.el.ctlScale.value) / 100))
+  }
+
+  /** Персист + live-применение слайдера размера (§15.16), по образцу
+   *  reapplySens: в конструкторе --ctl применяется сразу (оверлей читает
+   *  переменную при первом же layout, колбэк не нужен). */
+  reapplyCtl(): void {
+    const saved = Number(localStorage.getItem('hs.ctlScale'))
+    if (Number.isFinite(saved) && saved >= 75 && saved <= 150) {
+      this.el.ctlScale.value = String(saved)
+    }
+    localStorage.setItem('hs.ctlScale', this.el.ctlScale.value)
+    const k = this.ctlScaleK
+    this.el.ctlScaleVal.textContent = `${k.toFixed(2).replace(/0$/, '')}×`
+    document.documentElement.style.setProperty('--ctl', String(k))
+  }
+
   constructor() {
     buildCards(this.el.joinCards, this.joinCls, (c) => (this.joinCls = c))
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
     this.el.invertY.checked = localStorage.getItem('hs.invertY') === '1'
     this.reapplySens()
     this.el.lookSens.addEventListener('input', () => this.reapplySens())
+    this.reapplyCtl()
+    this.el.ctlScale.addEventListener('input', () => this.reapplyCtl())
     // Единый экран настроек (§15.5): кнопка под ДЕПЛОЕМ → модалка; клик по
     // затемнению и ESC закрывают. Одна механика на desktop и touch.
     this.el.settingsBtn.addEventListener('click', () => this.el.settings.classList.remove('hidden'))
