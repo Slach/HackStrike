@@ -2777,3 +2777,13 @@ func TestDeathWipesDeckMEM(t *testing.T) {
 		t.Fatalf("death must wipe deck MEM, items=%v", h.items)
 	}
 }
+
+// TestSeedTwoDoorKeys — решение владельца 2026-11-17: door_key сеется ДВУМЯ
+// копиями (t1+t2), rm убивает навсегда — матч-киллер исключён наличием
+// второй копии; альтернатива — физический перебор d3 (§16.7).
+func TestSeedTwoDoorKeys(t *testing.T) {
+	w, _, _ := rsyncSetup(t)
+	if !hostHasItem(w.cyber.devices["t1"], "door_key") || !hostHasItem(w.cyber.devices["t2"], "door_key") {
+		t.Fatalf("door_key must seed at BOTH t1 and t2")
+	}
+}

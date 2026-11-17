@@ -112,7 +112,6 @@ func newWorld(m *gameMap) *world {
 	return w
 }
 
-
 func (w *world) sendTo(id uint64, msg message) { w.out = append(w.out, outMsg{id, msg}) }
 func (w *world) broadcast(msg message)         { w.out = append(w.out, outMsg{0, msg}) }
 func (w *world) takeOut() []outMsg             { o := w.out; w.out = nil; return o }
