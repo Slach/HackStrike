@@ -1,6 +1,8 @@
 // Мобильная адаптация (ГДД §15): определение touch-устройства на стороне JS и
-// оверлей meatview — крестина движения слева («под большой палец»:
-// верх/низ/лево/право = w/s/a/d) + круг прицела справа (перетаскивание пальцем,
+// оверлей meatview — аналоговый стик движения слева («под большой палец»:
+// палец лежит на pads постоянно, скольжением выбирается одно из 8 направлений
+// + нейтраль = w/a/s/d и их диагональные комбинации, §15.11) + круг прицела
+// справа (перетаскивание пальцем,
 // схема Gun Bros: палец на круге ≡ захваченная мышь). Плюс кнопка ДЕЙСТВИЕ
 // (=Space: edge-джек-ин) и слежение за экранной клавиатурой: CSS-переменная
 // --kb даёт деке якорь палитры НАД клавиатурой (§15.2).
@@ -81,9 +83,28 @@ export function startKeyboardTracker(): void {
 // §15.5) — 0.0096 рад/px против 0.0022 у мыши. Сверху пользовательский
 // множитель слайдера настроек (0.3×…3.0×, §15.5).
 const LOOK_BASE = 0.0096 / 0.0022
-// Мёртвая зона крестовины (~18% радиуса): центр — нейтраль, чтобы смена
-// направления на проходе пальца через центр не дёргала тело.
+// Мёртвая зона стика (~18% радиуса, визуальный хаб): центр — нейтраль (9-е
+// состояние), чтобы смена направления на проходе пальца через центр не дёргала
+// тело.
 const PAD_DEAD = 0.18
+// Гистерезис сектора (§15.11): направление меняется, только когда палец ушёл
+// на 7° за границу 45°-сектора — иначе на проходе пальца у границы
+// диагональ/прямая chatter'ят и направление дрожит.
+const PAD_HYST = 0.12
+const PAD_STEP = Math.PI / 4
+// Сектора по углу atan2(dy,dx) в экранных координатах (0 = вправо, π/2 = вниз):
+// индекс → какие из w/a/s/d поднять. 4 глифа-стрелки подсвечиваются по флагам
+// клавиш, диагональ = две стрелки сразу (§15.11).
+const PAD_DIRS: ReadonlyArray<ReadonlyArray<'w' | 'a' | 's' | 'd'>> = [
+  ['d'],           // E
+  ['s', 'd'],      // SE
+  ['s'],           // S
+  ['a', 's'],      // SW
+  ['a'],           // W
+  ['a', 'w'],      // NW
+  ['w'],           // N
+  ['w', 'd'],      // NE
+]
 
 export class TouchOverlay {
   /** Палец на круге прицела — touch-эквивалент controls.locked для гейта
@@ -162,6 +183,7 @@ export class TouchOverlay {
    *  получить pointerup — не оставляем «удержание» на крестовине. */
   reset(): void {
     this.padId = null
+    this.padSec = -1
     this.lookId = null
     this.aiming = false
     this.look.classList.remove('aiming')
@@ -195,10 +217,15 @@ export class TouchOverlay {
   private readonly onPadUp = (e: PointerEvent): void => {
     if (e.pointerId !== this.padId) return
     this.padId = null
+    this.padSec = -1 // следующий тап — холодный старт, без гистерезиса прошлого
     this.segHot(null)
     const k = this.controls.keys
     k.w = k.a = k.s = k.d = 0
   }
+
+  /** Индекс активного 45°-сектора стика, -1 = нейтраль. Держится между
+   *  pointermove ради гистерезиса (§15.11). */
+  private padSec = -1
 
   private padApply(e: PointerEvent): void {
     const r = this.pad.getBoundingClientRect()
@@ -206,29 +233,42 @@ export class TouchOverlay {
     const dy = (e.clientY - (r.top + r.height / 2)) / (r.height / 2)
     const k = this.controls.keys
     k.w = k.a = k.s = k.d = 0
-    let dir: keyof TouchOverlay['segs'] | null = null
-    if (Math.max(Math.abs(dx), Math.abs(dy)) >= PAD_DEAD) {
-      if (Math.abs(dx) > Math.abs(dy)) {
-        if (dx > 0) {
-          k.d = 1
-          dir = 'right'
-        } else {
-          k.a = 1
-          dir = 'left'
-        }
-      } else if (dy > 0) {
-        k.s = 1
-        dir = 'down'
-      } else {
-        k.w = 1
-        dir = 'up'
-      }
+
+    // Нейтраль — не по Chebyshev, а по радиусу: палец у края по диагонали даёт
+    // больший dx,dy, чем у края по прямой, и Chebyshev-порог резал бы углы.
+    const rad = Math.hypot(dx, dy)
+    if (rad < PAD_DEAD) {
+      this.padSec = -1
+      this.segHot(null)
+      return
     }
-    this.segHot(dir)
+    const ang = Math.atan2(dy, dx) // (−π, π]; 0 = вправо, π/2 = вниз
+    const raw = ((Math.round(ang / PAD_STEP) % 8) + 8) % 8 // ближайший из 8
+    let sec = this.padSec
+    if (sec === -1) {
+      sec = raw
+    } else {
+      // Гистерезис: сменить сектор можно, только когда угол ушёл за его
+      // границу на PAD_HYST (обмотка угла через ±π учтена). У края стика
+      // (rad > 1.5) цепляемся за ближайший сектор напрямую.
+      let d = ang - sec * PAD_STEP
+      if (d > Math.PI) d -= Math.PI * 2
+      else if (d < -Math.PI) d += Math.PI * 2
+      if (Math.abs(d) >= PAD_STEP / 2 + PAD_HYST || rad > 1.5) sec = raw
+    }
+    this.padSec = sec
+
+    for (const key of PAD_DIRS[sec]) k[key] = 1
+    this.segHot(k)
   }
 
-  private segHot(dir: keyof TouchOverlay['segs'] | null): void {
-    for (const [k, el] of Object.entries(this.segs)) el.classList.toggle('hot', k === dir)
+  /** Подсветка стрелок по активным флагам клавиш: диагональ жжёт две стрелки
+   *  сразу (§15.11), нейтраль — ни одной. */
+  private segHot(active: { w: number; a: number; s: number; d: number } | null): void {
+    this.segs.up.classList.toggle('hot', active !== null && active.w === 1)
+    this.segs.down.classList.toggle('hot', active !== null && active.s === 1)
+    this.segs.left.classList.toggle('hot', active !== null && active.a === 1)
+    this.segs.right.classList.toggle('hot', active !== null && active.d === 1)
   }
 
   // ── круг прицела: drag = delta взгляда, удержание = «взгляд активен» ──
