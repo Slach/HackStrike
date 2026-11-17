@@ -1925,12 +1925,56 @@
         align-items: center;
         gap: 10px;
       }
+      /* §15.18: iOS Safari ломает touch-drag бегунка range под
+         -webkit-user-select:none (body.touch) — чекбокс (тап) жив, слайдеры
+         мертвы (ревебр owner). Возвращаем auto точечно; на touch — none
+         (документированный фикс: бегунок тянется пальцем, скролла панели от
+         жеста по самому слайдеру не нужно) и увеличенный бегунок */
+      input[type='range'] {
+        -webkit-user-select: auto;
+        user-select: auto;
+      }
+      body.touch input[type='range'] {
+        touch-action: none;
+        height: 32px;
+      }
+      body.touch input[type='range']::-webkit-slider-thumb {
+        width: 30px;
+        height: 30px;
+      }
       /* §15.16: слайдер размера контролов — только на touch (на десктопе
          оверлея нет, крутить нечего) */
       .ctlRow {
         display: none;
       }
       body.touch .ctlRow {
+        display: flex;
+      }
+      /* §15.18: зона тапа — ::after контролов, растянутый вокруг картинки на
+         (tap−1)/2 с каждой стороны (--tap 1.0…1.8, hud пишет на :root).
+         События с псевдо-зоны буллят в сам контрол; мобильный хит-тест стика
+         нормализован по getBoundingClientRect визуала (rad>1 за кругом =
+         штатная крайняя зона), прицелу важны только дельты, ДЕЙСТВИЕ —
+         pointerdown. Картинка не меняется, пальцем промахиваешься реже */
+      .tc-pad::after,
+      .tc-look::after,
+      .tc-act::after {
+        content: '';
+        position: absolute;
+        inset: calc(50% * (1 - var(--tap, 1)));
+        border-radius: inherit;
+      }
+      .tc-act {
+        position: relative;
+        /* своей рамкой зоны тапа лежим НАД ::after прицела (в столбике look
+           идёт позже в DOM и без этого перекрывал бы низ кнопки) */
+        z-index: 2;
+      }
+      /* §15.18: слайдер зоны тапа — только на touch */
+      .tapRow {
+        display: none;
+      }
+      body.touch .tapRow {
         display: flex;
       }
       .setLabel {
@@ -2399,6 +2443,12 @@
             <span class="setLabel">РАЗМЕР КОНТРОЛОВ</span>
             <input id="ctlScale" type="range" min="75" max="150" step="5" value="100" />
             <span id="ctlScaleVal" class="setVal">1.0×</span>
+          </div>
+          <!-- §15.18: зона тапа вокруг контролов (хит-тест шире картинки) -->
+          <div class="setRow tapRow">
+            <span class="setLabel">ЗОНА ТАПА</span>
+            <input id="tapScale" type="range" min="100" max="180" step="10" value="100" />
+            <span id="tapScaleVal" class="setVal">1.0×</span>
           </div>
           <button id="settingsClose" class="btn small" type="button">ЗАКРЫТЬ</button>
         </div>

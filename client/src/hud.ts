@@ -337,6 +337,8 @@ export class Hud {
     lookSensVal: byId('lookSensVal'),
     ctlScale: byId<HTMLInputElement>('ctlScale'),
     ctlScaleVal: byId('ctlScaleVal'),
+    tapScale: byId<HTMLInputElement>('tapScale'),
+    tapScaleVal: byId('tapScaleVal'),
     settingsBtn: byId('settingsBtn'),
     settings: byId('joinSettings'),
     settingsClose: byId('settingsClose'),
@@ -438,6 +440,23 @@ export class Hud {
     document.documentElement.style.setProperty('--ctl', String(k))
   }
 
+  /** Множитель зоны тапа (1.0..1.8, §15.18): хит-тест контролов шире самой
+   *  картинки (::after-рамка в CSS), картинка не меняется. */
+  get tapScaleK(): number {
+    return Math.min(1.8, Math.max(1, Number(this.el.tapScale.value) / 100))
+  }
+
+  reapplyTap(): void {
+    const saved = Number(localStorage.getItem('hs.tapScale'))
+    if (Number.isFinite(saved) && saved >= 100 && saved <= 180) {
+      this.el.tapScale.value = String(saved)
+    }
+    localStorage.setItem('hs.tapScale', this.el.tapScale.value)
+    const k = this.tapScaleK
+    this.el.tapScaleVal.textContent = `${k.toFixed(1)}×`
+    document.documentElement.style.setProperty('--tap', String(k))
+  }
+
   constructor() {
     buildCards(this.el.joinCards, this.joinCls, (c) => (this.joinCls = c))
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
@@ -446,6 +465,8 @@ export class Hud {
     this.el.lookSens.addEventListener('input', () => this.reapplySens())
     this.reapplyCtl()
     this.el.ctlScale.addEventListener('input', () => this.reapplyCtl())
+    this.reapplyTap()
+    this.el.tapScale.addEventListener('input', () => this.reapplyTap())
     // Единый экран настроек (§15.5): кнопка под ДЕПЛОЕМ → модалка; клик по
     // затемнению и ESC закрывают. Одна механика на desktop и touch.
     this.el.settingsBtn.addEventListener('click', () => this.el.settings.classList.remove('hidden'))
