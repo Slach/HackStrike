@@ -667,7 +667,7 @@ engine.runRenderLoop(() => {
     // Цель подсказки — с учётом взгляда (§15.12): вне радиуса подсказываем ту
     // точку, в которую смотрим, а не ту, что осталась за спиной.
     const hf = camera.getDirection(Vector3.Forward())
-    const near = propsView.nearestJackPoint(me.x, me.z, { x: hf.x, y: hf.y, z: hf.z })
+    const near = propsView.nearestJackPoint(me.x, me.z, { x: hf.x, y: hf.y, z: hf.z }, me.y)
     if (near !== null) {
       const label = near.label
       if (myCls !== 'hacker') {
