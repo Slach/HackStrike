@@ -449,39 +449,24 @@ func (cs *cyberState) widestPath(from, to string, blocked func(string) bool) []s
 }
 
 // jackTarget — ближайшее устройство джек-ина (§12.1 «дорогой вход»,
-// ред. 2026-11-17): ЛЮБОЕ сетевое устройство в 2 м (сервисный порт), радио —
-// в своём радиусе (3D-дистанция; LOS по §12.7 не нужен).
+// ред. 2026-11-17): ЛЮБОЕ сетевое устройство, чей порт в радиусе; при
+// конкуренции (терминал и камера рядом) побеждает БЛИЖАЙШЕЕ (плейтест
+// 2026-11-17: «space в зоне и точки, и камеры работал только на точку»).
+// Радиусы: точка входа — терминал 2 м / радио свой; прочие устройства — 2 м.
+// Дистанция ГОРИЗОНТАЛЬНАЯ: камеры висят на кронштейнах, клапаны под
+// потолком — 3D-дистанция до точки подвеса в радиус не проходила.
 func (cs *cyberState) jackTarget(pos vec3) *device {
 	var best *device
 	bestD := math.Inf(1)
 	for _, id := range cs.order {
 		d := cs.devices[id]
-		if d.kind != "terminal" && d.kind != "radio" {
-			continue
-		}
 		r := jackTerminalRadius
 		if d.kind == "radio" {
 			r = d.radius
 		}
-		if dist := d.pos.sub(pos).length(); dist <= r && dist < bestD {
-			best, bestD = d, dist
-		}
-	}
-	if best != nil {
-		return best
-	}
-	// Точек входа рядом нет — берём прочее устройство в 2 м (§12.1).
-	// Дистанция ГОРИЗОНТАЛЬНАЯ: камеры висят на кронштейнах, клапаны под
-	// потолком — 3D-дистанция до точки подвеса в радиус не проходила
-	// (плейтест 2026-11-17: «джек у камеры/свитча не работает»).
-	for _, id := range cs.order {
-		d := cs.devices[id]
-		if d.kind == "radio" || d.kind == "terminal" {
-			continue
-		}
 		dp := d.pos.sub(pos)
 		dp[1] = 0
-		if dist := dp.length(); dist <= jackTerminalRadius && dist < bestD {
+		if dist := dp.length(); dist <= r && dist < bestD {
 			best, bestD = d, dist
 		}
 	}

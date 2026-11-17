@@ -760,20 +760,18 @@ export class PropsView {
       const range = r.radius ?? DEFAULT_RADIO_RANGE
       pts.push({ id: r.id, label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, dist: Math.hypot(r.x - x, r.z - z), range, dx: r.x - x, dz: r.z - z })
     }
-    if (pts.length > 0) {
-      // (1) в радиусе — серверный выбор: minby чистой дистанции.
-      let actionable: P | null = null
-      for (const p of pts) {
-        if (p.dist <= p.range && (actionable === null || p.dist < actionable.dist)) actionable = p
-      }
-      if (actionable !== null) return actionable
+    // (1) в радиусе — серверный выбор: minby чистой дистанции СРЕДИ ВСЕХ
+    // устройств (§12.1, плейтест 2026-11-17: «space в зоне и точки, и камеры
+    // работал только на точку» — побеждает ближайший порт, тип не важен).
+    let actionable: P | null = null
+    for (const p of pts) {
+      if (p.dist <= p.range && (actionable === null || p.dist < actionable.dist)) actionable = p
     }
-    // (2) «дорогой вход» (§12.1): порт устройства в 2 м. Выше точек входа
-    // вне радиуса — взгляд мимо камеры не должен прятать подсказку у ног
-    // (плейтест 2026-11-17: «у камеры/свитча нет подсказок, тултип показывает
-    // дальний терминал»). Совпадает с серверным jackTarget.
     const port = this.nearestDevicePort(x, z)
-    if (port !== null) return port
+    if (port !== null && (actionable === null || port.dist < actionable.dist)) {
+      return port
+    }
+    if (actionable !== null) return actionable
 
     if (pts.length > 0) {
       // (3) ни одной в радиусе — куда смотрим: maxcos, tie — d/range.
