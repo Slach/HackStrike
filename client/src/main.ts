@@ -478,9 +478,12 @@ hud.onRespawn = (cls) => {
 // NB: tc-* (стик/прицел/ДЕЙСТВИЕ) — тоже UI: короткий тап по ним не должен
 // открывать меню паузы, иначе «палец лёг и оторвался» замораживает игрока
 // frozen-меню посреди движения (баг-фикс 2026-11-17, ГДД §15.12).
+// NB: #topbar — UI с §15.15: он ОТКРЫВАЕТ меню своим click-обработчиком;
+// в isUiTarget он стоит, чтобы tryRelock не тянул pointer-lock в тот же
+// mousedown (гонка requestPointerLock↔exitPointerLock на десктопе).
 const isUiTarget = (e: Event): boolean =>
   e.target instanceof HTMLElement &&
-  e.target.closest('button, input, .card, .chk, .segBtn, .tc-pad, .tc-look, .tc-act') !== null
+  e.target.closest('button, input, .card, .chk, .segBtn, .tc-pad, .tc-look, .tc-act, #topbar') !== null
 const tryRelock = (e: Event) => {
   // Меню паузы открыто — курсор нужен для выбора команды/класса; никакой
   // перекламки указателя (иначе любой keydown в меню возвращает mlook).
@@ -492,10 +495,13 @@ const tryRelock = (e: Event) => {
 document.addEventListener('mousedown', tryRelock)
 document.addEventListener('keydown', tryRelock)
 
-// Меню паузы (§15.5): в FPS-режиме клик мыши, тап по экрану или «~» открывает
-// join-окно (invite/settings/вернуться). «~» — тогл; закрытие — «~», кнопка
-// «ВЕРНУТЬСЯ В БОЙ» или тап по фону. Стрельбе не мешает: она авто (AutoFire),
-// mousedown свободен. Пока меню открыто — controls.frozen (тело не бегает).
+// Меню паузы (§15.5, ред. §15.15): ОТКРЫТИЕ — только тап/клик по табло счёта
+// (#topbar, верх-центр) или «~» на десктопе. Тап/клик по экрану больше не
+// открывает: с аналоговым стиком (§15.11) коротких касаний слишком много,
+// экран «ВЕРНУТЬСЯ В БОЙ» всплывал от мискликов (ревебр owner). Закрытие —
+// «~», кнопка «ВЕРНУТЬСЯ В БОЙ» или тап по фону открытого меню. Стрельбе не
+// мешает: она авто (AutoFire), mousedown свободен. Пока меню открыто —
+// controls.frozen (тело не бегает).
 let menuOpen = false
 function gameMenu(open: boolean): void {
   if (open === menuOpen) return
@@ -521,19 +527,30 @@ window.addEventListener('keydown', (e) => {
   if (!playing) return
   gameMenu(!menuOpen)
 })
-// Клик в FPS (курсор ещё захвачен) — открыть меню; мёртвым — death-оверлей,
-// не меню
+// Клик по фону открытого меню — закрыть (§15.12: тогл симметричен «~»);
+// клики внутри .panel/модалок — их дела. ОТКРЫТИЕ кликом по экрану убрано
+// (§15.15): с автоогнём и аналоговым стиком случайный клик/тап открывал
+// «ВЕРНУТЬСЯ В БОЙ» слишком часто — теперь меню открывает только тап/клик по
+// табло счёта (#topbar) или «~» на десктопе.
 document.addEventListener('mousedown', (e) => {
   // Compat-мышь после тача (~300 мс) не в счёт: touchend уже решил, иначе
   // тап-тогл открывал бы меню и сразу сам закрывал (§15.12).
   if (performance.now() - lastTouchAt < 700) return
-  // Клик по фону открытого меню — закрыть (§15.12: тогл симметричен «~»);
-  // клики внутри .panel/модалок — их дела (выбор класса, настройки, инвайт).
+  // Табло — не «фон»: его тоглит свой click-хендлер ниже, иначе mousedown
+  // закрыл бы меню, а click тут же открыл бы заново.
+  if (e.target instanceof HTMLElement && e.target.closest('#topbar') !== null) return
   if (menuOpen) {
     if (e.target instanceof HTMLElement && e.target.closest('.panel, .settings') === null) gameMenu(false)
-    return
   }
-  if (!hud.deathVisible() && playing && !hackview.active && controls.locked) gameMenu(true)
+})
+// §15.15: табло счёта — кнопка меню (тап на мобиле, клик при разблокированном
+// курсоре на десктопе; под pointer lock DOM-кликов нет — там «~»). click, а не
+// pointerdown: на iOS тач даёт click сам, синтетический — после touchend, а
+// touchend-хендлер ниже по isUiTarget(#topbar) молчит.
+document.getElementById('topbar')?.addEventListener('click', () => {
+  if (performance.now() - lastTouchAt < 700) return // решит touch-путь/следующий клик
+  if (!playing || hud.deathVisible() || hackview.active) return
+  gameMenu(!menuOpen)
 })
 // Тап (короткий, без движения) по игровому экрану на мобиле — то же самое.
 // compat-мышь после тача глушим по времени: touchend уже отработал тогл,
@@ -560,13 +577,18 @@ document.addEventListener(
     const dt = performance.now() - tapStart.t
     tapStart = null
     if (moved > 12 || dt > 350) return // это был look-жест, не тап
+    // §15.15: тап по табло счёта — открыть/закрыть меню (единственный жест-
+    // вход; экран больше не тапается). Синтетический click после touchend
+    // гасится lastTouchAt-гейтом, двойного тогла нет.
+    if (e.target instanceof HTMLElement && e.target.closest('#topbar') !== null) {
+      if (playing && !hud.deathVisible() && !hackview.active) gameMenu(!menuOpen)
+      return
+    }
     if (isUiTarget(e)) return
     // Тап по фону открытого меню — закрыть (§15.12); внутри панели — её дела.
     if (menuOpen) {
       if (e.target instanceof HTMLElement && e.target.closest('.panel, .settings') === null) gameMenu(false)
-      return
     }
-    if (!hud.deathVisible() && playing && !hackview.active) gameMenu(true)
   },
   { capture: true },
 )

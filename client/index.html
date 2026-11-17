@@ -101,6 +101,9 @@
       }
 
       /* team score + match timer */
+      /* §15.15: табло — кнопка меню паузы (было pointer-events:none): тап/клик
+         по счёту вверху открывает «ВЕРНУТЬСЯ В БОЙ» вместо тапа по всему
+         экрану; курсор-подсказка на десктопе */
       #topbar {
         position: absolute;
         top: 12px;
@@ -113,7 +116,10 @@
         background: var(--panel);
         border: 1px solid var(--line);
         border-radius: 6px;
-        pointer-events: none;
+        pointer-events: auto;
+        cursor: pointer;
+        -webkit-user-select: none;
+        user-select: none;
         z-index: 5;
       }
       #score0,
@@ -1692,6 +1698,9 @@
       /* ГДД §15.13: в flex-колонке .tc-right кнопка blockify'ится — текст с
          letter-spacing (70.2px natural) не влезал в фикс-68px и резался по
          краям, плюс прижимался к верху. Flex-центрирование + авто-ширина. */
+      /* §15.15 (ревебр owner): зона тапа «сильно больше» — ширина как у круга
+         прицела, высота 48px (было 68×32): площадь ×2.5, палец по крупной
+         кнопке мажет реже; текст крупнее под новый размер */
       .tc-act {
         pointer-events: auto;
         touch-action: none;
@@ -1700,15 +1709,15 @@
         justify-content: center;
         white-space: nowrap;
         text-indent: 1px; /* компенсации хвостового letter-spacing при center */
-        min-width: 68px;
+        min-width: 112px;
         padding: 0 9px;
-        height: 32px;
-        border-radius: 8px;
+        height: 48px;
+        border-radius: 10px;
         background: rgba(55, 255, 155, 0.1);
         border: 1px solid rgba(55, 255, 155, 0.5);
         color: #baffdd;
         font: inherit;
-        font-size: 10px;
+        font-size: 12px;
         letter-spacing: 1px;
       }
       .tc-act:active { background: rgba(55, 255, 155, 0.3); }
@@ -2150,7 +2159,8 @@
       }
       body.touch #topbar {
         top: calc(8px + env(safe-area-inset-top));
-        padding: 5px 12px;
+        /* §15.15: полоса тапа выше (≈48px) — по табло попадаем пальцем */
+        padding: 8px 16px;
         gap: 10px;
       }
       body.touch #score0,
