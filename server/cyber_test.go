@@ -1246,6 +1246,8 @@ func TestWatcherInstallTriggers(t *testing.T) {
 	// (владелец t2 — сам foe, повторный trojan не меняет владельца → install).
 	ensureVulned(w, h, "t2")
 	runCollectM3(w, h, message{"t": "run", "prog": "antivirus", "dev": "t2"})
+	// §13.6 (2026-11-17): установка AV стёрла foe'vuln-метку — пере-вскрытие.
+	ensureVulned(w, foe, "t2")
 	out = runCollectM3(w, foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
 	assertDeniedOut(t, out, foe, "antivirus")
 	if findAlertSrc(out, h.id, "t2", "watcher") != nil {
@@ -2006,11 +2008,13 @@ func TestAntivirus(t *testing.T) {
 	if t2.antivirused != h.id {
 		t.Fatalf("setup: antivirus must be reinstalled")
 	}
+	ensureVulned(w, foe, "t2") // AV (строкой выше) стёрл метку foe (§13.6)
 	out = runCollect(foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
 	assertDeniedOut(t, out, foe, "antivirus")
 
 	// Контр-плей без тупика: без переустановки повторный trojan проходит —
 	// владение перешло, чужой firewall выкурен, вход открыт.
+	ensureVulned(w, foe, "t2") // вторая установка AV тоже стирала метку (§13.6)
 	out = runCollect(foe, message{"t": "run", "prog": "trojan", "dev": "t2"})
 	if t2.owner != foe.id {
 		t.Fatalf("retry trojan must succeed against the worn-out antivirus, owner=%v", t2.owner)
@@ -2414,4 +2418,85 @@ func jackOwn(t *testing.T, w *world, pl *player) bool {
 	t.Helper()
 	jackAt(w, pl, "t2")
 	return pl.jacked
+}
+
+// TestAntivirusWipesForeignVuln — §13.6 (решение владельца 2026-11-17
+// «пере-вскрытие после AV»): завершившаяся установка antivirus стирает
+// ЧУЖИЕ vuln-метки устройства — чужой софт после этого снова требует
+// vulnscan (denied not_vulned); метка самого установщика остаётся.
+func TestAntivirusWipesForeignVuln(t *testing.T) {
+	w := netTestWorld(t, 60)
+	a := w.addPlayer(1, "h1", "hacker", 0) // установит antivirus
+	b := w.addPlayer(2, "h2", "hacker", 1) // чужой с vuln-меткой
+	w.takeOut()
+	jackIn(t, w, a, "t1")
+	jackIn(t, w, b, "t2")
+	ensureVulned(w, a, "d1")
+	ensureVulned(w, b, "d1")
+	if !w.cyber.devices["d1"].vulnedBy[a.id] || !w.cyber.devices["d1"].vulnedBy[b.id] {
+		t.Fatalf("both vuln marks expected before AV")
+	}
+	runAndWaitM2(w, a, message{"t": "run", "prog": "antivirus", "dev": "d1"})
+	if w.cyber.devices["d1"].antivirused != a.id {
+		t.Fatalf("antivirus not installed")
+	}
+	if !w.cyber.devices["d1"].vulnedBy[a.id] {
+		t.Fatalf("installer's own vuln mark must survive")
+	}
+	if w.cyber.devices["d1"].vulnedBy[b.id] {
+		t.Fatalf("foreign vuln mark must be wiped by AV")
+	}
+	// Следствие: чужой watcher на d1 теперь denied not_vulned.
+	w.handleMessage(b, message{"t": "run", "prog": "watcher", "dev": "d1"})
+	out := w.takeOut()
+	found := false
+	for _, m := range out {
+		if m.to == b.id && m.msg["reason"] == "not_vulned" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("watcher after AV must be denied not_vulned")
+	}
+}
+
+// TestScanSoftOnlyOwnerVisible — §9.2 (панель «ПРОЦЕССЫ»): состав софта
+// устройства виден ТОЛЬКО владельцу (трояновому хозяину); чужой видит
+// устройство без поля soft.
+func TestScanSoftOnlyOwnerVisible(t *testing.T) {
+	w := netTestWorld(t, 60)
+	a := w.addPlayer(1, "h1", "hacker", 0)
+	b := w.addPlayer(2, "h2", "hacker", 1)
+	w.takeOut()
+	jackIn(t, w, a, "t1")
+	jackIn(t, w, b, "t2")
+	// a захватывает d1 трояном (нужен vulnscan), ставит firewall и watcher.
+	ensureVulned(w, a, "d1")
+	runAndWaitM2(w, a, message{"t": "run", "prog": "trojan", "dev": "d1"})
+	runAndWaitM2(w, a, message{"t": "run", "prog": "firewall", "dev": "d1"})
+	runAndWaitM2(w, a, message{"t": "run", "prog": "watcher", "dev": "d1"})
+	w.takeOut()
+	w.sendScan(a)
+	scanA := w.takeOut()
+	w.sendScan(b)
+	scanB := w.takeOut()
+	softOf := func(out []outMsg, id uint64) int {
+		n := 0
+		for _, m := range out {
+			if m.to != id || m.msg["t"] != "scan" {
+				continue
+			}
+			devs, _ := m.msg["devices"].([]scanDevice)
+			for _, d := range devs {
+				n += len(d.Soft)
+			}
+		}
+		return n
+	}
+	if got := softOf(scanA, a.id); got < 3 {
+		t.Fatalf("owner soft entries = %d, want >=3 (trojan+firewall+watcher)", got)
+	}
+	if got := softOf(scanB, b.id); got != 0 {
+		t.Fatalf("foreign soft entries = %d, want 0 (hidden)", got)
+	}
 }

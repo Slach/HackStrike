@@ -212,6 +212,49 @@ func TestRespawnRules(t *testing.T) {
 	}
 }
 
+// Смерть + F5 (сессия): welcome и ДОСЫЛ death с respawnAt=now — иначе клиент
+// не покажет оверлей респавна и мёртвый застрянет навсегда (ГДД §9.2, §11
+// 2026-11-17). Живой при возврате death не получает.
+func TestDeathRedeliveredOnSessionRestore(t *testing.T) {
+	w, clock := testWorldWithEmbeddedMap(t)
+	dead := w.addPlayer(1, "d", "sniper", -1)
+	live := w.addPlayer(2, "l", "sniper", -1)
+	w.damage(dead, dead, 9999) // selfkill: dead.alive=false, respawnAt=+5s
+	w.takeOut()
+	w.removePlayer(dead.id)
+	w.removePlayer(live.id)
+
+	*clock = clock.Add(time.Minute) // сессия жива (TTL 5 мин)
+	restDead := w.addPlayer(7, "d", "sniper", -1)
+	restLive := w.addPlayer(8, "l", "sniper", -1)
+	if restDead.alive {
+		t.Fatalf("session restore must keep the player dead")
+	}
+
+	var deaths []outMsg
+	for _, o := range w.takeOut() {
+		if o.msg["t"] == "death" {
+			deaths = append(deaths, o)
+		}
+		if o.msg["t"] == "welcome" && o.to != restDead.id && o.to != restLive.id {
+			t.Fatalf("unexpected welcome to %d", o.to)
+		}
+	}
+	if len(deaths) != 1 || deaths[0].to != restDead.id {
+		t.Fatalf("dead restore must get exactly one private death, got %d", len(deaths))
+	}
+	if deaths[0].msg["respawnAt"] != clock.UnixMilli() {
+		t.Fatalf("respawnAt must be now, so the button appears immediately: %v", deaths[0].msg["respawnAt"])
+	}
+
+	// Прошёл respawnAt → respawn работает, death-оверлей клиент снимет по snap.
+	w.handleMessage(restDead, message{"t": "respawn", "cls": "sniper"})
+	if !restDead.alive {
+		t.Fatalf("respawn after restore must succeed (respawnAt=now)")
+	}
+	_ = live
+}
+
 // Матч: победа по фрагам → matchend → сброс счёта, следующий матч стартует.
 func TestMatchEndByFrags(t *testing.T) {
 	w, _ := testWorldWithEmbeddedMap(t)

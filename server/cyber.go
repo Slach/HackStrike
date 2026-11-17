@@ -8,6 +8,7 @@ package main
 import (
 	"log"
 	"math"
+	"sort"
 	"strings"
 	"time"
 )
@@ -986,10 +987,20 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// перезаписывает хозяина (переустановка после износа — гонка версий).
 		if dev := w.cyber.devices[p.dev]; dev != nil {
 			dev.antivirused = pl.id
+			// §13.6 (ред. 2026-11-17): установка antivirus стирает ЧУЖИЕ
+			// vuln-метки («пере-вскрытие после AV») — устройство откатывается
+			// в закрытое состояние; свой метка остаётся (он вскрыл, чтобы
+			// поставить). Правка M2 «навсегда»: навсегда, пока не встал AV.
+			for uid := range dev.vulnedBy {
+				if uid != pl.id {
+					delete(dev.vulnedBy, uid)
+				}
+			}
 			// §13.1 №2: установка antivirus — кибер-событие для watcher'ов
-			// (ev=install). Пишем до resendScanFor.
+			// (ev=install); wipe чужих меток — отдельная строка журнала.
 			w.fireWatchers(dev, pl, "install", "antivirus")
-			w.resendScanFor(p.dev) // на карте появится ореол antivirused
+			w.logWatcherEvent(dev, "wipe", pl, "antivirus")
+			w.resendScanFor(p.dev) // ореол antivirused + vulned=false у чужих
 		}
 	}
 }
@@ -1045,6 +1056,29 @@ type scanDevice struct {
 	// Резидентный процесс наблюдаем из сети — виден всем, кто открыл
 	// устройство (как firewalled).
 	Antivirused bool `json:"antivirused,omitempty"`
+	// Soft — состав резидентного софта с хозяевами (§9.2, ред. 2026-11-17):
+	// [{p:"trojan|watcher|firewall|antivirus", o:id}]; omitempty. Виден
+	// ТОЛЬКО владельцу устройства (трояновому хозяину) — чужой состав не
+	// раскрываем, иначе watcher/firewall теряют ценность (панель «ПРОЦЕССЫ»).
+	Soft []scanSoft `json:"soft,omitempty"`
+}
+
+// scanSoft — одна запись списка процессов устройства (панель «ПРОЦЕССЫ»,
+// §13.1): программа + хозяин процесса.
+type scanSoft struct {
+	P string `json:"p"`
+	O uint64 `json:"o"`
+}
+
+// sortedWatcherUIDs — детерминированный порядок обхода watcherBy (снапшоты
+// сканов стабильны между тиками).
+func sortedWatcherUIDs(m map[uint64]bool) []uint64 {
+	uids := make([]uint64, 0, len(m))
+	for uid := range m {
+		uids = append(uids, uid)
+	}
+	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
+	return uids
 }
 
 // sendScan — кибер-карта хакера: только открытые его portscan'ом устройства
@@ -1071,6 +1105,20 @@ func (w *world) sendScan(pl *player) {
 		}
 		if d.owner != 0 {
 			sd.Owner = d.owner
+		}
+		// Состав софта — только владельцу устройства (§9.2): trojan (он сам)
+		// + резидентные процессы с хозяевами. Порядок стабильный.
+		if d.owner == pl.id {
+			sd.Soft = append(sd.Soft, scanSoft{P: "trojan", O: d.owner})
+			if d.firewalled != 0 {
+				sd.Soft = append(sd.Soft, scanSoft{P: "firewall", O: d.firewalled})
+			}
+			if d.antivirused != 0 {
+				sd.Soft = append(sd.Soft, scanSoft{P: "antivirus", O: d.antivirused})
+			}
+			for _, uid := range sortedWatcherUIDs(d.watcherBy) {
+				sd.Soft = append(sd.Soft, scanSoft{P: "watcher", O: uid})
+			}
 		}
 		if d.vulnedBy[pl.id] {
 			sd.Vulned = true

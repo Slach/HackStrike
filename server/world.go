@@ -231,6 +231,14 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 	w.players[id] = pl
 	w.startMatchIfNeeded()
 	w.sendTo(id, message{"t": "welcome", "id": id, "team": pl.team, "tick": w.tick})
+	// Death overlay is drawn only by the private `death` message; при возврате
+	// из сессии мёртвым оно уже упущено — без досыла игрок застревает с 0 HP
+	// без кнопки респавна (баг-репорт владельца 2026-11-17, ГДД §9.2/§11).
+	// by=-1 — убийца после F5 неизвестен (клиент рисует '?'), respawnAt уже
+	// прощён выше — оверлей сразу даёт кнопку.
+	if !pl.alive {
+		w.sendTo(id, message{"t": "death", "by": int64(-1), "respawnAt": pl.respawnAt.UnixMilli()})
+	}
 	return pl
 }
 

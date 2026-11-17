@@ -465,8 +465,12 @@ hud.onRespawn = (cls) => {
 // NB: never grab the pointer from UI controls (respawn button, class cards):
 // engaging pointer-lock mid-gesture makes Chrome swallow the button's click
 // event, so the respawn overlay would never close on mouse click.
+// NB: tc-* (стик/прицел/ДЕЙСТВИЕ) — тоже UI: короткий тап по ним не должен
+// открывать меню паузы, иначе «палец лёг и оторвался» замораживает игрока
+// frozen-меню посреди движения (баг-фикс 2026-11-17, ГДД §15.12).
 const isUiTarget = (e: Event): boolean =>
-  e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null
+  e.target instanceof HTMLElement &&
+  e.target.closest('button, input, .card, .chk, .segBtn, .tc-pad, .tc-look, .tc-act') !== null
 const tryRelock = (e: Event) => {
   // Меню паузы открыто — курсор нужен для выбора команды/класса; никакой
   // перекламки указателя (иначе любой keydown в меню возвращает mlook).
@@ -509,14 +513,27 @@ window.addEventListener('keydown', (e) => {
 })
 // Клик в FPS (курсор ещё захвачен) — открыть меню; мёртвым — death-оверлей,
 // не меню
-document.addEventListener('mousedown', () => {
+document.addEventListener('mousedown', (e) => {
+  // Compat-мышь после тача (~300 мс) не в счёт: touchend уже решил, иначе
+  // тап-тогл открывал бы меню и сразу сам закрывал (§15.12).
+  if (performance.now() - lastTouchAt < 700) return
+  // Клик по фону открытого меню — закрыть (§15.12: тогл симметричен «~»);
+  // клики внутри .panel/модалок — их дела (выбор класса, настройки, инвайт).
+  if (menuOpen) {
+    if (e.target instanceof HTMLElement && e.target.closest('.panel, .settings') === null) gameMenu(false)
+    return
+  }
   if (!hud.deathVisible() && playing && !hackview.active && controls.locked) gameMenu(true)
 })
-// Тап (короткий, без движения) по игровому экрану на мобиле — то же самое
+// Тап (короткий, без движения) по игровому экрану на мобиле — то же самое.
+// compat-мышь после тача глушим по времени: touchend уже отработал тогл,
+// synthetic mousedown не должен тут же закрыть/переоткрыть меню (§15.12).
+let lastTouchAt = 0
 let tapStart: { x: number; y: number; t: number } | null = null
 document.addEventListener(
   'touchstart',
   (e) => {
+    lastTouchAt = performance.now()
     if (e.touches.length === 1) {
       const t = e.touches[0]
       tapStart = { x: t.clientX, y: t.clientY, t: performance.now() }
@@ -534,7 +551,12 @@ document.addEventListener(
     tapStart = null
     if (moved > 12 || dt > 350) return // это был look-жест, не тап
     if (isUiTarget(e)) return
-    if (!hud.deathVisible() && playing && !hackview.active && !menuOpen) gameMenu(true)
+    // Тап по фону открытого меню — закрыть (§15.12); внутри панели — её дела.
+    if (menuOpen) {
+      if (e.target instanceof HTMLElement && e.target.closest('.panel, .settings') === null) gameMenu(false)
+      return
+    }
+    if (!hud.deathVisible() && playing && !hackview.active) gameMenu(true)
   },
   { capture: true },
 )
