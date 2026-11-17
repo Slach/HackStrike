@@ -441,16 +441,21 @@
         max-width: min(860px, 100%);
         margin: auto; /* авто-центрирование по обеим осям в overflow-контейнере */
       }
+      /* §15.23 (ревебр owner): letter-spacing добавляет трек и ПОСЛЕ последней
+         буквы — центрированная строка с «хвостом» уезжает глифами влево на
+         половину трека. text-indent = letter-spacing уравновешивает отступы */
       .logo {
         margin: 0;
         font-size: 42px;
         letter-spacing: 14px;
+        text-indent: 14px;
         color: var(--ink);
         text-shadow: 0 0 20px rgba(55, 255, 155, 0.8);
       }
       .tag {
         font-size: 11px;
         letter-spacing: 5px;
+        text-indent: 5px;
         color: rgba(55, 255, 155, 0.6);
         margin: 8px 0 22px;
       }
@@ -630,6 +635,11 @@
         color: rgba(55, 255, 155, 0.55);
         margin-top: 14px;
         letter-spacing: 1px;
+      }
+      /* §15.23: в центрированных панелях компенсация хвостового трека
+         (в #debug .dim — флаговые лейблы, там текст-левый, не трогаем) */
+      .panel .dim {
+        text-indent: 1px;
       }
 
       /* death overlay */
@@ -1886,6 +1896,7 @@
         .logo {
           font-size: 28px;
           letter-spacing: 7px;
+          text-indent: 7px; /* §15.23 */
         }
       }
       /* §15.20 (ревебр owner): в ландшафте телефона (вьюпорт 844 > 720) MQ
@@ -1897,6 +1908,7 @@
       body.touch .logo {
         font-size: 28px;
         letter-spacing: 7px;
+        text-indent: 7px; /* §15.23 */
       }
 /* Единый экран настроек (§15.5): кнопка под ДЕПЛОЕМ на всех платформах,
        модалка поверх join — инверсия + чувствительность (десктоп: множитель
