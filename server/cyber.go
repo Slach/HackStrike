@@ -963,9 +963,10 @@ func (w *world) sameTeam(a, b *player) bool {
 }
 
 // doorKeyName — имя поколения ключа (§16.5, ревизия 2026-11-18): данные —
-// лут на время, старые поколения — мусор (контрится rm).
-func doorKeyName(t time.Time) string {
-	return "door_key" + t.Format("200601021504")
+// лут на время, старые поколения — мусор (контрится rm). Читаемо для
+// игрока: номер поколения + дата («door_key3_2026-11-18»).
+func doorKeyName(t time.Time, gen int) string {
+	return fmt.Sprintf("door_key%d_%s", gen+1, t.Format("2006-01-02"))
 }
 
 // doorKeyGen — ротация ключа на SRV1 (T=120 с по времени мира, детерминизм):
@@ -1001,10 +1002,7 @@ func (w *world) doorKeyTick() {
 	if srv == nil {
 		return
 	}
-	name := doorKeyName(w.now())
-	if w.doorKeyName == name {
-		return // та же минута — то же поколение
-	}
+	name := doorKeyName(w.now(), gen)
 	// Грейс ровно одна ротация: SRV1 держит текущее + предыдущее поколение,
 	// более старые убираются (иначе 60 МБ × поколения переполняют MEM 512 —
 	// плейтест: «ключи просто новые появляются… больше, чем памяти»).
@@ -1020,7 +1018,7 @@ func (w *world) doorKeyTick() {
 	srv.items = append(srv.items, dataItem{Name: name, MB: 60, Enc: true})
 	// грейс: предыдущее поколение валидно ещё одну ротацию (§16.7)
 	w.doorKeyPrevCode = w.doorKeyCode
-	w.doorKeyCode = doorKeyCodeOf(name)
+	w.doorKeyCode = w.doorKeyCodeNow(name)
 	w.doorKeyName = name
 	log.Printf("room: door_key rotated -> %s on %s", name, srv.id)
 }
@@ -1033,8 +1031,8 @@ func (w *world) resetDoorKey() {
 	w.matchStart = w.now()
 	w.doorKeyGen = 0
 	w.doorKeyPrevCode = ""
-	w.doorKeyName = doorKeyName(w.now())
-	w.doorKeyCode = doorKeyCodeOf(w.doorKeyName)
+	w.doorKeyName = doorKeyName(w.now(), 0)
+	w.doorKeyCode = w.doorKeyCodeNow(w.doorKeyName)
 	if srv := w.cyber.devices[w.doorKeyHost]; srv != nil {
 		kept := srv.items[:0]
 		for _, it := range srv.items {
@@ -1054,6 +1052,12 @@ func (w *world) resetDoorKey() {
 		pl.items = kept
 	}
 	log.Printf("room: door_key reset for new match -> %s", w.doorKeyName)
+}
+
+// doorKeyCodeNow — код d3 поколения: от имени + старта матча (чистая дата в
+// имени иначе повторяла бы код между матчами одного дня — запомнил и вошёл).
+func (w *world) doorKeyCodeNow(name string) string {
+	return doorKeyCodeOf(name + "|" + w.matchStart.Format("20060102150405"))
 }
 
 // doorKeyValidCodes — код d3 валиден для текущего и предыдущего поколения
