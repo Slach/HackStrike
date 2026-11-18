@@ -772,14 +772,17 @@ export class PropsView {
       const halfD = d.axis === 'z' ? d.len / 2 : 0.15
       boxes.push({ label: `ДВЕРЬ ${d.id.toUpperCase()} — ${d.open ? 'ОТКРЫТА' : 'ЗАКРЫТА'}`, min: [d.x - halfW, d.baseY, d.z - halfD], max: [d.x + halfW, d.baseY + d.h, d.z + halfD] })
     }
+    // Терминал/радио/switch: высота от реальной точки пропса (как у камер —
+    // плейтест). Жёсткие 1F-высоты (1..2.4) делали t3/s3 2 этажа ненаводимыми:
+    // луч ловил плиту лавы lv3, лежащую теперь по всему полу комнаты.
     for (const t of this.terminals.values()) {
-      boxes.push({ label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, min: [t.x - 0.6, 1, t.z - 0.6], max: [t.x + 0.6, 2.4, t.z + 0.6] })
+      boxes.push({ label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, min: [t.x - 0.6, t.y, t.z - 0.6], max: [t.x + 0.6, t.y + 1.4, t.z + 0.6] })
     }
     for (const r of this.radios.values()) {
-      boxes.push({ label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, min: [r.x - 0.7, 1, r.z - 0.7], max: [r.x + 0.7, 3, r.z + 0.7] })
+      boxes.push({ label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, min: [r.x - 0.7, r.y, r.z - 0.7], max: [r.x + 0.7, r.y + 2, r.z + 0.7] })
     }
     for (const s of this.switches.values()) {
-      boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, 1, s.z - 0.5], max: [s.x + 0.5, 1.9, s.z + 0.5] })
+      boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, s.y, s.z - 0.5], max: [s.x + 0.5, s.y + 0.9, s.z + 0.5] })
     }
     for (const g of this.gases.values()) {
       boxes.push({ label: `ГАЗ ${g.id.toUpperCase()} — КЛАПАН ${g.open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}`, min: [g.x - g.w / 2, g.y - g.h / 2, g.z - g.d / 2], max: [g.x + g.w / 2, g.y + g.h / 2, g.z + g.d / 2] })
