@@ -359,11 +359,20 @@ export class PropsView {
       [cols[0], rows[2]], [cols[1], rows[2]], [cols[2], rows[2]],
       [cols[1], rows[3]],
     ]
+    // Точки — со стороны КОМНАТЫ (к центру карты), иначе половина клавиатур
+    // смотрит кнопками в стену за подложкой и видна как гладкая плата
+    // (плейтест: «D4/D5 не видно, как будто в стену утоплены»).
+    const off = 0.05
     for (let i = 0; i < keys.length; i++) {
       const dot = MeshBuilder.CreateSphere(`prop.${id}.k${i}`, { diameter: dotR * 2, segments: 6 }, this.scene)
       const [dx, dy] = keys[i]
-      if (alongZ) dot.position.set(cx + dx, cy + dy, cz + 0.04)
-      else dot.position.set(cx + 0.04, cy + dy, cz + dx)
+      if (alongZ) {
+        const dz = Math.sign(32 - cz) * off
+        dot.position.set(cx + dx, cy + dy, cz + dz)
+      } else {
+        const ddx = Math.sign(32 - cx) * off
+        dot.position.set(cx + ddx, cy + dy, cz + dx)
+      }
       dot.material = this.mats.led
       dot.isPickable = false
     }
