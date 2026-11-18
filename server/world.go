@@ -47,6 +47,8 @@ type world struct {
 	doorKeyName     string
 	doorKeyCode     string
 	doorKeyPrevCode string
+	// doorKeyNameLocked — тестовый хук: не сбрасывать поколение на старте матча.
+	doorKeyNameLocked bool
 
 	// now инъектится для тестов; в проде time.Now.
 	now func() time.Time
@@ -162,6 +164,11 @@ func (w *world) startMatchIfNeeded() {
 	if !w.matchActive && len(w.players) > 0 {
 		w.matchActive = true
 		w.matchEndsAt = w.now().Add(w.matchLen)
+		// §16.5: новый раунд — новое поколение door_key, старые поколения
+		// (SRV1 и деки) из прошлого матча не переезжают.
+		if !w.doorKeyNameLocked {
+			w.resetDoorKey()
+		}
 	}
 }
 

@@ -985,11 +985,14 @@ func doorKeyCodeOf(name string) string {
 }
 
 func (w *world) doorKeyTick() {
-	if w.matchStart.IsZero() || w.now().Sub(w.matchStart) < doorKeyRot {
+	if w.matchStart.IsZero() {
 		return
 	}
-	// generation index по миру: раз в doorKeyRot
-	gen := int(w.now().Sub(w.matchStart) / doorKeyRot)
+	el := w.now().Sub(w.matchStart)
+	if el < doorKeyRot {
+		return
+	}
+	gen := int(el / doorKeyRot)
 	if w.doorKeyGen == gen {
 		return
 	}
@@ -999,17 +1002,58 @@ func (w *world) doorKeyTick() {
 		return
 	}
 	name := doorKeyName(w.now())
-	for _, it := range srv.items {
-		if it.Name == name {
-			return // такое поколение уже лежит (минута та же)
-		}
+	if w.doorKeyName == name {
+		return // та же минута — то же поколение
 	}
+	// Грейс ровно одна ротация: SRV1 держит текущее + предыдущее поколение,
+	// более старые убираются (иначе 60 МБ × поколения переполняют MEM 512 —
+	// плейтест: «ключи просто новые появляются… больше, чем памяти»).
+	keep := map[string]bool{w.doorKeyName: true, name: true}
+	kept := srv.items[:0]
+	for _, it := range srv.items {
+		if strings.HasPrefix(it.Name, "door_key") && !keep[it.Name] {
+			continue
+		}
+		kept = append(kept, it)
+	}
+	srv.items = kept
 	srv.items = append(srv.items, dataItem{Name: name, MB: 60, Enc: true})
 	// грейс: предыдущее поколение валидно ещё одну ротацию (§16.7)
 	w.doorKeyPrevCode = w.doorKeyCode
 	w.doorKeyCode = doorKeyCodeOf(name)
 	w.doorKeyName = name
 	log.Printf("room: door_key rotated -> %s on %s", name, srv.id)
+}
+
+// resetDoorKey — новый матч (§16.5): SRV1 чистится от старых поколений,
+// код перегенерирован, грейс сброшен. Ключи в деках игроков тоже устарели —
+// матч-специфичный лут не переезжает в следующий раунд (плейтест:
+// «не чистятся после 10 минут, в новом раунде»).
+func (w *world) resetDoorKey() {
+	w.matchStart = w.now()
+	w.doorKeyGen = 0
+	w.doorKeyPrevCode = ""
+	w.doorKeyName = doorKeyName(w.now())
+	w.doorKeyCode = doorKeyCodeOf(w.doorKeyName)
+	if srv := w.cyber.devices[w.doorKeyHost]; srv != nil {
+		kept := srv.items[:0]
+		for _, it := range srv.items {
+			if !strings.HasPrefix(it.Name, "door_key") {
+				kept = append(kept, it)
+			}
+		}
+		srv.items = append(kept, dataItem{Name: w.doorKeyName, MB: 60, Enc: true})
+	}
+	for _, pl := range w.players {
+		kept := pl.items[:0]
+		for _, it := range pl.items {
+			if !strings.HasPrefix(it.Name, "door_key") {
+				kept = append(kept, it)
+			}
+		}
+		pl.items = kept
+	}
+	log.Printf("room: door_key reset for new match -> %s", w.doorKeyName)
 }
 
 // doorKeyValidCodes — код d3 валиден для текущего и предыдущего поколения
@@ -1027,21 +1071,10 @@ func (w *world) seedData() {
 	if w.doorKeyHost == "" {
 		w.doorKeyHost = "srv1"
 	}
-	srv := w.cyber.devices[w.doorKeyHost]
-	if srv == nil {
+	if w.cyber.devices[w.doorKeyHost] == nil {
 		return
 	}
-	w.matchStart = w.now()
-	w.doorKeyGen = 0
-	w.doorKeyName = doorKeyName(w.now())
-	w.doorKeyCode = doorKeyCodeOf(w.doorKeyName)
-	// идемпотентно: повторный seed (рестарт матча) не плодит копию поколения
-	for _, it := range srv.items {
-		if it.Name == w.doorKeyName {
-			return
-		}
-	}
-	srv.items = append(srv.items, dataItem{Name: w.doorKeyName, MB: 60, Enc: true})
+	w.resetDoorKey()
 }
 
 // cpCancelled — трансфер умер (§16.2 «отмена»): сменился владелец

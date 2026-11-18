@@ -2900,4 +2900,22 @@ func TestSeedDoorKeyOnSrv1(t *testing.T) {
 	if !w.doorKeyValid(nil, code0) || !w.doorKeyValid(nil, w.doorKeyCode) {
 		t.Fatalf("current and previous generation codes must be valid")
 	}
+	// Чистка: ещё 5 ротаций — на SRV1 всегда ≤2 поколений (60+60 ≤ 512), не
+	// копится («их дофига сильно больше чем памяти на сервере»).
+	for i := 0; i < 5; i++ {
+		now = now.Add(121 * time.Second)
+		w.simulateTick()
+	}
+	if n := len(srv.items); n > 2 {
+		t.Fatalf("old generations must be pruned, got %d items", n)
+	}
+	// Новый матч: ключи из прошлого раунда не переезжают (§16.5).
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	h.items = []dataItem{{Name: "door_key_old", MB: 60, Enc: true}}
+	w.matchActive = false
+	w.startMatchIfNeeded()
+	if len(srv.items) != 1 || len(h.items) != 0 {
+		t.Fatalf("new match must reset door_key (srv=%v deck=%v)", srv.items, h.items)
+	}
 }
