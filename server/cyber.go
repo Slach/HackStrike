@@ -157,6 +157,7 @@ type device struct {
 
 	owner       uint64          // владелец trojan (0 = нейтральное)
 	open        bool            // дверь/газ (§14.2): стартует закрытой
+	locked      bool            // §16.7: d3 заперта код-замком (клавиатура)
 	gasArmAt    time.Time       // газ (§14.2): момент последнего взвода клапана; нулевой = не взведён
 	gasArmCount uint64          // газ: счётчик взводов для ключа накопленного долга (resync-устойчив)
 	vulnedBy    map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
@@ -279,6 +280,7 @@ func buildCyber(m *gameMap) *cyberState {
 			d.shield = shieldMax
 		}
 		if d.kind == "door" {
+			d.locked = p.Locked
 			d.box = aabb{
 				min: vec3{p.Pos[0] - p.Size[0]/2, p.Pos[1], p.Pos[2] - p.Size[2]/2},
 				max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1], p.Pos[2] + p.Size[2]/2},
@@ -1400,6 +1402,12 @@ func (w *world) handleCtrl(pl *player, msg message) {
 	if str(msg, "action") != "toggle" {
 		return
 	}
+	if dev.kind == "door" && dev.locked {
+		// §16.7: запертую дверь запирает/отпирает ТОЛЬКО код с клавиатуры —
+		// троян на d3 управляет створкой лишь незапертой двери.
+		w.denied(pl, "locked", "toggle", dev.id)
+		return
+	}
 	dev.open = !dev.open // snap.props разнесёт всем (§12.5)
 	if dev.kind == "gas" {
 		// §14.2: взвод ставит телеграф-таймер и обнуляет накопленный долг
@@ -1412,6 +1420,68 @@ func (w *world) handleCtrl(pl *player, msg message) {
 		}
 	}
 	log.Printf("room: player %d ctrl %s -> open=%v", pl.id, dev.id, dev.open)
+}
+
+// handleEnter — ввод кода на клавиатуре d3 (§16.7): физически у двери
+// (радиус как у джек-ина), любой класс, анти-флуд 1/2 с. Код валиден для
+// текущего и предыдущего поколения door_key (грейс). Неверно — подсказка
+// «N/4 цифр на месте», журнал d3, alert владельцу агрегированно.
+func (w *world) handleEnter(pl *player, msg message) {
+	devID := str(msg, "dev")
+	dev, ok := w.cyber.devices[devID]
+	if !ok || dev.kind != "door" || !dev.locked {
+		return
+	}
+	if !pl.alive || pl.jacked {
+		return // клавиатура — физическая, из деки не вводится
+	}
+	dp := dev.pos.sub(pl.pos)
+	dp[1] = 0
+	if dp.length() > jackTerminalRadius+0.5 {
+		w.denied(pl, "too_far", "enter", devID)
+		return
+	}
+	now := w.now()
+	if !pl.enterAt.IsZero() && now.Sub(pl.enterAt) < 2*time.Second {
+		return // анти-флуд §16.7: спам-перебор не выталкивает журнал
+	}
+	pl.enterAt = now
+	code := str(msg, "code")
+	if w.doorKeyValid(pl, code) {
+		dev.locked = false
+		dev.open = !dev.open
+		if !dev.open {
+			dev.locked = true // ввод кода на открытой двери запирает обратно
+		}
+		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": true})
+		log.Printf("room: player %d entered valid code on %s", pl.id, devID)
+		return
+	}
+	// подсказка N/4: цифра верна И на своей позиции; секрет — поколение,
+	// с которым код согласуется лучше (грейс держит два).
+	secret := w.doorKeyCode
+	if w.doorKeyPrevCode != "" {
+		mc := hintMatch(w.doorKeyCode, code)
+		mp := hintMatch(w.doorKeyPrevCode, code)
+		if mp > mc {
+			secret = w.doorKeyPrevCode
+		}
+	}
+	match := hintMatch(secret, code)
+	w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": false, "match": match})
+	log.Printf("room: player %d wrong code on %s (N/4=%d)", pl.id, devID, match)
+	w.fireWatchers(dev, pl, "code", "")
+}
+
+// hintMatch — сколько цифр верны И стоят на своих местах (§16.7).
+func hintMatch(secret, code string) int {
+	n := 0
+	for i := 0; i < len(code) && i < len(secret); i++ {
+		if code[i] == secret[i] {
+			n++
+		}
+	}
+	return n
 }
 
 // computeNetFactors — сетевой фактор прогресса каждой активной программы на

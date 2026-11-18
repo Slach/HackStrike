@@ -82,6 +82,55 @@ let jackChannel: { dev: string; s: number; at: number } | null = null
 // Не-хакер жмёт «действие» у устройства: красная вспышка тултипа до этого штампа
 let jackErrorUntil = 0
 let prevInteractUi = 0
+// §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
+let codePad: { dev: string; wrap: HTMLElement; input: HTMLInputElement; status: HTMLElement } | null = null
+
+/** §16.7: клавиатура d3 — DOM-оверлей цифрового ввода кода (4 знака).
+ *  Enter отправляет {"t":"enter"}, ответ придёт сообщением `code`. */
+function openCodePad(dev: string): void {
+  if (codePad !== null) return
+  const wrap = document.createElement('div')
+  wrap.className = 'codepad'
+  const title = document.createElement('div')
+  title.className = 'codepad-title'
+  title.textContent = `ЗАМОК ${dev.toUpperCase()} · КОД`
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.inputMode = 'numeric'
+  input.maxLength = 4
+  input.autocomplete = 'off'
+  input.className = 'codepad-input'
+  input.placeholder = '••••'
+  const status = document.createElement('div')
+  status.className = 'codepad-status'
+  status.textContent = '4 ЦИФРЫ · ENTER — ПРОВЕРИТЬ · ESC — ЗАКРЫТЬ'
+  const go = document.createElement('button')
+  go.className = 'codepad-go'
+  go.textContent = 'ВВОД'
+  const close = (): void => {
+    wrap.remove()
+    codePad = null
+  }
+  const submit = (): void => {
+    const code = input.value.trim()
+    if (!/^\d{4}$/.test(code)) {
+      status.textContent = 'НУЖНО 4 ЦИФРЫ'
+      status.className = 'codepad-status bad'
+      return
+    }
+    sock.send({ t: 'enter', dev, code } as never)
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit()
+    if (e.key === 'Escape') close()
+    e.stopPropagation() // WASD/space не уходят в контролы
+  })
+  go.addEventListener('click', submit)
+  wrap.append(title, input, go, status)
+  document.body.append(wrap)
+  input.focus()
+  codePad = { dev, wrap, input, status }
+}
 let myId: number | null = null
 let myTeam = -1
 let myCls: Cls = 'assault'
@@ -328,6 +377,27 @@ const sock = new GameSocket({
           ]),
         )
         break
+      case 'code': {
+        // §16.7: итог ввода кода на клавиатуре d3.
+        if (codePad !== null && msg.dev === codePad.dev) {
+          if (msg.ok) {
+            codePad.status.textContent = 'ОТКРЫТО ✓'
+            codePad.status.className = 'codepad-status ok'
+            const pad = codePad
+            window.setTimeout(() => {
+              pad.wrap.remove()
+              codePad = null
+            }, 700)
+          } else {
+            const n = msg.match ?? 0
+            codePad.status.textContent = `НЕВЕРНО — ${n}/4 ЦИФР НА МЕСТЕ`
+            codePad.status.className = 'codepad-status bad'
+            codePad.input.value = ''
+            codePad.input.focus()
+          }
+        }
+        break
+      }
       case 'denied':
         // enemy_team (§12.5, ред. 2026-11-17) приходит ДО джек-ина — деки ещё
         // нет, hackview.onDenied молчит; предупреждение — на HUD.
@@ -676,7 +746,10 @@ engine.runRenderLoop(() => {
     // было видно, в чём косяк (плейтест 2026-11-17). Edge по interact покрывает
     // и SPACE, и мобильную кнопку (обе идут через controls.keys.interact).
     const it = controls.keys.interact
-    if (it === 1 && prevInteractUi === 0 && myCls !== 'hacker' && near !== null && near.dist <= 2) {
+    // §16.7: space у запертой двери = клавиатура (любой класс), не джек-ин.
+    if (it === 1 && prevInteractUi === 0 && near !== null && near.dist <= 2 && near.label.startsWith('ЗАМОК ')) {
+      openCodePad(near.id)
+    } else if (it === 1 && prevInteractUi === 0 && myCls !== 'hacker' && near !== null && near.dist <= 2) {
       jackErrorUntil = performance.now() + 1200
     }
     prevInteractUi = it
@@ -687,7 +760,9 @@ engine.runRenderLoop(() => {
         // (плейтест M2-2), чтобы не засорять HUD чужим классом.
         if (near.dist <= 2) hint = `ДЖЕК-ИН // ${label} — ТОЛЬКО ХАКЕР`
       } else if (near.dist <= near.range) {
-        hint = `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — ДЖЕК-ИН // ${label}`
+        hint = near.label.startsWith('ЗАМОК ')
+          ? `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — КЛАВИАТУРА // ${label}`
+          : `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — ДЖЕК-ИН // ${label}`
       } else {
         hint = `${label} — ${Math.round(near.dist)} м (РАДИУС ${Math.round(near.range)} М)`
       }
@@ -773,7 +848,7 @@ engine.runRenderLoop(() => {
       allies.push({ x: p.x, z: p.z })
     }
     minimap.draw(
-      me !== undefined ? { x: me.x, z: me.z, yaw: controls.yaw } : null,
+      me !== undefined ? { x: me.x, z: me.z, y: me.y, yaw: controls.yaw } : null,
       allies,
       myTeam,
       propsView?.miniProps() ?? [],

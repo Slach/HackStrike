@@ -16,6 +16,9 @@ export interface MiniAlly {
 export interface MiniSelf {
   x: number
   z: number
+  /** Высота — этаж для фильтра слоёв карты (§13.8, плейтест: карта 1 этажа
+   *  показывалась на втором). Необязательна: тесты/старые вызовы — 0. */
+  y?: number
   yaw: number
 }
 
@@ -94,11 +97,17 @@ export class Minimap {
     props: readonly MiniProp[] = [],
     cyber: MiniCyber | null = null,
   ): void {
+    // Этаж игрока (плейтест: «миникарта показывает первый этаж хотя я уже
+    // ушёл на второй»): слой карты выше STAIR_TOP (1 этаж < 8 < 2 этаж).
+    const myY = me?.y ?? 0
+    const floorLo = myY >= 7.5 ? 7.5 : -1
     const ctx = this.ctx
     ctx.fillStyle = 'rgba(2,10,6,0.92)'
     ctx.fillRect(0, 0, this.w, this.h)
     ctx.lineWidth = 1
     for (const r of this.rects) {
+      if (r.stair ? false : r.y0 >= 7.5 && floorLo < 7.5) continue
+      if (r.stair ? false : r.y0 < 7.5 && floorLo >= 7.5) continue
       const x = this.px(r.x0)
       const y = this.pz(r.z0)
       const rw = (r.x1 - r.x0) * this.scale

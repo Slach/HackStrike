@@ -827,11 +827,12 @@ func TestEmbeddedMapCyberFloor2(t *testing.T) {
 	if w.cyber.devices["d3"].owner != h.id {
 		t.Fatalf("d3 captured from t3 must end owned by h, owner=%v", w.cyber.devices["d3"].owner)
 	}
-	// Toggle владеемой двери из деки — проходит (не denied) и открывает.
+	// §16.7: d3 заперта код-замком — троян НЕ отпирает её, toggle denied
+	// locked. После кода с клавиатуры (TestCodeLock) toggle работает.
 	w.handleMessage(h, message{"t": "ctrl", "dev": "d3", "action": "toggle"})
-	assertDenied(t, w, h, "") // no denial in the queue
-	if !w.cyber.devices["d3"].open {
-		t.Fatalf("ctrl toggle from t3 must open d3")
+	assertDenied(t, w, h, "locked")
+	if w.cyber.devices["d3"].open {
+		t.Fatalf("locked d3 must not open by trojan toggle")
 	}
 }
 
@@ -2938,5 +2939,55 @@ func TestSeedDoorKeyOnSrv1(t *testing.T) {
 	w.startMatchIfNeeded()
 	if len(srv.items) != 1 || len(h.items) != 0 {
 		t.Fatalf("new match must reset door_key (srv=%v deck=%v)", srv.items, h.items)
+	}
+}
+
+// TestCodeLock — §16.7: d3 заперта код-замком; ввод кода с клавиатуры:
+// верный (текущее поколение) открывает, неверный — N/4 подсказка и журнал,
+// из деки вводить нельзя, троян на d3 не отпирает запертую.
+func TestCodeLock(t *testing.T) {
+	w := newWorld(mustParseEmbeddedMap(t))
+	now := time.Now()
+	w.now = func() time.Time { return now }
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	d3 := w.cyber.devices["d3"]
+	if !d3.locked {
+		t.Fatalf("d3 must start locked")
+	}
+	// у двери: позиция в радиусе
+	h.pos = vec3{32, 8, 41}
+	code := w.doorKeyCode
+	// неверный код — N/4 и jurnal
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": "0000"})
+	out := w.takeOut()
+	var hint message
+	for _, om := range out {
+		if om.msg["t"] == "code" && om.to == h.id {
+			hint = om.msg
+		}
+	}
+	if hint == nil || hint["ok"] != false {
+		t.Fatalf("wrong code must answer ok=false, got %+v", hint)
+	}
+	if _, has := hint["match"]; !has {
+		t.Fatalf("wrong code must carry N/4 hint")
+	}
+	// анти-флуд 1/2 с: повтор сразу — молчит
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": "1111"})
+	if n := len(w.takeOut()); n != 0 {
+		t.Fatalf("enter flood must be dropped, got %d messages", n)
+	}
+	// верный код после паузы открывает и разлочивает
+	now = now.Add(3 * time.Second)
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": code})
+	okMsg := false
+	for _, om := range w.takeOut() {
+		if om.msg["t"] == "code" && om.msg["ok"] == true {
+			okMsg = true
+		}
+	}
+	if !okMsg || d3.locked || !d3.open {
+		t.Fatalf("valid code must unlock+open d3: okMsg=%v locked=%v open=%v", okMsg, d3.locked, d3.open)
 	}
 }

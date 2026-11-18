@@ -35,6 +35,8 @@ export interface WallRect {
   x1: number
   z1: number
   stair: boolean
+  /** Нижняя граница по y — миникарта фильтрует по этажу игрока (§13.8). */
+  y0: number
 }
 
 function tuple3(v: unknown): [number, number, number] | null {
@@ -208,6 +210,7 @@ export class MapWorld {
         x1: c.max[0],
         z1: c.max[2],
         stair: c.kind === 'stair',
+        y0: c.min[1],
       })
     }
     return new MapWorld(map.bounds, map.colliders, wallRects)

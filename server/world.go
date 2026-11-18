@@ -352,6 +352,8 @@ func (w *world) handleMessage(pl *player, msg message) {
 		w.handleRun(pl, msg)
 	case "ctrl": // контроллер устройства (§12.5)
 		w.handleCtrl(pl, msg)
+	case "enter": // ввод кода на клавиатуре d3 (§16.7)
+		w.handleEnter(pl, msg)
 	}
 }
 

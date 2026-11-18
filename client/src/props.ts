@@ -48,6 +48,7 @@ export interface MapProp {
   points: [number, number, number][]
   /** fire → id своего водяного клапана; valve → switch в сети (§14.6.1). */
   to: string | null
+  locked: boolean
 }
 
 const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv']
@@ -80,6 +81,7 @@ function parseMapProps(raw: readonly unknown[]): MapProp[] {
       size: tuple3(r.size) ?? (kind === 'gas' ? [...GAS_DEFAULT_SIZE] : kind === 'fire' ? [...FIRE_DEFAULT_SIZE] : [...DOOR_DEFAULT_SIZE]),
       axis: r.axis === 'z' ? 'z' : 'x',
       to: typeof r.to === 'string' && r.to.length > 0 ? r.to : null,
+      locked: r.locked === true,
       points: Array.isArray(r.points)
         ? r.points.flatMap((p): [number, number, number][] => {
             const t = tuple3(p)
@@ -184,6 +186,8 @@ export class PropsView {
   private readonly radios = new Map<string, SimpleProp>()
   private readonly switches = new Map<string, SimpleProp>()
   private readonly doors = new Map<string, DoorView>()
+  /** §16.7: двери с код-замком (клавиатура) — точки ввода кода. */
+  private readonly codeDoors = new Map<string, SimpleProp>()
   private readonly cables = new Map<string, CableView>()
   private readonly cameras = new Map<string, CameraView>()
   private readonly gases = new Map<string, GasView>()
@@ -243,7 +247,7 @@ export class PropsView {
           view.buildSwitch(prop.id, prop.pos)
           break
         case 'door':
-          view.buildDoor(prop.id, prop.pos, prop.axis, prop.size)
+          view.buildDoor(prop.id, prop.pos, prop.axis, prop.size, prop.locked)
           break
         case 'cable':
           view.buildCable(prop.id, prop.points)
@@ -334,7 +338,14 @@ export class PropsView {
     this.switches.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
   }
 
-  private buildDoor(id: string, pos: readonly [number, number, number], axis: 'x' | 'z', size: readonly [number, number, number]): void {
+  private buildDoor(
+    id: string,
+    pos: readonly [number, number, number],
+    axis: 'x' | 'z',
+    size: readonly [number, number, number],
+    locked = false,
+  ): void {
+    if (locked) this.codeDoors.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
     const [w, h, depth] = size
     const pivot = new TransformNode(`prop.${id}.pivot`, this.scene)
     // Вертикальный выезд (решение владельца): полотно уезжает вверх на свою
@@ -823,6 +834,12 @@ export class PropsView {
     const sameFloor = (ty: number): boolean => Math.abs(ty - eyeY) <= 2.6
     type P = { id: string; label: string; dist: number; range: number; dx: number; dz: number; ty: number }
     const pts: P[] = []
+    // §16.7: клавиатура запертой двери — физический ввод кода (любой класс).
+    for (const dc of this.codeDoors.values()) {
+      const ty = dc.y + 1.5
+      if (!sameFloor(ty)) continue
+      pts.push({ id: dc.id, label: `ЗАМОК ${dc.id.toUpperCase()}`, dist: Math.hypot(dc.x - x, dc.z - z), range: TERMINAL_RANGE, dx: dc.x - x, dz: dc.z - z, ty })
+    }
     for (const t of this.terminals.values()) {
       const ty = t.y + 1.5
       if (!sameFloor(ty)) continue

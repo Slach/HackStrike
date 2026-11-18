@@ -51,6 +51,8 @@ type mapProp struct {
 	BW     float64      `json:"bw"`     // cable: пропускная способность, МБ/с (§16.3; 0 → дефолт по kind)
 	// Backplane — switch: суммарная шина транзита, МБ/с (§16.3; 0 → дефолт).
 	Backplane float64 `json:"backplane"`
+	// Locked — door: код-замок (§16.7, d3). Только код с клавиатуры.
+	Locked bool `json:"locked"`
 }
 
 // parseGameMap — парсинг + валидация: карта встроенная, ошибка означает
