@@ -1359,6 +1359,24 @@
         padding: 3px 8px;
         border-radius: 3px;
         cursor: pointer;
+        /* Единая высота независимо от контента (плейтест: 🗑 в «RM» рендерится
+           fallback-емодзи-шрифтом с большим line-box — кнопка RM была выше
+           «→ ДЕКА»); inline-flex центрует и текст, и иконку. */
+        line-height: 1;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+      }
+      /* Строка данных в табе устройства (§16.2): имя слева, кнопки справа. */
+      .dev-data-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+      }
+      .dev-data-row .dev-data-name {
+        margin-right: auto;
+        align-self: center;
       }
       .dev-link:hover {
         background: rgba(55, 255, 155, 0.25);
