@@ -785,11 +785,7 @@ export class PropsView {
       boxes.push({ label: `ГАЗ ${g.id.toUpperCase()} — КЛАПАН ${g.open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}`, min: [g.x - g.w / 2, g.y - g.h / 2, g.z - g.d / 2], max: [g.x + g.w / 2, g.y + g.h / 2, g.z + g.d / 2] })
     }
     for (const f of this.fires.values()) {
-      // подсказка-контроллер (плейтест: «как лаву отключать? думал это v2»):
-      // огонь горит, пока его клапан закрыт — тушится toggle'ом клапана
-      // из сети (vulnscan → trojan → CTRL), не джек-ином в сам клапан
-      const ctl = f.valveId !== null ? ` — ТУШИ: ${f.valveId.toUpperCase()} (TROJAN+CTRL)` : ''
-      boxes.push({ label: `ОГОНЬ ${f.id.toUpperCase()} — ${f.open ? 'ПОТУШЕН' : 'ГОРИТ'}${ctl}`, min: [f.x - f.w / 2, f.y - f.h / 2, f.z - f.d / 2], max: [f.x + f.w / 2, f.y + f.h / 2, f.z + f.d / 2] })
+      boxes.push({ label: `ОГОНЬ ${f.id.toUpperCase()} — ${f.open ? 'ПОТУШЕН' : 'ГОРИТ'}`, min: [f.x - f.w / 2, f.y - f.h / 2, f.z - f.d / 2], max: [f.x + f.w / 2, f.y + f.h / 2, f.z + f.d / 2] })
     }
     for (const v of this.valves.values()) {
       boxes.push({ label: `КЛАПАН ${v.id.toUpperCase()} — ВОДА ${v.open ? 'ИДЁТ' : 'ЗАКРЫТА'}`, min: [v.x - 0.5, v.y, v.z - 0.5], max: [v.x + 0.5, v.y + 1.3, v.z + 0.5] })
