@@ -988,7 +988,6 @@ export class HackView {
   /** Отправка cp/rm + тост (короткий путь для палитры, дерева и кнопок).
    *  cp — анимированный тост-прогресс (§16.2), живёт до финиша/отмены. */
   private sendData(sub: 'cp' | 'rm', src: string, key: string, dst: string | null): void {
-    const dstLabel = dst === null ? '' : dst === 'deck' ? ' → ДЕКА' : ` → ${dst.toUpperCase()}`
     if (sub === 'rm') {
       this.deps.send({ t: 'run', prog: 'rm', dev: src, data: key })
       this.toast(`RM ${key.toUpperCase()}${src === 'deck' ? ' (ДЕКА)' : ` @${src.toUpperCase()}`}`)
