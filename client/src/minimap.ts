@@ -22,7 +22,7 @@ export interface MiniSelf {
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad'
 
 export interface MiniProp {
   x: number

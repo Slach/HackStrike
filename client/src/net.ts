@@ -31,7 +31,7 @@ export type ClientMessage =
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
 // 'valve' — водяной клапан: сетевой кибер-контроллер огня (по образцу газа).
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv'
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad'
 
 /** Сетевые устройства — всё, что бывает в scan/деке. Fire вычтен по построению:
  *  он не сканируется и не взламывается (§14.6.1) — управляют огнём через valve. */
@@ -214,7 +214,7 @@ const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
 // Полный whitelist: map props парсятся через parseMapProps (props.ts);
 // fire в snap.props/scan по построению не появляется — parseProp просто
 // принимает kind, собственного состояния у него нет (ГДД §14.6.1).
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv'] // srv — §16.5 SRV1-3
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad'] // srv — §16.5 SRV1-3; keypad — §16.7
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt

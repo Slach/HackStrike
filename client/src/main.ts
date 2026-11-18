@@ -125,6 +125,13 @@ function openCodePad(dev: string): void {
     draw()
     status.textContent = 'ПРОВЕРКА…'
     status.className = 'codepad-status'
+    // сторожевой таймаут: ответ потерялся — не вешаем панель навсегда
+    window.setTimeout(() => {
+      if (codePad !== null && codePad.dev === dev && status.textContent === 'ПРОВЕРКА…') {
+        status.textContent = 'НЕТ ОТВЕТА — ПОВТОРИ'
+        status.className = 'codepad-status bad'
+      }
+    }, 3000)
   }
   const press = (k: string): void => {
     if (k === 'C') {
@@ -139,7 +146,7 @@ function openCodePad(dev: string): void {
       draw()
       return
     }
-    if (k === 'OK') {
+    if (k === 'ОТКРЫТЬ') {
       submit()
       return
     }
@@ -156,16 +163,16 @@ function openCodePad(dev: string): void {
       close()
       return
     }
-    const k = /^\d$/.test(e.key) ? e.key : e.key === 'Backspace' ? '⌫' : e.key === 'Enter' ? 'OK' : e.key === 'Delete' ? 'C' : null
+    const k = /^\d$/.test(e.key) ? e.key : e.key === 'Backspace' ? '⌫' : e.key === 'Enter' ? 'ОТКРЫТЬ' : e.key === 'Delete' ? 'C' : null
     if (k === null) return
     e.preventDefault()
     e.stopPropagation() // цифры не уходят в хоткеи деки/игру
     if (digits.length === 5) digits = digits.slice(0, 4) // защита от гонки submit
     press(k)
   }
-  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫', 'OK']) {
+  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫', 'ОТКРЫТЬ']) {
     const b = document.createElement('button')
-    b.className = 'codepad-key' + (k === 'OK' ? ' ok' : k === 'C' || k === '⌫' ? ' clr' : '')
+    b.className = 'codepad-key' + (k === 'ОТКРЫТЬ' ? ' ok' : k === 'C' || k === '⌫' ? ' clr' : '')
     b.textContent = k
     b.addEventListener('click', () => press(k))
     grid.append(b)
@@ -442,8 +449,15 @@ const sock = new GameSocket({
         )
         break
       case 'code': {
-        // §16.7: итог ввода кода на клавиатуре d3.
-        if (codePad !== null && msg.dev === codePad.dev) codePad.showResult(msg.ok, msg.match)
+        // §16.7: итог ввода кода на клавиатуре d3; match=-1 — анти-флуд.
+        if (codePad !== null && msg.dev === codePad.dev) {
+          if (msg.match === -1) {
+            codePad.status.textContent = 'СЛИШКОМ ЧАСТО — ПОДОЖДИ 2 С'
+            codePad.status.className = 'codepad-status bad'
+          } else {
+            codePad.showResult(msg.ok, msg.match)
+          }
+        }
         break
       }
       case 'denied':
@@ -721,6 +735,19 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
   (map) => {
     world = MapWorld.build(scene, map)
     propsView = PropsView.build(scene, map) // M2: терминалы/радио/switch/двери/кабели
+    // §16.7: space у клавиатуры замка = пад кода (перехват ДО отправки на
+    // сервер — иначе тот же space уходил бы в джек-ин). Позиция — камера
+    // (рендер-луп держит её в интерполированной позе моего тела).
+    {
+      const pv = propsView
+      controls.interactInterceptor = () => {
+        if (codePad !== null || !playing || hackview.active) return false
+        const kp = pv.nearestKeypad(camera.position.x, camera.position.z, camera.position.y - EYE_HEIGHT)
+        if (kp === null || kp.dist > 2) return false
+        openCodePad(kp.door)
+        return true
+      }
+    }
     window.__hs = window.__hs ?? undefined // noop-guard
     if (window.__hs) window.__hs.propsView = propsView
     minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, world)
@@ -793,15 +820,18 @@ engine.runRenderLoop(() => {
     // Не-хакер жмёт «действие» у устройства — тултип мигает красным, чтобы
     // было видно, в чём косяк (плейтест 2026-11-17). Edge по interact покрывает
     // и SPACE, и мобильную кнопку (обе идут через controls.keys.interact).
-    const it = controls.keys.interact
-    // §16.7: space у запертой двери = клавиатура (любой класс), не джек-ин.
-    if (it === 1 && prevInteractUi === 0 && near !== null && near.dist <= 2 && near.label.startsWith('ЗАМОК ')) {
-      openCodePad(near.id)
-    } else if (it === 1 && prevInteractUi === 0 && myCls !== 'hacker' && near !== null && near.dist <= 2) {
+      const it = controls.keys.interact
+    // §16.7: space у клавиатуры замка перехвачен ДО отправки (interceptor,
+    // см. ниже) — здесь только подсказка; у двери — обычный джек-ин.
+    const kp = propsView.nearestKeypad(me.x, me.z, me.y)
+    if (it === 1 && prevInteractUi === 0 && myCls !== 'hacker' && near !== null && near.dist <= 2) {
       jackErrorUntil = performance.now() + 1200
     }
     prevInteractUi = it
-    if (near !== null) {
+    const kpHint = kp !== null && kp.dist <= 2 ? kp : null
+    if (kpHint !== null) {
+      hint = `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — КЛАВИАТУРА // ЗАМОК ${kpHint.door.toUpperCase()}`
+    } else if (near !== null) {
       const label = near.label
       if (myCls !== 'hacker') {
         // «Только хакер» — вплотную (2 м), издалека подсказка не нужна

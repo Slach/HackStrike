@@ -51,7 +51,7 @@ export interface MapProp {
   locked: boolean
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -186,8 +186,9 @@ export class PropsView {
   private readonly radios = new Map<string, SimpleProp>()
   private readonly switches = new Map<string, SimpleProp>()
   private readonly doors = new Map<string, DoorView>()
-  /** §16.7: двери с код-замком (клавиатура) — точки ввода кода. */
-  private readonly codeDoors = new Map<string, SimpleProp>()
+  /** §16.7: двери с код-замком и клавиатуры (space у клавиатуры → пад). */
+  private readonly lockedDoors = new Set<string>()
+  private readonly codeDoors = new Map<string, SimpleProp & { door: string }>()
   private readonly cables = new Map<string, CableView>()
   private readonly cameras = new Map<string, CameraView>()
   private readonly gases = new Map<string, GasView>()
@@ -239,6 +240,9 @@ export class PropsView {
           break
         case 'srv':
           view.buildSrv(prop.id, prop.pos)
+          break
+        case 'keypad':
+          view.buildKeypad(prop.id, prop.pos, prop.to)
           break
         case 'radio':
           view.buildRadio(prop.id, prop.pos, prop.radius)
@@ -326,6 +330,16 @@ export class PropsView {
     this.terminals.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
   }
 
+  /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space. */
+  private buildKeypad(id: string, pos: readonly [number, number, number], to: string | null): void {
+    if (to === null) return
+    const box = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.3, height: 0.4, depth: 0.12 }, this.scene)
+    box.position.set(pos[0], pos[1] + 1.3, pos[2])
+    box.material = this.mats.led
+    box.isPickable = false
+    this.codeDoors.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0, door: to })
+  }
+
   private buildSwitch(id: string, pos: readonly [number, number, number]): void {
     const cab = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.5, height: 0.85, depth: 0.28 }, this.scene)
     cab.position.set(pos[0], pos[1] + 0.425, pos[2])
@@ -345,7 +359,7 @@ export class PropsView {
     size: readonly [number, number, number],
     locked = false,
   ): void {
-    if (locked) this.codeDoors.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
+    if (locked) this.lockedDoors.add(id)
     const [w, h, depth] = size
     const pivot = new TransformNode(`prop.${id}.pivot`, this.scene)
     // Вертикальный выезд (решение владельца): полотно уезжает вверх на свою
@@ -821,6 +835,19 @@ export class PropsView {
    *  3) в конусе взгляда пусто — ближайшая по d/range (прежнее поведение);
    *  4) точек входа на карте нет вовсе — порт прочего устройства в 2 м
    *     (§12.1 «дорогой вход», канал 6 с). */
+  /** §16.7: ближайшая клавиатура замка в том же этаже — space у неё
+   *  открывает пад кода вместо джек-ина. */
+  nearestKeypad(x: number, z: number, playerY?: number): { door: string; dist: number } | null {
+    const eyeY = (playerY ?? 0) + 1.6
+    let best: { door: string; dist: number } | null = null
+    for (const k of this.codeDoors.values()) {
+      if (Math.abs(k.y + 1.3 - eyeY) > 2.6) continue
+      const dist = Math.hypot(k.x - x, k.z - z)
+      if (best === null || dist < best.dist) best = { door: k.door, dist }
+    }
+    return best
+  }
+
   nearestJackPoint(
     x: number,
     z: number,

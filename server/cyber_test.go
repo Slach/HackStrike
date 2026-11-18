@@ -688,9 +688,10 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// §14.6.1 (ревизия v1): огонь lv1..lv3 — НЕ устройство; клапаны
 	// v1..v3 — устройства (+3 к графе), кабели c15/c16/c17 (+3).
 	// итерация 3 (§16.5): SRV1 — +1 устройство и +2 кабеля (c33/c34 к s1/s2);
-	// код-замок: d4/d5/d6 на 2 этаже — +3 двери и +3 кабеля (c35–c37 к s3).
-	if len(cs.order) != 24 || len(cs.cables) != 24 || len(cs.doors) != 6 || len(cs.gases) != 2 {
-		t.Fatalf("m1 props: want 24 devices / 22 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
+	// код-замок: d4/d5/d6 — +3 двери и +3 кабеля (c35–c37 к s3); клавиатуры
+	// k3–k6 у дверей — +4 устройства и +4 кабеля (c380–c383 к s3).
+	if len(cs.order) != 28 || len(cs.cables) != 28 || len(cs.doors) != 6 || len(cs.gases) != 2 {
+		t.Fatalf("m1 props: want 28 devices / 26 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {
@@ -2974,10 +2975,17 @@ func TestCodeLock(t *testing.T) {
 	if _, has := hint["match"]; !has {
 		t.Fatalf("wrong code must carry N/4 hint")
 	}
-	// анти-флуд 1/2 с: повтор сразу — молчит
+	// анти-флуд 1/2 с: повтор сразу не перебирает код, но отвечает
+	// (match=-1) — молчание вешало панель на «ПРОВЕРКА…»
 	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": "1111"})
-	if n := len(w.takeOut()); n != 0 {
-		t.Fatalf("enter flood must be dropped, got %d messages", n)
+	flooded := false
+	for _, om := range w.takeOut() {
+		if om.msg["t"] == "code" && om.msg["match"] == -1 {
+			flooded = true
+		}
+	}
+	if !flooded {
+		t.Fatalf("enter flood must be answered with match=-1")
 	}
 	// верный код после паузы открывает и разлочивает
 	now = now.Add(3 * time.Second)

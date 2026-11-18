@@ -86,6 +86,7 @@ var deviceStats = map[string]struct {
 	"valve":    {cpu: 0.2, npu: 0, net: 100, ram: 1},   // §14.6.1: водяной клапан — контроллер, как газовый
 	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1},   // §13.7: сенсор, как switch
 	"srv":      {cpu: 1.0, npu: 1.0, net: 100, ram: 4}, // §16.5: сервер — CPU+NPU станция
+	"keypad":   {cpu: 0.1, npu: 0, net: 10, ram: 1},    // §16.7: клавиатура замка — контроллер
 }
 
 // deviceHalfExtents — корпус устройства для коллизии: [halfW, height,
@@ -158,6 +159,7 @@ type device struct {
 	owner       uint64          // владелец trojan (0 = нейтральное)
 	open        bool            // дверь/газ (§14.2): стартует закрытой
 	locked      bool            // §16.7: d3 заперта код-замком (клавиатура)
+	keypadFor   string          // §16.7: keypad — id двери, которой управляет
 	gasArmAt    time.Time       // газ (§14.2): момент последнего взвода клапана; нулевой = не взведён
 	gasArmCount uint64          // газ: счётчик взводов для ключа накопленного долга (resync-устойчив)
 	vulnedBy    map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
@@ -278,6 +280,9 @@ func buildCyber(m *gameMap) *cyberState {
 		if d.kind == "srv" {
 			// §16.5: встроенный щит ×3 — свойство железа, не программа
 			d.shield = shieldMax
+		}
+		if d.kind == "keypad" {
+			d.keypadFor = p.To // §16.7: клавиатура — контроллер своей двери
 		}
 		if d.kind == "door" {
 			d.locked = p.Locked
@@ -1429,7 +1434,18 @@ func (w *world) handleCtrl(pl *player, msg message) {
 func (w *world) handleEnter(pl *player, msg message) {
 	devID := str(msg, "dev")
 	dev, ok := w.cyber.devices[devID]
-	if !ok || dev.kind != "door" || !dev.locked {
+	if !ok {
+		return
+	}
+	if dev.kind == "keypad" {
+		// §16.7: код вводится на клавиатуре рядом с дверью — дальше всё по
+		// двери, но дистанция проверяется от клавиатуры (физический ввод).
+		devID = dev.keypadFor
+		dev = w.cyber.devices[devID]
+		if dev == nil || dev.kind != "door" {
+			return
+		}
+	} else if dev.kind != "door" {
 		return
 	}
 	// §16.7: код общий для всех запертых дверей хранилища (d3–d6) — один
@@ -1444,10 +1460,13 @@ func (w *world) handleEnter(pl *player, msg message) {
 		return
 	}
 	now := w.now()
-	if !pl.enterAt.IsZero() && now.Sub(pl.enterAt) < 2*time.Second {
-		return // анти-флуд §16.7: спам-перебор не выталкивает журнал
+	// Анти-флуд (§16.7): спам-перебор не выталкивает журнал и не шлёт
+	// alert'ы — но ОТВЕТ кодом шлём всегда: молчание вешало панель на
+	// «ПРОВЕРКА…» (плейтест 2026-11-18).
+	flood := !pl.enterAt.IsZero() && now.Sub(pl.enterAt) < 2*time.Second
+	if !flood {
+		pl.enterAt = now
 	}
-	pl.enterAt = now
 	code := str(msg, "code")
 	if w.doorKeyValid(pl, code) {
 		dev.locked = false
@@ -1457,6 +1476,16 @@ func (w *world) handleEnter(pl *player, msg message) {
 		}
 		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": true})
 		log.Printf("room: player %d entered valid code on %s", pl.id, devID)
+		return
+	}
+	if flood {
+		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": false, "match": -1})
+		return
+	}
+	if !dev.locked {
+		// дверь уже открыта кодом (или отперта): ввод трактуем как проверку
+		// кода без смены створки — иначе повторный ввод молчал бы
+		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": true})
 		return
 	}
 	// подсказка N/4: цифра верна И на своей позиции; секрет — поколение,
