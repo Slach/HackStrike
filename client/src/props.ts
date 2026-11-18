@@ -330,13 +330,43 @@ export class PropsView {
     this.terminals.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
   }
 
-  /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space. */
+  /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space.
+   *  Решение владельца: «сама физическая клава пусть будет 10 точек» —
+   *  сетка 3×4 цифровых точек (1–9, 0), а не параллелепипед.
+   *  Плоскость клавиатуры — на стену: тонкая подложка разворачивается к
+   *  комнате по положению (стена z-плоскости или x-плоскости). */
   private buildKeypad(id: string, pos: readonly [number, number, number], to: string | null): void {
     if (to === null) return
-    const box = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.3, height: 0.4, depth: 0.12 }, this.scene)
-    box.position.set(pos[0], pos[1] + 1.3, pos[2])
-    box.material = this.mats.led
-    box.isPickable = false
+    // какая ось стены: далеко по z от центра — стена z-плоскости (k3/k4),
+    // далеко по x — x-плоскости (k5/k6)
+    const alongZ = Math.abs(pos[2] - 32) > Math.abs(pos[0] - 32)
+    const cx = pos[0]
+    const cy = pos[1] + 1.3
+    const cz = pos[2]
+    const backing = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.3, height: 0.4, depth: 0.05 }, this.scene)
+    backing.position.set(cx, cy, cz)
+    if (alongZ) backing.rotation.y = 0
+    else backing.rotation.y = Math.PI / 2
+    backing.material = this.mats.body
+    backing.isPickable = false
+    // 10 точек: 3 колонки × 3 ряда + нижняя «0», шаг 0.08/0.09
+    const dotR = 0.022
+    const cols = [-0.08, 0, 0.08]
+    const rows = [0.11, 0.02, -0.07, -0.16]
+    const keys: [number, number][] = [
+      [cols[0], rows[0]], [cols[1], rows[0]], [cols[2], rows[0]],
+      [cols[0], rows[1]], [cols[1], rows[1]], [cols[2], rows[1]],
+      [cols[0], rows[2]], [cols[1], rows[2]], [cols[2], rows[2]],
+      [cols[1], rows[3]],
+    ]
+    for (let i = 0; i < keys.length; i++) {
+      const dot = MeshBuilder.CreateSphere(`prop.${id}.k${i}`, { diameter: dotR * 2, segments: 6 }, this.scene)
+      const [dx, dy] = keys[i]
+      if (alongZ) dot.position.set(cx + dx, cy + dy, cz + 0.04)
+      else dot.position.set(cx + 0.04, cy + dy, cz + dx)
+      dot.material = this.mats.led
+      dot.isPickable = false
+    }
     this.codeDoors.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0, door: to })
   }
 
