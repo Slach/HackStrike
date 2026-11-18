@@ -271,6 +271,7 @@ export class HackView {
     fill: HTMLElement
     status: HTMLElement
     missed: number
+    seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
   }[] = []
   private deckMemUsed = 0
   private deckMemCap = 0
@@ -519,11 +520,22 @@ export class HackView {
       this.failCpToasts(msg.dev ?? '')
       return
     }
-    // Отказ data-операции (denied несёт prog/data, §16.2): красная
-    // мигающая карточка вместо безличного тоста (плейтест: «сам прогрессбар
-    // красным и мигающим — ой ой отказ»).
+    // Отказ data-операции (denied несёт prog/data, §16.2): красим ТУ ЖЕ
+    // оптимистичную карточку красным мигающим баром (плейтест: «два
+    // прогрессбара» — вторую не плодим); карточки нет (rm или рассинхрон) —
+    // создаём готовую красную.
     if (msg.prog === 'cp' || msg.prog === 'mv' || msg.prog === 'rm') {
-      this.denyCard(msg.prog, msg.data ?? '', msg.reason)
+      const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
+      const r =
+        msg.prog === 'rm'
+          ? undefined
+          : this.cpToasts.find((x) => x.prog === msg.prog && x.data === msg.data)
+      if (r !== undefined) {
+        this.cpToasts = this.cpToasts.filter((x) => x !== r)
+        this.failCard(r, base)
+      } else {
+        this.denyCard(msg.prog, msg.data ?? '', msg.reason)
+      }
       return
     }
     const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
@@ -548,10 +560,7 @@ export class HackView {
     const status = txt('div', 'cpstatus', base)
     wrap.append(row, bar, status)
     this.toasts.append(wrap)
-    window.setTimeout(() => {
-      wrap.classList.add('fade')
-      window.setTimeout(() => wrap.remove(), 500)
-    }, 2600)
+    this.fadeCard(wrap, 2600)
   }
 
   /** Сработал watcher (M3 §13.2): чужой джек-ин в устройство с моим триггером. */
@@ -1045,17 +1054,21 @@ export class HackView {
     const status = txt('div', 'cpstatus', mb > 0 ? `${mb} МБ` : 'ПЕРЕДАЧА…')
     wrap.append(row, bar, status)
     this.toasts.append(wrap)
-    this.cpToasts.push({ key: `${prog}:${src}>${dst}/${key}`, prog, dev: src, dst, data: key, mb, wrap, fill, status, missed: 0 })
+    this.cpToasts.push({ key: `${prog}:${src}>${dst}/${key}`, prog, dev: src, dst, data: key, mb, wrap, fill, status, missed: 0, seen: false })
   }
 
-  /** 2 Гц: прогресс активных cp-тостов из deck-сообщения; два тика подряд
-   *  без процесса = завершён (item уже в приёмнике — сервер шлёт scan). */
+  /** 2 Гц: прогресс активных cp/mv-тостов из deck-сообщения. Два тика без
+   *  процесса: карточка, видевшая прогресс — завершена (зелёная «ГОТОВО ✓»);
+   *  ни разу не видевшая — сервер отказал на старте: ТА ЖЕ карточка краснеет
+   *  и мигает (плейтест: «два прогрессбара — зеленый 100% и красный ниже» —
+   *  отказ обязан красить существующую карточку, а не плодить вторую). */
   private updateCpToasts(): void {
     for (const r of [...this.cpToasts]) {
       const p = this.progs.find(
         (q) => q.prog === r.prog && q.dev === r.dev && q.dst === r.dst && q.data === r.data,
       )
       if (p !== undefined) {
+        r.seen = true
         r.missed = 0
         const left = p.mbLeft ?? r.mb
         const mbps = p.mbps ?? 0
@@ -1066,17 +1079,31 @@ export class HackView {
       }
       r.missed += 1
       if (r.missed < 2) continue
-      // процесс исчез: успех (полоса добивается, зелёный) — отмена ловится
-      // отдельно в onDenied (cp_cancel → красный)
-      r.wrap.classList.add('ok')
-      r.fill.style.width = '100%'
-      r.status.textContent = 'ГОТОВО ✓'
       this.cpToasts = this.cpToasts.filter((x) => x !== r)
-      window.setTimeout(() => {
-        r.wrap.classList.add('fade')
-        window.setTimeout(() => r.wrap.remove(), 500)
-      }, 1300)
+      if (r.seen) {
+        r.wrap.classList.add('ok')
+        r.fill.style.width = '100%'
+        r.status.textContent = 'ГОТОВО ✓'
+        this.fadeCard(r.wrap, 1300)
+      } else {
+        this.failCard(r, 'НЕ ЗАПУЩЕНО СЕРВЕРОМ')
+      }
     }
+  }
+
+  /** Покраснить карточку отказа: красный мигающий бар + причина (§16.2). */
+  private failCard(r: (typeof this.cpToasts)[number], text: string): void {
+    r.wrap.classList.add('fail')
+    r.fill.style.width = '100%'
+    r.status.textContent = `ОТКАЗ: ${text}`
+    this.fadeCard(r.wrap, 2200)
+  }
+
+  private fadeCard(wrap: HTMLElement, ms: number): void {
+    window.setTimeout(() => {
+      wrap.classList.add('fade')
+      window.setTimeout(() => wrap.remove(), 500)
+    }, ms)
   }
 
   /** denied cp_cancel (§16.2): активные cp-тосты источника — красным. */
@@ -1084,12 +1111,10 @@ export class HackView {
     for (const r of [...this.cpToasts]) {
       if (r.dev !== dev) continue
       r.wrap.classList.add('fail')
+      r.fill.style.width = '100%'
       r.status.textContent = 'ОТКАЗ — ПРОГРЕСС ПОТЕРЯН'
       this.cpToasts = this.cpToasts.filter((x) => x !== r)
-      window.setTimeout(() => {
-        r.wrap.classList.add('fade')
-        window.setTimeout(() => r.wrap.remove(), 500)
-      }, 2200)
+      this.fadeCard(r.wrap, 2200)
     }
   }
 
