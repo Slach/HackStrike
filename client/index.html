@@ -1685,6 +1685,73 @@
       .hv-toast.fade {
         opacity: 0;
       }
+      /* §16.2: анимированный cp-тост — живой трансфер (плейтест «давай
+         анимацию в сообщении копирования»): полоса с бегущими полосками
+         (классика файл-копи), финиш зелёный «ГОТОВО ✓», отмена красная. */
+      .hv-cptoast {
+        border-color: rgba(90, 255, 170, 0.55);
+        color: #baffdd;
+        box-shadow: 0 0 16px rgba(90, 255, 170, 0.18);
+        min-width: 200px;
+      }
+      .hv-cptoast .cprow {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .hv-cptoast .cpdst {
+        opacity: 0.75;
+      }
+      .hv-cptoast .cpbar {
+        height: 5px;
+        background: rgba(170, 255, 210, 0.12);
+        border-radius: 2px;
+        margin-top: 6px;
+        overflow: hidden;
+      }
+      .hv-cptoast .cpbar-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: 2px;
+        background: repeating-linear-gradient(
+          45deg,
+          #37ff9b 0 6px,
+          rgba(55, 255, 155, 0.45) 6px 12px
+        );
+        transition: width 0.45s linear;
+        animation: cpstripes 0.55s linear infinite;
+      }
+      @keyframes cpstripes {
+        from {
+          background-position: 0 0;
+        }
+        to {
+          background-position: 17px 0;
+        }
+      }
+      .hv-cptoast .cpstatus {
+        font-size: 10px;
+        opacity: 0.7;
+        margin-top: 4px;
+        letter-spacing: 1px;
+      }
+      .hv-cptoast.ok {
+        border-color: rgba(90, 255, 170, 0.9);
+        box-shadow: 0 0 18px rgba(90, 255, 170, 0.4);
+      }
+      .hv-cptoast.ok .cpbar-fill {
+        animation: none;
+        background: #37ff9b;
+      }
+      .hv-cptoast.fail {
+        border-color: rgba(255, 77, 94, 0.8);
+        box-shadow: 0 0 16px rgba(255, 77, 94, 0.3);
+        color: #ffb3dd;
+      }
+      .hv-cptoast.fail .cpbar-fill {
+        animation: none;
+        background: #ff4d5e;
+      }
 
       /* ── Мобильная адаптация (ГДД §15): оверлей meatview + touch-слой деки.
          Всё под body.touch — класс вешает mobile.ts при детекте пальца;

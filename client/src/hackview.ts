@@ -257,6 +257,19 @@ export class HackView {
   private deckRam = 4
   private progs: readonly DeckProg[] = []
   private deckData: readonly DataItem[] = [] // §16.1: инвентарь MEM деки
+  /** Анимированные cp-тосты (§16.2, плейтест «давай анимацию»): живая полоса
+   *  трансфера из deck-сообщения 2 Гц; missed — тики без процесса (финиш). */
+  private cpToasts: {
+    key: string
+    dev: string
+    dst: string
+    data: string
+    mb: number
+    wrap: HTMLElement
+    fill: HTMLElement
+    status: HTMLElement
+    missed: number
+  }[] = []
   private deckMemUsed = 0
   private deckMemCap = 0
   private deckDataBox: HTMLElement | null = null // живой список в табе ДЕКА
@@ -362,6 +375,9 @@ export class HackView {
     this.netMbps = msg.deck.net
     this.deckRam = msg.deck.ram > 0 ? msg.deck.ram : 4
     this.progs = []
+    // cp-тосты прошлой сессии деки мертвы вместе с ней (transfers отменены
+    // сервером при джек-ауте) — не оставляем висеть
+    this.cpToasts = []
     // Дедупликаторы тостов-«находок» живут в синглтоне страницы и переживали
     // смерть/реконнект: повторный vulnscan той же цели приходил как «не новое»
     // и тост «УЯЗВИМОСТЬ НАЙДЕНА» глох — выглядело «vulnscan не находит»
@@ -415,6 +431,7 @@ export class HackView {
     this.deckData = msg.data ?? []
     this.deckMemUsed = msg.memUsed ?? this.deckMemUsed
     this.deckMemCap = msg.mem ?? this.deckMemCap
+    this.updateCpToasts()
     this.schedule(() => this.updateDeckData())
   }
 
@@ -494,6 +511,12 @@ export class HackView {
 
   onDenied(msg: DeniedMsg): void {
     if (!this._active) return
+    // cp_cancel (§16.2): у активного cp-тоста своя судьба — красное
+    // «ПРЕРВАНО» на его полосе, общий тост не нужен (дубль).
+    if (msg.reason === 'cp_cancel') {
+      this.failCpToasts(msg.dev ?? '')
+      return
+    }
     const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
     // firewall_scan несёт хост с фильтром (§13.5) — показываем, ГДЕ упёрся
     // и что с этим делать (плейтест M4: тост без действия бесполезен).
@@ -962,7 +985,8 @@ export class HackView {
     this.pushHistoryClose(pal.input.value.trim())
   }
 
-  /** Отправка cp/rm + тост (короткий путь для палитры, дерева и кнопок). */
+  /** Отправка cp/rm + тост (короткий путь для палитры, дерева и кнопок).
+   *  cp — анимированный тост-прогресс (§16.2), живёт до финиша/отмены. */
   private sendData(sub: 'cp' | 'rm', src: string, key: string, dst: string | null): void {
     const dstLabel = dst === null ? '' : dst === 'deck' ? ' → ДЕКА' : ` → ${dst.toUpperCase()}`
     if (sub === 'rm') {
@@ -970,8 +994,73 @@ export class HackView {
       this.toast(`RM ${key.toUpperCase()}${src === 'deck' ? ' (ДЕКА)' : ` @${src.toUpperCase()}`}`)
       return
     }
-    this.deps.send({ t: 'run', prog: 'cp', dev: src, dst: dst ?? 'deck', data: key })
-    this.toast(`CP ${key.toUpperCase()}${src === 'deck' ? ' (ДЕКА)' : ` @${src.toUpperCase()}`}${dstLabel}`)
+    const realDst = dst ?? 'deck'
+    this.deps.send({ t: 'run', prog: 'cp', dev: src, dst: realDst, data: key })
+    this.cpToastStart(src, realDst, key, this.dataHostItems(src).find((it) => it.n === key)?.mb ?? 0)
+  }
+
+  /** Анимированный cp-тост: полоса с бегущими полосками, объём/скорость
+   *  обновляются из deck-сообщения (updateCpToasts), финиш — «ГОТОВО ✓»
+   *  (зелёный), отмена (denied cp_cancel) — «ПРЕРВАНО» (красный). */
+  private cpToastStart(src: string, dst: string, key: string, mb: number): void {
+    const wrap = el('div', 'hv-toast hv-cptoast')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `CP ${key.toUpperCase()}${src === 'deck' ? ' · ДЕКА' : ` · ${src.toUpperCase()}`}`),
+      txt('span', 'cpdst', dst === 'deck' ? '→ ДЕКА' : `→ ${dst.toUpperCase()}`),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    bar.append(fill)
+    const status = txt('div', 'cpstatus', mb > 0 ? `${mb} МБ` : 'ПЕРЕДАЧА…')
+    wrap.append(row, bar, status)
+    this.toasts.append(wrap)
+    this.cpToasts.push({ key: `${src}>${dst}/${key}`, dev: src, dst, data: key, mb, wrap, fill, status, missed: 0 })
+  }
+
+  /** 2 Гц: прогресс активных cp-тостов из deck-сообщения; два тика подряд
+   *  без процесса = завершён (item уже в приёмнике — сервер шлёт scan). */
+  private updateCpToasts(): void {
+    for (const r of [...this.cpToasts]) {
+      const p = this.progs.find(
+        (q) => q.prog === 'cp' && q.dev === r.dev && q.dst === r.dst && q.data === r.data,
+      )
+      if (p !== undefined) {
+        r.missed = 0
+        const left = p.mbLeft ?? r.mb
+        const mbps = p.mbps ?? 0
+        const done = r.mb > 0 ? Math.min(1, (r.mb - left) / r.mb) : 0.15
+        r.fill.style.width = `${Math.round(done * 100)}%`
+        r.status.textContent = `${left} МБ · ${Math.round(mbps)} МБ/С`
+        continue
+      }
+      r.missed += 1
+      if (r.missed < 2) continue
+      // процесс исчез: успех (полоса добивается, зелёный) — отмена ловится
+      // отдельно в onDenied (cp_cancel → красный)
+      r.wrap.classList.add('ok')
+      r.fill.style.width = '100%'
+      r.status.textContent = 'ГОТОВО ✓'
+      this.cpToasts = this.cpToasts.filter((x) => x !== r)
+      window.setTimeout(() => {
+        r.wrap.classList.add('fade')
+        window.setTimeout(() => r.wrap.remove(), 500)
+      }, 1300)
+    }
+  }
+
+  /** denied cp_cancel (§16.2): активные cp-тосты источника — красным. */
+  private failCpToasts(dev: string): void {
+    for (const r of [...this.cpToasts]) {
+      if (r.dev !== dev) continue
+      r.wrap.classList.add('fail')
+      r.status.textContent = 'ПРЕРВАНО — ПРОГРЕСС ПОТЕРЯН'
+      this.cpToasts = this.cpToasts.filter((x) => x !== r)
+      window.setTimeout(() => {
+        r.wrap.classList.add('fade')
+        window.setTimeout(() => r.wrap.remove(), 500)
+      }, 2200)
+    }
   }
 
   private pushHistoryClose(raw: string): void {
