@@ -64,8 +64,20 @@ func wishDir(yaw float64, k keysState) vec3 {
 // не мутировать карту при toggle.
 type blockFn func(aabb) bool
 
-// staticBlocked — только геометрия карты (мини-арены тестов, рейкасты).
-func (m *gameMap) staticBlocked(b aabb) bool { return m.overlapsAny(b) }
+// staticBlocked — геометрия карты + корпуса устройств (терминалы, камеры,
+// свитчи, SRV — тоже препятствия: сквозь них не проходим ни в игре, ни в
+// рейкастах мини-арен).
+func (m *gameMap) staticBlocked(b aabb) bool {
+	if m.overlapsAny(b) {
+		return true
+	}
+	for _, d := range m.deviceBoxes {
+		if boxesOverlap(b, d) {
+			return true
+		}
+	}
+	return false
+}
 
 // moveAxis — сдвиг по одной горизонтальной оси. При блоке: если игрок на
 // земле и препятствие не выше autostep (лестницы) — подняться на его верх.

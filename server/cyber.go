@@ -82,10 +82,30 @@ var deviceStats = map[string]struct {
 	"radio":    {cpu: 0.1, npu: 0, net: 20, ram: 1},
 	"switch":   {cpu: 0.2, npu: 0, net: 100, ram: 1},
 	"door":     {cpu: 0.2, npu: 0, net: 100, ram: 1},
-	"gas":      {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §14.2: клапан — контроллер, как дверь
-	"valve":    {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §14.6.1: водяной клапан — контроллер, как газовый
-	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §13.7: сенсор, как switch
+	"gas":      {cpu: 0.2, npu: 0, net: 100, ram: 1},   // §14.2: клапан — контроллер, как дверь
+	"valve":    {cpu: 0.2, npu: 0, net: 100, ram: 1},   // §14.6.1: водяной клапан — контроллер, как газовый
+	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1},   // §13.7: сенсор, как switch
 	"srv":      {cpu: 1.0, npu: 1.0, net: 100, ram: 4}, // §16.5: сервер — CPU+NPU станция
+}
+
+// deviceHalfExtents — корпус устройства для коллизии: [halfW, height,
+// halfD]. Дверь/газ/клапан уже имеют свои AABB в map.colliders по геометрии
+// — здесь только сетевые коробки (терминал, камера, свитч, SRV, радио).
+func deviceHalfExtents(kind string) vec3 {
+	switch kind {
+	case "terminal":
+		return vec3{0.3, 1.2, 0.3}
+	case "camera":
+		return vec3{0.2, 0.3, 0.2}
+	case "switch":
+		return vec3{0.25, 0.85, 0.15}
+	case "srv":
+		return vec3{0.6, 2.2, 0.4}
+	case "radio":
+		return vec3{0.2, 0.6, 0.2}
+	default:
+		return vec3{}
+	}
 }
 
 // device — кибер-устройство (§12.2). Железо неизменно; динамика — owner
@@ -208,6 +228,19 @@ type cyberState struct {
 // справочная ссылка на «короткий кабель» для рендера клиента).
 func buildCyber(m *gameMap) *cyberState {
 	cs := &cyberState{devices: make(map[string]*device)}
+	// Корпуса устройств — препятствия движения/лучей: раньше сквозь терминалы,
+	// камеры и свитчи проходили как сквозь воздух (плейтест: «я не должен
+	// проходить сквозь сервера, терминалы, камеры и свитчи»).
+	for _, p := range m.props {
+		half := deviceHalfExtents(p.Kind)
+		if half == (vec3{}) {
+			continue
+		}
+		m.deviceBoxes = append(m.deviceBoxes, aabb{
+			min: vec3{p.Pos[0] - half[0], p.Pos[1], p.Pos[2] - half[2]},
+			max: vec3{p.Pos[0] + half[0], p.Pos[1] + half[1], p.Pos[2] + half[2]},
+		})
+	}
 	for _, p := range m.props {
 		if p.Kind == "cable" {
 			continue
@@ -1959,7 +1992,7 @@ func (w *world) deckStatusTick() {
 			"memUsed": w.deckItemsUsed(p),
 			"mem":     deckMEM,
 			// §16.1: инвентарь деки — только владельцу, живёт пока джекнут
-			"data":    deckInventory(p),
+			"data": deckInventory(p),
 			// §12.1 «дорогой вход»: канал не-точки входа — худший кабель, а
 			// не паспортный netMbps устройства.
 			"netLoad": round3(math.Min(1, float64(n)*progNetMbps/w.deckNet(p))),
@@ -2169,6 +2202,15 @@ func (w *world) doorBlocker(pl *player) blockFn {
 	return func(b aabb) bool {
 		if w.m.overlapsAny(b) {
 			return true
+		}
+		// Корпуса устройств (§12.2, плейтест «не проходить сквозь сервера,
+		// терминалы, камеры и свитчи»): то же исключение, что у дверей —
+		// если игрок УЖЕ внутри (не должно случаться, но не запираем насмерть
+		// спавном/телепортом), выйти можно.
+		for _, db := range w.m.deviceBoxes {
+			if boxesOverlap(b, db) && !boxesOverlap(playerBoxAt(pl.pos), db) {
+				return true
+			}
 		}
 		for _, d := range w.cyber.doors {
 			if d.open || !boxesOverlap(b, d.box) {

@@ -20,11 +20,14 @@ type collider struct {
 }
 
 type gameMap struct {
-	Name      string                  `json:"name"`
-	Bounds    [3]float64              `json:"bounds"`
-	Colliders []collider              `json:"colliders"`
-	Spawns    map[string][][3]float64 `json:"spawns"` // "0"/"1" → точки спавна (у ног)
-	Props     []any                   `json:"props"`  // сырые M2-пропсы (§12.3)
+	// deviceBoxes — корпуса устройств как препятствия (строит buildCyber,
+	// проверяет staticBlocked/doorBlocker): сеть и физика обязаны сойтись.
+	deviceBoxes []aabb
+	Name        string                  `json:"name"`
+	Bounds      [3]float64              `json:"bounds"`
+	Colliders   []collider              `json:"colliders"`
+	Spawns      map[string][][3]float64 `json:"spawns"` // "0"/"1" → точки спавна (у ног)
+	Props       []any                   `json:"props"`  // сырые M2-пропсы (§12.3)
 
 	// props — типизированные пропсы (заполняет parseProps до validate,
 	// чтобы validate проверял связи door.to / cable.from-to).

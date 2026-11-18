@@ -763,6 +763,24 @@ func TestEmbeddedMapCyber(t *testing.T) {
 					t.Fatalf("spawn %v inside jack-in radius of %s", s, id)
 				}
 			}
+			// Корпуса устройств (плейтест: «не проходить сквозь сервера,
+			// терминалы, камеры и свитчи») не должны накрывать спавн.
+			for _, db := range m.deviceBoxes {
+				if boxesOverlap(playerBoxAt(vec3(s)), db) {
+					t.Fatalf("spawn %v overlaps device body %v", s, db)
+				}
+			}
+		}
+	}
+	// И сами корпуса не вмурованы в стены (иначе двойная блокировка).
+	for _, db := range m.deviceBoxes {
+		for _, c := range m.Colliders {
+			if c.Kind == "floor" || c.Kind == "stair" {
+				continue
+			}
+			if boxesOverlap(db, aabb{vec3(c.Min), vec3(c.Max)}) {
+				t.Fatalf("device body %v intersects %s collider", db, c.Kind)
+			}
 		}
 	}
 }
