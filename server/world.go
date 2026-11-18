@@ -414,8 +414,8 @@ func (w *world) simulateTick() {
 	}
 	w.shieldRegenTick() // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
 	w.doorKeyTick()     // §16.5: ротация door_key на SRV1 (T=120 с)
-	w.gasTick(tickDT)  // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
-	w.fireTick(tickDT) // §14.6.1: DoT огня (сразу за газом, тот же порядок)
+	w.gasTick(tickDT)   // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
+	w.fireTick(tickDT)  // §14.6.1: DoT огня (сразу за газом, тот же порядок)
 	w.matchCheck()
 	w.rebalanceTeams()
 	w.deckStatusTick()
@@ -513,6 +513,6 @@ func (w *world) broadcastSnap() {
 		// §16.5: остаток до смены поколения door_key (ротация T=120 с) —
 		// таймер «до смены кода осталось» в паде d3. −1: вне матча.
 		"keyLeft": w.doorKeyLeftMs(),
-		"props":      w.cyber.snapProps(), // M2: двери/кабели/точки входа (§12.5)
+		"props":   w.cyber.snapProps(), // M2: двери/кабели/точки входа (§12.5)
 	})
 }

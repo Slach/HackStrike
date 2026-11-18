@@ -98,7 +98,13 @@ function openCodePad(dev: string, kp: string): void {
   wrap.className = 'codepad'
   const title = document.createElement('div')
   title.className = 'codepad-title'
+  // двухстрочная шапка (плейтест: «таймера не видно»):
+  //   ЗАМОК D3
+  //   ДО СМЕНЫ КОДА 01:59
   title.textContent = `ЗАМОК ${dev.toUpperCase()}`
+  const timer = document.createElement('div')
+  timer.className = 'codepad-timer'
+  title.append(timer)
   const x = document.createElement('button')
   x.className = 'codepad-x'
   x.textContent = '×'
@@ -108,8 +114,6 @@ function openCodePad(dev: string, kp: string): void {
   const status = document.createElement('div')
   status.className = 'codepad-status'
   status.textContent = 'ЦИФРЫ ИЛИ КЛИК · ENTER — ВВОД · ESC — ЗАКРЫТЬ'
-  const timer = document.createElement('div')
-  timer.className = 'codepad-timer'
   const grid = document.createElement('div')
   grid.className = 'codepad-grid'
   let digits = ''
@@ -193,7 +197,7 @@ function openCodePad(dev: string, kp: string): void {
   const head = document.createElement('div')
   head.className = 'codepad-head'
   head.append(title, x)
-  wrap.append(head, disp, grid, status, timer)
+  wrap.append(head, disp, grid, status)
   document.body.append(wrap)
   draw()
   window.addEventListener('keydown', onKey, true)
@@ -895,7 +899,7 @@ engine.runRenderLoop(() => {
     const left = Math.max(0, keyLeftMs - msAge)
     const mm = Math.floor(left / 60000)
     const ss = Math.floor((left % 60000) / 1000)
-    codePad.timer.textContent = `ДО СМЕНЫ КОДА: ${mm}:${String(ss).padStart(2, '0')}`
+    codePad.timer.textContent = `ДО СМЕНЫ КОДА ${mm}:${String(ss).padStart(2, '0')}`
     codePad.timer.classList.toggle('soon', left < 20000)
   }
 

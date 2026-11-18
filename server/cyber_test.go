@@ -689,9 +689,9 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// v1..v3 — устройства (+3 к графе), кабели c15/c16/c17 (+3).
 	// итерация 3 (§16.5): SRV1 — +1 устройство и +2 кабеля (c33/c34 к s1/s2);
 	// код-замок: d4/d5/d6 — +3 двери и +3 кабеля (c35–c37 к s3); клавиатуры
-	// k3–k6 у дверей — +4 устройства и +4 кабеля (c380–c383 к s3).
-	if len(cs.order) != 28 || len(cs.cables) != 28 || len(cs.doors) != 6 || len(cs.gases) != 2 {
-		t.Fatalf("m1 props: want 28 devices / 26 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
+	// на ОБЕИХ сторонах d3–d6 — +8 устройств и +8 кабелей (c380–c387 к s3).
+	if len(cs.order) != 32 || len(cs.cables) != 32 || len(cs.doors) != 6 || len(cs.gases) != 2 {
+		t.Fatalf("m1 props: want 32 devices / 30 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {
