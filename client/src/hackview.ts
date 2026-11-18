@@ -779,9 +779,10 @@ export class HackView {
     return 'deck'
   }
 
-  /** Токен — адресуемый хост data: 'deck' или устройство (префикс, уникальный). */
+  /** Токен — адресуемый хост data: 'deck' (алиас localhost, §16.2) или
+   *  устройство (префикс, уникальный). */
   private dataHostAt(q: string): string | null {
-    if (q === 'deck') return 'deck'
+    if (q === 'deck' || q === 'localhost') return 'deck'
     if (q === '') return null
     const m = [...this.devices.values()].filter((d) => this.devMatch(d, q))
     return m.length === 1 ? m[0].id : (m.find((d) => d.id === q)?.id ?? null)
@@ -1333,6 +1334,17 @@ export class HackView {
         text: 'deck',
         dev: 'deck',
         label: 'ДЕКА',
+        hint: `${this.deckMemUsed}/${this.deckMemCap} МБ`,
+      })
+    }
+    // Алиас localhost (плейтест): в списке — только когда его явно пишут,
+    // чтобы не дублировать ДЕКУ на пустом запросе.
+    if (q !== '' && 'localhost'.startsWith(q)) {
+      out.push({
+        kind: 'dev',
+        text: 'localhost',
+        dev: 'deck',
+        label: 'ЛОКАЛХОСТ = ДЕКА',
         hint: `${this.deckMemUsed}/${this.deckMemCap} МБ`,
       })
     }
