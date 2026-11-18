@@ -55,7 +55,7 @@ const (
 	scanDemandPortscan = 2.0 // МБ/с на линк
 	scanDemandPath     = 4.0 // МБ/с на линк
 
-	// M5 итерация 2 «MEM + rsync» (§16.1/§16.2): MEM-ёмкости хостов (МБ) и
+	// M5 итерация 2 «MEM + cp» (§16.1/§16.2): MEM-ёмкости хостов (МБ) и
 	// rm-работа. MEM — второй независимый ресурс (слоты программ §12.2 не
 	// трогаем); mem_full/dup — отказы трансфера.
 	rmWork           = 0.5  // с: удаление данных с хоста (только владелец)
@@ -129,7 +129,7 @@ type device struct {
 
 	// mem/items — MEM-хранилище данных (§16.1): ёмкость по типу + лежащие
 	// items. memFree считается динамически (items + активные резервации
-	// rsync в этот хост).
+	// cp в этот хост).
 	mem   int
 	items []dataItem
 
@@ -577,12 +577,12 @@ func (cs *cyberState) worstCableBW(d *device) float64 {
 // (vulnscan/trojan, фиксируется на старте); portscan ест линки фронтира.
 type program struct {
 	id       int
-	prog     string // portscan|vulnscan|trojan|watcher|firewall|antivirus|rsync|rm
-	dev      string // цель (пусто у portscan; у rsync — ИСТОЧНИК, может быть "deck")
+	prog     string // portscan|vulnscan|trojan|watcher|firewall|antivirus|cp|rm
+	dev      string // цель (пусто у portscan; у cp — ИСТОЧНИК, может быть "deck")
 	work     float64
 	progress float64
 	path     []string
-	// rsync (§16.2): dst — приёмник ("deck" или id устройства), data — имя
+	// cp (§16.2): dst — приёмник ("deck" или id устройства), data — имя
 	// item, mb — объём (резервация), mbps — номинальная бутылочка маршрута
 	// (спрос на линках пути; доля ниже — фактор замедления).
 	dst  string
@@ -800,7 +800,7 @@ func (w *world) denied(pl *player, reason string, detail ...string) {
 // --- M5 данные: MEM-учёт и трансферы (§16.1/§16.2) ------------------------
 
 // deckItemsUsed — занятый MEM деки: лежащие items + активные резервации
-// rsync В деку (программы джекнутого живы ровно пока трансфер, резервация
+// cp В деку (программы джекнутого живы ровно пока трансфер, резервация
 // освобождается вместе с программой — утечек нет по построению).
 func (w *world) deckItemsUsed(pl *player) int {
 	used := 0
@@ -808,7 +808,7 @@ func (w *world) deckItemsUsed(pl *player) int {
 		used += it.MB
 	}
 	for _, q := range pl.progs {
-		if q.prog == "rsync" && q.dst == "deck" {
+		if q.prog == "cp" && q.dst == "deck" {
 			used += q.mb
 		}
 	}
@@ -816,7 +816,7 @@ func (w *world) deckItemsUsed(pl *player) int {
 }
 
 // hostMemFree — свободный MEM устройства (§16.2): ёмкость минус items минус
-// резервации активных rsync всех игроков в этот хост.
+// резервации активных cp всех игроков в этот хост.
 func (w *world) hostMemFree(dev *device) int {
 	free := dev.mem
 	for _, it := range dev.items {
@@ -824,7 +824,7 @@ func (w *world) hostMemFree(dev *device) int {
 	}
 	for _, pl := range w.players {
 		for _, q := range pl.progs {
-			if q.prog == "rsync" && q.dst == dev.id {
+			if q.prog == "cp" && q.dst == dev.id {
 				free -= q.mb
 			}
 		}
@@ -851,10 +851,10 @@ func deckHasItem(pl *player, name string) bool {
 	return false
 }
 
-// rsyncNominal — номинальная бутылочка маршрута (МБ/с): min по bw кабелей
+// cpNominal — номинальная бутылочка маршрута (МБ/с): min по bw кабелей
 // пути и backplane транзитных свитчей (§16.2; входной хоп дека↔хост не
 // считается — как в bw-модели §16.3).
-func (w *world) rsyncNominal(path []string) float64 {
+func (w *world) cpNominal(path []string) float64 {
 	nominal := 0.0
 	for i := 0; i+1 < len(path); i++ {
 		a, b := path[i], path[i+1]
@@ -890,9 +890,9 @@ func (w *world) seedData() {
 	}
 }
 
-// rsyncCancelled — трансфер умер (§16.2 «отмена»): сменился владелец
+// cpCancelled — трансфер умер (§16.2 «отмена»): сменился владелец
 // src/dst, или чужой firewall встал на линке зафиксированного маршрута.
-func (w *world) rsyncCancelled(pl *player, p *program) bool {
+func (w *world) cpCancelled(pl *player, p *program) bool {
 	// src: p.dev — устройство или "deck".
 	if p.dev != "deck" {
 		src, ok := w.cyber.devices[p.dev]
@@ -928,10 +928,10 @@ func (w *world) handleRun(pl *player, msg message) {
 		return
 	}
 	prog := str(msg, "prog")
-	// §16.2: rsync/rm — данные-программы со своей семантикой (MEM, владельцы,
+	// §16.2: cp/rm — данные-программы со своей семантикой (MEM, владельцы,
 	// маршрут). Валидируются отдельно и уходят со своими полями.
-	if prog == "rsync" {
-		w.handleRsync(pl, str(msg, "dev"), str(msg, "dst"), str(msg, "data"))
+	if prog == "cp" {
+		w.handleCp(pl, str(msg, "dev"), str(msg, "dst"), str(msg, "data"))
 		return
 	}
 	if prog == "rm" {
@@ -989,12 +989,12 @@ func (w *world) handleRun(pl *player, msg message) {
 	log.Printf("room: player %d run %s %s", pl.id, prog, devID)
 }
 
-// handleRsync — §16.2: {"t":"run","prog":"rsync","dev":src,"dst":deck|id}.
+// handleCp — §16.2: {"t":"run","prog":"cp","dev":src,"dst":deck|id}.
 // Контроль src/dst (трояновый хост или дека), не-дубликат, MEM приёмника с
 // резервацией (denied mem_full), маршрут widest-path, скорость = бутылочка.
-func (w *world) handleRsync(pl *player, srcID, dstID, dataName string) {
+func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
 	if srcID == "" || dstID == "" {
-		w.denied(pl, "too_far", "rsync", srcID)
+		w.denied(pl, "too_far", "cp", srcID)
 		return
 	}
 	// Источник: своя дека или трояновый хост (перехват чужих данных §16.1).
@@ -1002,7 +1002,7 @@ func (w *world) handleRsync(pl *player, srcID, dstID, dataName string) {
 	var it dataItem
 	if srcID == "deck" {
 		if dataName == "" || !deckHasItem(pl, dataName) {
-			w.denied(pl, "too_far", "rsync deck")
+			w.denied(pl, "too_far", "cp deck")
 			return
 		}
 		for _, x := range pl.items {
@@ -1013,12 +1013,12 @@ func (w *world) handleRsync(pl *player, srcID, dstID, dataName string) {
 	} else {
 		d, ok := w.cyber.devices[srcID]
 		if !ok || !pl.scanned[srcID] || d.owner != pl.id {
-			w.denied(pl, "not_owner", "rsync", srcID)
+			w.denied(pl, "not_owner", "cp", srcID)
 			return
 		}
 		if dataName == "" {
 			if len(d.items) == 0 {
-				w.denied(pl, "too_far", "rsync "+srcID)
+				w.denied(pl, "too_far", "cp "+srcID)
 				return
 			}
 			it = d.items[0] // один item по умолчанию (данные с осмысленными именами)
@@ -1030,7 +1030,7 @@ func (w *world) handleRsync(pl *player, srcID, dstID, dataName string) {
 				}
 			}
 			if !found {
-				w.denied(pl, "too_far", "rsync "+srcID)
+				w.denied(pl, "too_far", "cp "+srcID)
 				return
 			}
 		}
@@ -1042,7 +1042,7 @@ func (w *world) handleRsync(pl *player, srcID, dstID, dataName string) {
 	if !dstDeck {
 		d, ok := w.cyber.devices[dstID]
 		if !ok || !pl.scanned[dstID] || d.owner != pl.id {
-			w.denied(pl, "not_owner", "rsync", dstID)
+			w.denied(pl, "not_owner", "cp", dstID)
 			return
 		}
 		dstDev = d
@@ -1051,17 +1051,17 @@ func (w *world) handleRsync(pl *player, srcID, dstID, dataName string) {
 	// трансфер этого item с этого источника (второй протолкнулся бы в те же
 	// 60 МБ и на финише нашёл бы источник пустым).
 	for _, q := range pl.progs {
-		if q.prog == "rsync" && q.dev == srcID && q.data == it.Name {
-			w.denied(pl, "dup", "rsync", it.Name)
+		if q.prog == "cp" && q.dev == srcID && q.data == it.Name {
+			w.denied(pl, "dup", "cp", it.Name)
 			return
 		}
 	}
 	if dstDeck && deckHasItem(pl, it.Name) {
-		w.denied(pl, "dup", "rsync", it.Name)
+		w.denied(pl, "dup", "cp", it.Name)
 		return
 	}
 	if !dstDeck && hostHasItem(dstDev, it.Name) {
-		w.denied(pl, "dup", "rsync", it.Name)
+		w.denied(pl, "dup", "cp", it.Name)
 		return
 	}
 	// Маршрут: src→jackHost (слив в деку) или src→dst; входной хоп дека↔хост
@@ -1085,34 +1085,34 @@ func (w *world) handleRsync(pl *player, srcID, dstID, dataName string) {
 		}
 		path = w.cyber.widestPath(from, routeDst, blocked)
 		if len(path) == 0 {
-			w.denied(pl, "too_far", "rsync "+srcID+"->"+routeDst)
+			w.denied(pl, "too_far", "cp "+srcID+"->"+routeDst)
 			return
 		}
-		mbps = w.rsyncNominal(path)
+		mbps = w.cpNominal(path)
 	}
 	// MEM приёмника с резервацией: mem_free падает сразу (два трансфера не
 	// проталкиваются в один объём), отказ mem_full до старта.
 	if dstDeck {
 		if w.deckItemsUsed(pl)+it.MB > deckMEM {
-			w.denied(pl, "mem_full", "rsync", dstID)
+			w.denied(pl, "mem_full", "cp", dstID)
 			return
 		}
 	} else if w.hostMemFree(dstDev) < it.MB {
-		w.denied(pl, "mem_full", "rsync", dstID)
+		w.denied(pl, "mem_full", "cp", dstID)
 		return
 	}
 	p := &program{
-		id: pl.nextProgID, prog: "rsync",
+		id: pl.nextProgID, prog: "cp",
 		dev: srcID, dst: dstID, data: it.Name, mb: it.MB,
 		work: float64(it.MB) / mbps, // прогресс в секундах чистой полосы
 		path: path, mbps: mbps,
 	}
 	pl.progs = append(pl.progs, p)
 	pl.nextProgID++
-	log.Printf("room: player %d run rsync %s->%s %s (%dMB @%vMBps)", pl.id, srcID, dstID, it.Name, it.MB, mbps)
+	log.Printf("room: player %d run cp %s->%s %s (%dMB @%vMBps)", pl.id, srcID, dstID, it.Name, it.MB, mbps)
 	// Watcher-событие job (старт трансфера на устройстве, §16.9).
 	if srcDev != nil {
-		w.fireWatchers(srcDev, pl, "job", "rsync")
+		w.fireWatchers(srcDev, pl, "job", "cp")
 	}
 }
 
@@ -1244,7 +1244,7 @@ func (w *world) computeNetFactors() map[*program]float64 {
 						}
 					}
 				}
-			case "rsync":
+			case "cp":
 				// §16.2: трансфер ест свои МБ/с на линках маршрута — тот же
 				// честный пул, что и сканы (chaff-контрига §16.3).
 				for i := 0; i+1 < len(p.path); i++ {
@@ -1292,7 +1292,7 @@ func (w *world) cyberTick(pl *player, dt float64) {
 	for _, p := range pl.progs {
 		// §16.2 «отмена трансфера»: сменился владелец src/dst, чужой firewall
 		// на маршруте — прогресс теряется («либо прошло, либо нет»).
-		if p.prog == "rsync" && w.rsyncCancelled(pl, p) {
+		if p.prog == "cp" && w.cpCancelled(pl, p) {
 			cancelled = append(cancelled, p)
 			continue
 		}
@@ -1312,8 +1312,8 @@ func (w *world) cyberTick(pl *player, dt float64) {
 				break
 			}
 		}
-		log.Printf("room: rsync %s->%s cancelled (owner/firewall changed)", p.dev, p.dst)
-		w.sendTo(pl.id, message{"t": "denied", "reason": "rsync_cancel", "dev": p.dev})
+		log.Printf("room: cp %s->%s cancelled (owner/firewall changed)", p.dev, p.dst)
+		w.sendTo(pl.id, message{"t": "denied", "reason": "cp_cancel", "dev": p.dev})
 	}
 	for _, p := range finished {
 		for i, q := range pl.progs {
@@ -1378,7 +1378,7 @@ func (w *world) completeProgram(pl *player, p *program) {
 			dev.vulnedBy[pl.id] = true // M2: навсегда (§12.4)
 			w.sendScan(pl)             // обновить карту: узел помечается «уязвимо»
 		}
-	case "rsync":
+	case "cp":
 		// §16.2: item переезжает в MEM приёмника (резервация освобождается
 		// вместе с программой). Отмена невозможна здесь — cyberTick отменил
 		// бы раньше финиша.
@@ -1415,7 +1415,7 @@ func (w *world) completeProgram(pl *player, p *program) {
 		}
 		w.sendScan(pl) // листинг/память приёмника-источника обновить
 		if src := w.cyber.devices[p.dev]; src != nil {
-			w.fireWatchers(src, pl, "job", "rsync")
+			w.fireWatchers(src, pl, "job", "cp")
 		}
 	case "rm":
 		// §16.2: item удаляется (chaff: слить → rm → слить снова).
@@ -1584,7 +1584,7 @@ type scanDevice struct {
 	// устройство (как firewalled).
 	Antivirused bool `json:"antivirused,omitempty"`
 	// Mem/MemFree — MEM-хранилище данных: ёмкость и свободно (§16.9, МБ).
-	// memFree динамический: items + резервации активных rsync. Видны всем,
+	// memFree динамический: items + резервации активных cp. Видны всем,
 	// кто открыл устройство (объём — наблюдаемая вещь).
 	Mem     int `json:"mem,omitempty"`
 	MemFree int `json:"memFree,omitempty"`
@@ -1690,7 +1690,7 @@ type deckProg struct {
 	Prog  string `json:"prog"`
 	Dev   string `json:"dev"`
 	EtaMs int64  `json:"etaMs"`
-	// rsync (§16.9): приёмник, остаток данных и текущая скорость (МБ/с с
+	// cp (§16.9): приёмник, остаток данных и текущая скорость (МБ/с с
 	// учётом доли канала) — прогресс-бар трансфера в деке.
 	Dst    string  `json:"dst,omitempty"`
 	Data   string  `json:"data,omitempty"`
@@ -1723,7 +1723,7 @@ func (w *world) deckStatusTick() {
 				remain = 0
 			}
 			dp := deckProg{ID: pr.id, Prog: pr.prog, Dev: pr.dev, EtaMs: int64(remain * 1000)}
-			if pr.prog == "rsync" {
+			if pr.prog == "cp" {
 				// §16.9: остаток МБ и текущая скорость (доля канала × номинал)
 				dp.Dst = pr.dst
 				dp.Data = pr.data

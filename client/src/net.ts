@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'rsync' | 'rm' // GDD §12.4, §13.1-13.6, §16.2
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'cp' | 'rm' // GDD §12.4, §13.1-13.6, §16.2
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -24,7 +24,7 @@ export type ClientMessage =
   | { t: 'ping'; c: number }
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
-  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2: rsync/rm — dst/data
+  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2: cp/rm — dst/data
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
@@ -75,7 +75,7 @@ export interface ScanDevice {
   antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
   soft?: ScanSoft[] // resident software with owners (§9.2; ONLY to the device owner)
   mem?: number // MEM capacity, MB (§16.1)
-  memFree?: number // free MEM including active rsync reservations
+  memFree?: number // free MEM including active cp reservations
   data?: DataItem[] // data listing — ONLY to the trojan owner (§16.9)
 }
 
@@ -118,10 +118,10 @@ export interface DeckProg {
   prog: string
   dev: string | null
   etaMs: number
-  dst?: string // rsync: приёмник ("deck" | hostId)
-  data?: string // rsync/rm: имя item
-  mbLeft?: number // rsync: остаток МБ
-  mbps?: number // rsync: текущая скорость МБ/с
+  dst?: string // cp: приёмник ("deck" | hostId)
+  data?: string // cp/rm: имя item
+  mbLeft?: number // cp: остаток МБ
+  mbps?: number // cp: текущая скорость МБ/с
 }
 
 /** Один item данных в MEM (§16.1). */
