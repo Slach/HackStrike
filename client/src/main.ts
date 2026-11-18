@@ -83,54 +83,118 @@ let jackChannel: { dev: string; s: number; at: number } | null = null
 let jackErrorUntil = 0
 let prevInteractUi = 0
 // §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
-let codePad: { dev: string; wrap: HTMLElement; input: HTMLInputElement; status: HTMLElement } | null = null
+let codePad: { dev: string; wrap: HTMLElement; status: HTMLElement; showResult: (ok: boolean, match?: number) => void } | null = null
 
-/** §16.7: клавиатура d3 — DOM-оверлей цифрового ввода кода (4 знака).
- *  Enter отправляет {"t":"enter"}, ответ придёт сообщением `code`. */
+/** §16.7: клавиатура d3 — пад из 10 кнопок (как настоящий кодовый замок).
+ *  Под pointer-lock фокус полю ввода не отдашь, поэтому ввод слушает window:
+ *  цифры/Backspace/Enter/Esc, пока пад открыт; кнопки кликаются и тапаются.
+ *  Ответ сервера `code` рисует ОК/НЕВЕРНО + «N/4 цифр на месте» — подсказка:
+ *  N цифр из 4 стоят на СВОИХ местах (Fallout-style). */
 function openCodePad(dev: string): void {
   if (codePad !== null) return
   const wrap = document.createElement('div')
   wrap.className = 'codepad'
   const title = document.createElement('div')
   title.className = 'codepad-title'
-  title.textContent = `ЗАМОК ${dev.toUpperCase()} · КОД`
-  const input = document.createElement('input')
-  input.type = 'text'
-  input.inputMode = 'numeric'
-  input.maxLength = 4
-  input.autocomplete = 'off'
-  input.className = 'codepad-input'
-  input.placeholder = '••••'
+  title.textContent = `ЗАМОК ${dev.toUpperCase()}`
+  const disp = document.createElement('div')
+  disp.className = 'codepad-display'
   const status = document.createElement('div')
   status.className = 'codepad-status'
-  status.textContent = '4 ЦИФРЫ · ENTER — ПРОВЕРИТЬ · ESC — ЗАКРЫТЬ'
-  const go = document.createElement('button')
-  go.className = 'codepad-go'
-  go.textContent = 'ВВОД'
+  status.textContent = 'ЦИФРЫ ИЛИ КЛИК · ENTER — ВВОД · ESC — ЗАКРЫТЬ'
+  const grid = document.createElement('div')
+  grid.className = 'codepad-grid'
+  let digits = ''
+  const draw = (): void => {
+    const t = digits.padEnd(4, '·')
+    disp.textContent = `${t[0]} ${t[1]} ${t[2]} ${t[3]}`
+  }
   const close = (): void => {
+    window.removeEventListener('keydown', onKey, true)
     wrap.remove()
     codePad = null
   }
   const submit = (): void => {
-    const code = input.value.trim()
-    if (!/^\d{4}$/.test(code)) {
+    if (digits.length !== 4) {
       status.textContent = 'НУЖНО 4 ЦИФРЫ'
       status.className = 'codepad-status bad'
       return
     }
-    sock.send({ t: 'enter', dev, code } as never)
+    sock.send({ t: 'enter', dev, code: digits } as never)
+    digits = ''
+    draw()
+    status.textContent = 'ПРОВЕРКА…'
+    status.className = 'codepad-status'
   }
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submit()
-    if (e.key === 'Escape') close()
-    e.stopPropagation() // WASD/space не уходят в контролы
-  })
-  go.addEventListener('click', submit)
-  wrap.append(title, input, go, status)
+  const press = (k: string): void => {
+    if (k === 'C') {
+      digits = ''
+      draw()
+      status.textContent = 'СБРОС'
+      status.className = 'codepad-status'
+      return
+    }
+    if (k === '⌫') {
+      digits = digits.slice(0, -1)
+      draw()
+      return
+    }
+    if (k === 'OK') {
+      submit()
+      return
+    }
+    if (digits.length >= 4) return
+    digits += k
+    draw()
+    if (digits.length === 4) submit() // как у настоящего замка: 4-я цифра = ввод
+  }
+  const onKey = (e: KeyboardEvent): void => {
+    if (codePad === null) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      close()
+      return
+    }
+    const k = /^\d$/.test(e.key) ? e.key : e.key === 'Backspace' ? '⌫' : e.key === 'Enter' ? 'OK' : e.key === 'Delete' ? 'C' : null
+    if (k === null) return
+    e.preventDefault()
+    e.stopPropagation() // цифры не уходят в хоткеи деки/игру
+    if (digits.length === 5) digits = digits.slice(0, 4) // защита от гонки submit
+    press(k)
+  }
+  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫', 'OK']) {
+    const b = document.createElement('button')
+    b.className = 'codepad-key' + (k === 'OK' ? ' ok' : k === 'C' || k === '⌫' ? ' clr' : '')
+    b.textContent = k
+    b.addEventListener('click', () => press(k))
+    grid.append(b)
+  }
+  wrap.append(title, disp, grid, status)
   document.body.append(wrap)
-  input.focus()
-  codePad = { dev, wrap, input, status }
+  draw()
+  window.addEventListener('keydown', onKey, true)
+  codePad = {
+    dev,
+    wrap,
+    status,
+    showResult: (ok, match) => {
+      if (ok) {
+        status.textContent = 'ОТКРЫТО ✓'
+        status.className = 'codepad-status ok'
+        window.setTimeout(() => {
+          if (codePad !== null && codePad.dev === dev) close()
+        }, 900)
+      } else {
+        status.textContent = `НЕВЕРНО — ${match ?? 0}/4 ЦИФР НА МЕСТЕ`
+        status.className = 'codepad-status bad'
+        digits = ''
+        draw()
+      }
+    },
+  }
 }
+
 let myId: number | null = null
 let myTeam = -1
 let myCls: Cls = 'assault'
@@ -379,23 +443,7 @@ const sock = new GameSocket({
         break
       case 'code': {
         // §16.7: итог ввода кода на клавиатуре d3.
-        if (codePad !== null && msg.dev === codePad.dev) {
-          if (msg.ok) {
-            codePad.status.textContent = 'ОТКРЫТО ✓'
-            codePad.status.className = 'codepad-status ok'
-            const pad = codePad
-            window.setTimeout(() => {
-              pad.wrap.remove()
-              codePad = null
-            }, 700)
-          } else {
-            const n = msg.match ?? 0
-            codePad.status.textContent = `НЕВЕРНО — ${n}/4 ЦИФР НА МЕСТЕ`
-            codePad.status.className = 'codepad-status bad'
-            codePad.input.value = ''
-            codePad.input.focus()
-          }
-        }
+        if (codePad !== null && msg.dev === codePad.dev) codePad.showResult(msg.ok, msg.match)
         break
       }
       case 'denied':
