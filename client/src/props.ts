@@ -199,6 +199,9 @@ export class PropsView {
   /** Владелец камеры — своя команда или чужая (ставит main.ts: знает myId и
    *  ростер; null = неизвестно, LED остаётся нейтральным). */
   private ownerState: ((owner: number) => 'own' | 'foe') | null = null
+  /** Коллайдеры стен (kind 'wall') — propAt не показывает пропсы сквозь стены
+   *  (плейтест: наводка на клавиатуру за стеной отвечала «ОГОНЬ LV3 — ГОРИТ»). */
+  private walls: { min: [number, number, number]; max: [number, number, number] }[] = []
 
   private constructor(private scene: Scene) {
     const mk = (name: string, diffuse: [number, number, number], emissive: [number, number, number]): StandardMaterial => {
@@ -270,6 +273,9 @@ export class PropsView {
           break
       }
     }
+    view.walls = map.colliders
+      .filter((c) => c.kind === 'wall')
+      .map((c) => ({ min: c.min, max: c.max }))
     view.rebuildMini()
     return view
   }
@@ -359,18 +365,18 @@ export class PropsView {
       [cols[0], rows[2]], [cols[1], rows[2]], [cols[2], rows[2]],
       [cols[1], rows[3]],
     ]
-    // Точки — со стороны КОМНАТЫ (к центру карты), иначе половина клавиатур
-    // смотрит кнопками в стену за подложкой и видна как гладкая плата
-    // (плейтест: «D4/D5 не видно, как будто в стену утоплены»).
+    // Точки — ОТ центра карты (наружу): клавиатуры висят на внешних стенах,
+    // кнопки должны смотреть на игрока, идущего к комнате (плейтест:
+    // «кнопки в другую сторону разверни, не в центр, а от центра»).
     const off = 0.05
     for (let i = 0; i < keys.length; i++) {
       const dot = MeshBuilder.CreateSphere(`prop.${id}.k${i}`, { diameter: dotR * 2, segments: 6 }, this.scene)
       const [dx, dy] = keys[i]
       if (alongZ) {
-        const dz = Math.sign(32 - cz) * off
+        const dz = Math.sign(cz - 32) * off
         dot.position.set(cx + dx, cy + dy, cz + dz)
       } else {
-        const ddx = Math.sign(32 - cx) * off
+        const ddx = Math.sign(cx - 32) * off
         dot.position.set(cx + ddx, cy + dy, cz + dx)
       }
       dot.material = this.mats.led
@@ -808,14 +814,38 @@ export class PropsView {
         boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()}`, min, max })
       }
     }
+    // Клавиатуры код-замков (§16.7): иначе наводка на панель ловила бокс
+    // огня за стеной — у клавиатур вообще не было AABB в этом списке.
+    for (const k of this.codeDoors.values()) {
+      boxes.push({
+        label: `ЗАМОК ${k.door.toUpperCase()} — КОДОВАЯ КЛАВИАТУРА`,
+        min: [k.x - 0.25, k.y + 1.0, k.z - 0.25],
+        max: [k.x + 0.25, k.y + 1.6, k.z + 0.25],
+      })
+    }
     for (const b of boxes) {
       const t = rayBoxAABB(origin, dir, b.min, b.max)
-      if (t !== null && t < bestT) {
-        bestT = t
-        best = b.label
-      }
+      if (t === null || t >= bestT) continue
+      if (this.wallBlocked(origin, dir, t)) continue
+      bestT = t
+      best = b.label
     }
     return best
+  }
+
+  /** Стена между глазом и точкой хита на дистанции tHit? Пропсы висят НА
+   *  стенах (клавиатура на поверхности, дверь в проёме), поэтому хит в толще
+   *  стены или глаз в ней — эта стена не считается заслоном. */
+  private wallBlocked(origin: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, tHit: number): boolean {
+    const hit: [number, number, number] = [origin.x + dir.x * tHit, origin.y + dir.y * tHit, origin.z + dir.z * tHit]
+    const inside = (p: readonly number[], w: { min: [number, number, number]; max: [number, number, number] }): boolean =>
+      p[0] >= w.min[0] && p[0] <= w.max[0] && p[1] >= w.min[1] && p[1] <= w.max[1] && p[2] >= w.min[2] && p[2] <= w.max[2]
+    for (const w of this.walls) {
+      if (inside([origin.x, origin.y, origin.z], w) || inside(hit, w)) continue
+      const t = rayBoxAABB(origin, dir, w.min, w.max)
+      if (t !== null && t > 1e-3 && t < tHit - 1e-3) return true
+    }
+    return false
   }
 
   /** AABB закрытых дверей — автоогонь/LOS клиента не видят врагов за ними. */
