@@ -103,8 +103,8 @@ const PALETTE_PROGS: readonly RunProg[] = [
 /** Шелл-команда данных (§16.2): `data [host] ls|cp|rm …` — клиентский
  *  парсер поверх wire-программ cp/rm; ls рендерится в палитре. */
 const DATA_CMD = 'data'
-type DataSub = 'ls' | 'cp' | 'mv' | 'rm'
-const DATA_SUBS: readonly DataSub[] = ['ls', 'cp', 'mv', 'rm']
+type DataSub = 'ls' | 'cp' | 'mv' | 'rm' | 'decrypt'
+const DATA_SUBS: readonly DataSub[] = ['ls', 'cp', 'mv', 'rm', 'decrypt']
 
 /** Короткие алиасы kind для фильтра палитры: /term, /cam (ГДД §13.3). */
 const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
@@ -979,7 +979,7 @@ export class HackView {
         this.execDataLs(host ?? this.dataCtxHost(), pal.input.value.trim())
         return
       }
-      this.toast('ПОДКОМАНДА: LS / CP / RM — TAB ПОКАЖЕТ СПИСОК')
+      this.toast('ПОДКОМАНДА: LS / CP / MV / RM / DECRYPT — TAB ПОКАЖЕТ СПИСОК')
       return
     }
     const keyTok = a[i + 1]
@@ -1018,8 +1018,9 @@ export class HackView {
     const name = at >= 0 ? keyTok.slice(0, at) : keyTok
     const src = this.resolveDataSrc(name, at >= 0 ? this.dataHostAt(keyTok.slice(at + 1)) : host)
     if (src === null) return
-    if (sub === 'rm') {
-      this.sendData('rm', src.host, src.key, null)
+    if (sub === 'rm' || sub === 'decrypt') {
+      // rm и decrypt — одноаргументные: приёмника нет (§16.2/§16.4)
+      this.sendData(sub, src.host, src.key, null)
       this.pushHistoryClose(pal.input.value.trim())
       return
     }
@@ -1042,10 +1043,15 @@ export class HackView {
 
   /** Отправка cp/mv/rm + тост (короткий путь для палитры, дерева и кнопок).
    *  cp/mv — анимированный тост-прогресс (§16.2), живёт до финиша/отмены. */
-  private sendData(sub: 'cp' | 'mv' | 'rm', src: string, key: string, dst: string | null): void {
+  private sendData(sub: 'cp' | 'mv' | 'rm' | 'decrypt', src: string, key: string, dst: string | null): void {
     if (sub === 'rm') {
       this.deps.send({ t: 'run', prog: 'rm', dev: src, data: key })
       this.toast(`RM ${key.toUpperCase()}${src === 'deck' ? ' (ДЕКА)' : ` @${src.toUpperCase()}`}`)
+      return
+    }
+    if (sub === 'decrypt') {
+      // §16.4: джоба decrypt — тот же «хост данных»; тост внутри sendDecrypt
+      this.sendDecrypt(src, key)
       return
     }
     const realDst = dst ?? 'deck'
@@ -1473,6 +1479,18 @@ export class HackView {
         this.closePalette()
         this.sendData('rm', host, it.n, null)
       })
+      if (it.enc) {
+        // §16.4: decrypt прямо из ls-строки (джоба на хосте данных)
+        const dc = el('button', 'dev-link')
+        dc.textContent = '🔓'
+        dc.title = `data decrypt ${it.n} (NPU)`
+        dc.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.closePalette()
+          this.sendDecrypt(host, it.n)
+        })
+        row.append(dc)
+      }
       row.append(cp, mv, rm)
       list.append(row)
     }
@@ -1545,7 +1563,7 @@ export class HackView {
 
   /** Кандидаты-подкоманды data (§16.2). */
   private dataSubCands(q: string, subs: readonly DataSub[] = DATA_SUBS): PalCand[] {
-    const hints: Record<DataSub, string> = { ls: 'ЛИСТИНГ', cp: 'КОПИЯ', mv: 'ПЕРЕНОС', rm: 'УДАЛИТЬ' }
+    const hints: Record<DataSub, string> = { ls: 'ЛИСТИНГ', cp: 'КОПИЯ', mv: 'ПЕРЕНОС', rm: 'УДАЛИТЬ', decrypt: 'NPU-РАСШИФРОВКА' }
     return subs
       .filter((s) => s.startsWith(q) || q === '')
       .map((s) => ({ kind: 'sub' as const, text: s, label: s.toUpperCase(), hint: hints[s] }))
@@ -1649,7 +1667,7 @@ export class HackView {
     if (sub === 'ls') return this.dataHostCands(q, false) // data ls [host]
     const keyTok = prev[i + 1]
     if (keyTok === undefined) return this.dataKeyCands(q, host)
-    if (sub === 'rm') return []
+    if (sub === 'rm' || sub === 'decrypt') return []
     const src = this.dataSrcOf(keyTok, host)
     return this.dataHostCands(q, true).filter((c) => c.dev !== src)
   }
@@ -1668,7 +1686,7 @@ export class HackView {
       dev: host,
       data: it.n,
       label: `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code !== undefined ? ` код ${it.code}` : ''}`,
-      hint: 'CP/MV/RM',
+      hint: 'CP/MV/RM' + (it.enc ? '/🔓' : ''),
     }))
     if (this.paletteSel >= items.length) this.paletteSel = items.length - 1
     pal.list.replaceChildren()
@@ -1770,7 +1788,7 @@ export class HackView {
           if (p.startsWith(dq)) cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
         }
         if (dq === '' || DATA_CMD.startsWith(dq)) {
-          cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ДАННЫЕ LS/CP/MV/RM' })
+          cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ДАННЫЕ LS/CP/MV/RM/🔓' })
         }
         if (dq === '' || 'decrypt'.startsWith(dq)) {
           cands.push({ kind: 'decryptcmd', text: 'decrypt', label: 'DECRYPT', hint: 'КЛЮЧ — NPU-ДЖОБА' })
@@ -1823,11 +1841,14 @@ export class HackView {
           })
         }
       } else if (this.paletteTok === 1) {
-        cands.push(...this.dataSubCands(pq, ['cp', 'mv', 'rm']))
+        cands.push(...this.dataSubCands(pq, ['cp', 'mv', 'rm', 'decrypt']))
       } else {
+        // decrypt — одноаргументная: приёмника нет, ключ уже дан
         const qq = (tokens[2] ?? '').toLowerCase()
         const src = this.dataSrcOf(dq, null)
-        cands.push(...this.dataHostCands(qq, true).filter((c) => c.dev !== src))
+        if (tokens[1]?.toLowerCase() !== 'decrypt') {
+          cands.push(...this.dataHostCands(qq, true).filter((c) => c.dev !== src))
+        }
       }
     } else if (progFirst) {
       // Второй токен (порядок «prog dev»): список целей с владельцем.
@@ -1856,7 +1877,7 @@ export class HackView {
       }
       if (pq === '' || DATA_CMD.startsWith(pq)) {
         const n = dev !== undefined ? this.dataHostItems(dev.id).length : this.deckData.length
-        cands.push({ kind: 'datacmd', text: DATA_CMD, dev: dev?.id, label: 'DATA', hint: n > 0 ? `ДАННЫЕ (${n})` : 'ДАННЫЕ LS/CP/MV/RM' })
+        cands.push({ kind: 'datacmd', text: DATA_CMD, dev: dev?.id, label: 'DATA', hint: n > 0 ? `ДАННЫЕ (${n})` : 'ДАННЫЕ LS/CP/MV/RM/🔓' })
       }
     }
     this.paletteCands = cands
@@ -2029,13 +2050,14 @@ export class HackView {
         return
       }
     }
-    // reverse-форма (§16.2): item активного таба + cp/rm. Гвард — точное
-    // имя item, иначе «cam1 cp» даст тост про данные до тоста про программу.
-    if ((t1 === 'cp' || t1 === 'mv' || t1 === 'rm') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
+    // reverse-форма (§16.2/§16.4): item активного таба + cp/rm/decrypt.
+    // Гвард — точное имя item, иначе «cam1 cp» даст тост про данные до тоста
+    // про программу.
+    if ((t1 === 'cp' || t1 === 'mv' || t1 === 'rm' || t1 === 'decrypt') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
       const src = this.resolveDataSrc((finalTokens[0] ?? '').toLowerCase(), null)
       if (src !== null) {
-        if (t1 === 'rm') {
-          this.sendData('rm', src.host, src.key, null)
+        if (t1 === 'rm' || t1 === 'decrypt') {
+          this.sendData(t1, src.host, src.key, null)
           this.pushHistoryClose(raw)
           return
         }
