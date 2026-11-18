@@ -1003,18 +1003,11 @@ func (w *world) doorKeyTick() {
 		return
 	}
 	name := doorKeyName(w.now(), gen)
-	// Грейс ровно одна ротация: SRV1 держит текущее + предыдущее поколение,
-	// более старые убираются (иначе 60 МБ × поколения переполняют MEM 512 —
-	// плейтест: «ключи просто новые появляются… больше, чем памяти»).
-	keep := map[string]bool{w.doorKeyName: true, name: true}
-	kept := srv.items[:0]
-	for _, it := range srv.items {
-		if strings.HasPrefix(it.Name, "door_key") && !keep[it.Name] {
-			continue
-		}
-		kept = append(kept, it)
-	}
-	srv.items = kept
+	// Решение владельца (плейтест 2026-11-18): старые поколения НЕ удаляем —
+	// за 10-минутный матч их максимум 6 × 60 = 360 МБ ≤ MEM 512. Хакер, не
+	// вскрывший SRV1, не знает, какой ключ валиден (грейс держит только
+	// текущий и предыдущий код) — неоднозначность intentional. Чистка — при
+	// старте нового матча (resetDoorKey): именно там был настоящий баг.
 	srv.items = append(srv.items, dataItem{Name: name, MB: 60, Enc: true})
 	// грейс: предыдущее поколение валидно ещё одну ротацию (§16.7)
 	w.doorKeyPrevCode = w.doorKeyCode
