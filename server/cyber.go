@@ -1433,19 +1433,23 @@ func (w *world) handleCtrl(pl *player, msg message) {
 // «N/4 цифр на месте», журнал d3, alert владельцу агрегированно.
 func (w *world) handleEnter(pl *player, msg message) {
 	devID := str(msg, "dev")
-	dev, ok := w.cyber.devices[devID]
+	at, ok := w.cyber.devices[devID]
 	if !ok {
 		return
 	}
-	if dev.kind == "keypad" {
-		// §16.7: код вводится на клавиатуре рядом с дверью — дальше всё по
-		// двери, но дистанция проверяется от клавиатуры (физический ввод).
-		devID = dev.keypadFor
-		dev = w.cyber.devices[devID]
+	// §16.7: код вводится на клавиатуре рядом с дверью. Дистанция — до
+	// КЛАВИАТУРЫ (это физический ввод; от створки она в 2.5+ м — плейтест:
+	// «подошёл к D5, 0000 → нет ответа»: too_far от двери глотался).
+	dev := at
+	if at.kind == "keypad" {
+		if at.keypadFor == "" {
+			return
+		}
+		dev = w.cyber.devices[at.keypadFor]
 		if dev == nil || dev.kind != "door" {
 			return
 		}
-	} else if dev.kind != "door" {
+	} else if at.kind != "door" {
 		return
 	}
 	// §16.7: код общий для всех запертых дверей хранилища (d3–d6) — один
@@ -1453,10 +1457,10 @@ func (w *world) handleEnter(pl *player, msg message) {
 	if !pl.alive || pl.jacked {
 		return // клавиатура — физическая, из деки не вводится
 	}
-	dp := dev.pos.sub(pl.pos)
+	dp := at.pos.sub(pl.pos)
 	dp[1] = 0
 	if dp.length() > jackTerminalRadius+0.5 {
-		w.denied(pl, "too_far", "enter", devID)
+		w.dataDenied(pl, "too_far", "enter", "")
 		return
 	}
 	now := w.now()

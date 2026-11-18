@@ -461,6 +461,12 @@ const sock = new GameSocket({
         break
       }
       case 'denied':
+        // §16.7: отказ ввода кода (too_far и пр.) — в пад, а не в никуда.
+        if (codePad !== null && msg.prog === 'enter') {
+          codePad.status.textContent = msg.reason === 'too_far' ? 'СЛИШКОМ ДАЛЕКО ОТ КЛАВИАТУРЫ' : `ОТКАЗ: ${msg.reason}`
+          codePad.status.className = 'codepad-status bad'
+          break
+        }
         // enemy_team (§12.5, ред. 2026-11-17) приходит ДО джек-ина — деки ещё
         // нет, hackview.onDenied молчит; предупреждение — на HUD.
         if (msg.reason === 'enemy_team') {
