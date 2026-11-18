@@ -140,7 +140,7 @@ function openCodePad(dev: string, kp: string): void {
         status.textContent = 'НЕТ ОТВЕТА — ПОВТОРИ'
         status.className = 'codepad-status bad'
       }
-    }, 3000)
+    }, 4000)
   }
   const press = (k: string): void => {
     if (k === 'C') {
@@ -463,7 +463,7 @@ const sock = new GameSocket({
         break
       case 'code': {
         // §16.7: итог ввода кода на клавиатуре d3; match=-1 — анти-флуд.
-        if (codePad !== null && msg.dev === codePad.dev) {
+        if (codePad !== null && (msg.dev === codePad.kp || msg.dev === codePad.dev)) {
           if (msg.match === -1) {
             codePad.status.textContent = 'СЛИШКОМ ЧАСТО — ПОДОЖДИ 2 С'
             codePad.status.className = 'codepad-status bad'

@@ -1460,7 +1460,9 @@ func (w *world) handleEnter(pl *player, msg message) {
 	// §16.7: код общий для всех запертых дверей хранилища (d3–d6) — один
 	// door_key; идея на будущее — разные коды внутри дубликатов door_key.
 	if !pl.alive || pl.jacked {
-		return // клавиатура — физическая, из деки не вводится
+		// всегда отвечаем — молчание вешает панель на «ПРОВЕРКА…»
+		w.dataDenied(pl, "not_jacked", "enter", "")
+		return
 	}
 	dp := at.pos.sub(pl.pos)
 	dp[1] = 0
