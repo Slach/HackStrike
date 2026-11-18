@@ -788,6 +788,33 @@
         letter-spacing: 1px;
       }
 
+      /* код, узнанный командой (§16.4 codes → HUD «КОД D3: 4731»): постоянная
+         зелёная строка над hudWarn — видна и в бою, и в деке до конца матча */
+      #hudCode {
+        position: absolute;
+        bottom: 92px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 6px 18px;
+        background: rgba(4, 26, 14, 0.85);
+        border: 1px solid rgba(55, 255, 155, 0.55);
+        border-radius: 6px;
+        color: #7dff9e;
+        font-size: 14px;
+        letter-spacing: 3px;
+        text-shadow: 0 0 10px rgba(55, 255, 155, 0.5);
+        box-shadow: 0 0 18px rgba(55, 255, 155, 0.2);
+        pointer-events: none;
+        z-index: 6;
+        white-space: nowrap;
+      }
+      body.touch #hudCode {
+        bottom: calc(196px + env(safe-area-inset-bottom));
+        font-size: 11px;
+        padding: 4px 10px;
+        letter-spacing: 1px;
+      }
+
       /* FPS-элементы прячутся, пока хакер в деке (тело стоит, прицел не нужен) */
       body.hackmode #crosshair,
       body.hackmode #scope,
@@ -2667,6 +2694,7 @@
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="jackinHint" class="hidden"></div>
     <div id="hudWarn" class="hidden"></div>
+    <div id="hudCode" class="hidden"></div>
 
     <div id="hackview" class="hidden"></div>
 

@@ -437,6 +437,17 @@ const sock = new GameSocket({
         break
       case 'matchend':
         handleEnd(msg)
+        hud.setDoorCode(null) // новый матч — коды перегенерированы (§16.4)
+        break
+      case 'job':
+        // §16.9 job: прогресс SRV-decrypt команде (1 Гц, в т.ч. после
+        // джек-аута/смерти запустившего) — карточка прогресса в hackview.
+        hackview.onJob(msg)
+        break
+      case 'codes':
+        // §16.9 codes: код, узнанный командой через decrypt, — навсегда
+        // в рамках матча. HUD «КОД D3: 4731».
+        if (msg.door !== undefined) hud.setDoorCode(msg.door)
         break
       case 'jackin':
         hackviewOn(msg)

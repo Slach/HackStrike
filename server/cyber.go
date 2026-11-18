@@ -25,6 +25,12 @@ const (
 	deckRAM = 4   // слота программ
 	deckMEM = 256 // §16.1: MEM деки (оба ключа влезают)
 
+	// decrypt-джобы (§16.4): дека NPU ×1, SRV NPU ×3. Честная очередь:
+	// N джоб на хосте = каждая ×1/N (devJobTick / cyberTick).
+	deckDecryptMbps = 2.0
+	srvDecryptMbps  = 6.0
+
+	jobReportEvery = tickRate // прогресс SRV-decrypt команде 1 Гц (§16.9 job)
 	portscanWork  = 2.0 // с работы при полной CPU-доле (§12.4)
 	vulnscanWork  = 3.0
 	trojanWork    = 2.0
@@ -121,6 +127,19 @@ type dataItem struct {
 	Code string `json:"code,omitempty"`
 }
 
+// devJob — джоба decrypt на хосте (§16.4): «либо прошло, либо нет»,
+// прогресс в МБ. Живёт на хосте: переживает джек-аут и смерть запустившего,
+// результат падает в MEM хоста (перехват, §16.1). team запустившего —
+// константа матча: job/codes уходят команде даже после его смерти.
+type devJob struct {
+	id       int
+	data     string
+	mb       int
+	by       uint64
+	team     int
+	progress float64
+}
+
 // memCapacityByKind — MEM-ёмкость хоста по типу (§16.1, МБ).
 func memCapacityByKind(kind string) int {
 	switch kind {
@@ -155,6 +174,11 @@ type device struct {
 	// cp в этот хост).
 	mem   int
 	items []dataItem
+
+	// jobs — decrypt-джобы хоста (§16.4): SRV-джоба живёт на хосте,
+	// смена владельца mid-job её не отменяет (результат достанется новому
+	// владельцу — перехват).
+	jobs []*devJob
 
 	owner       uint64          // владелец trojan (0 = нейтральное)
 	open        bool            // дверь/газ (§14.2): стартует закрытой
@@ -775,11 +799,17 @@ func (w *world) fireWatchers(dev *device, who *player, ev, prog string) {
 	if len(dev.watcherBy) == 0 {
 		return
 	}
+	// who может быть nil (финиш SRV-джобы после смерти/выхода запустившего,
+	// §16.4) — события с whoID=0.
+	var whoID uint64
+	if who != nil {
+		whoID = who.id
+	}
 	// Журнал — история устройства, пишется независимо от живости хозяев
 	// (в т.ч. собственные события, §13.1).
 	w.logWatcherEvent(dev, ev, who, prog)
 	for ownerID := range dev.watcherBy {
-		if ownerID == who.id {
+		if ownerID == whoID {
 			continue
 		}
 		owner, ok := w.players[ownerID]
@@ -797,7 +827,11 @@ func (w *world) logWatcherEvent(dev *device, ev string, who *player, prog string
 	if len(dev.watcherBy) == 0 {
 		return
 	}
-	dev.log = append(dev.log, logEntry{Tick: w.tick, Ev: ev, Who: who.id, Prog: prog})
+	var whoID uint64
+	if who != nil {
+		whoID = who.id
+	}
+	dev.log = append(dev.log, logEntry{Tick: w.tick, Ev: ev, Who: whoID, Prog: prog})
 	if len(dev.log) > watcherLogCap {
 		dev.log = dev.log[len(dev.log)-watcherLogCap:]
 	}
@@ -806,7 +840,11 @@ func (w *world) logWatcherEvent(dev *device, ev string, who *player, prog string
 // sendWatcherAlert — alert хозяину watcher'а (relay=false) или союзнику
 // (relay=true). ev/prog — контекст события; prog omitempty.
 func (w *world) sendWatcherAlert(to *player, dev *device, who *player, ev, prog string, relay bool) {
-	m := message{"t": "alert", "dev": dev.id, "who": who.id, "src": "watcher", "ev": ev}
+	var whoID uint64
+	if who != nil {
+		whoID = who.id
+	}
+	m := message{"t": "alert", "dev": dev.id, "who": whoID, "src": "watcher", "ev": ev}
 	if prog != "" {
 		m["prog"] = prog
 	}
@@ -820,8 +858,12 @@ func (w *world) sendWatcherAlert(to *player, dev *device, who *player, ev, prog 
 // (§13.1 №4): та же команда, кроме самого хозяина и актора события. Мёртвым
 // не шлём.
 func (w *world) relayWatcherAllies(owner *player, dev *device, who *player, ev, prog string) {
+	var whoID uint64
+	if who != nil {
+		whoID = who.id
+	}
 	for _, ally := range w.players {
-		if ally.id == owner.id || ally.id == who.id || !ally.alive || ally.team != owner.team {
+		if ally.id == owner.id || ally.id == whoID || !ally.alive || ally.team != owner.team {
 			continue
 		}
 		w.sendWatcherAlert(ally, dev, who, ev, prog, true)
@@ -1187,6 +1229,10 @@ func (w *world) handleRun(pl *player, msg message) {
 		w.handleRm(pl, str(msg, "dev"), str(msg, "data"))
 		return
 	}
+	if prog == "decrypt" {
+		w.handleDecrypt(pl, str(msg, "dev"), str(msg, "data"))
+		return
+	}
 	work := progWork(prog)
 	if work == 0 {
 		return // неизвестная программа — мусор в протоколе, игнорируем
@@ -1400,6 +1446,190 @@ func (w *world) handleRm(pl *player, devID, dataName string) {
 	pl.progs = append(pl.progs, p)
 	pl.nextProgID++
 	log.Printf("room: player %d run rm %s %s", pl.id, devID, dataName)
+}
+
+// handleDecrypt — §16.4: {"t":"run","prog":"decrypt","dev":host,"data":name}.
+// Джоба бежит НА ХОСТЕ, где лежат данные; хост обязан иметь NPU, иначе
+// denied npu («НУЖЕН NPU»). Скорость: дека 2 МБ/с (NPU ×1), SRV 6 МБ/с
+// (NPU ×3); честная очередь — N джоб на хосте = каждая ×1/N.
+// Результат «либо прошло, либо нет»: item → enc:false + код команде
+// навсегда (codes, HUD «КОД D3»). Джоба на деке — процесс деки (RAM-слоты,
+// отменяется джек-аутом/смертью); джоба на SRV живёт на хосте (§16.4).
+func (w *world) handleDecrypt(pl *player, hostID, dataName string) {
+	if dataName == "" {
+		w.dataDenied(pl, "too_far", "decrypt", dataName)
+		return
+	}
+	if hostID == "deck" {
+		var it dataItem
+		for _, x := range pl.items {
+			if x.Name == dataName {
+				it = x
+			}
+		}
+		if it.Name == "" {
+			w.dataDenied(pl, "too_far", "decrypt", dataName)
+			return
+		}
+		if !it.Enc {
+			w.dataDenied(pl, "dup", "decrypt", dataName) // уже расшифрован
+			return
+		}
+		if len(pl.progs) >= deckRAM {
+			w.denied(pl, "ram_full", "decrypt", dataName)
+			return
+		}
+		pl.progs = append(pl.progs, &program{
+			id: pl.nextProgID, prog: "decrypt", dev: "deck", data: dataName,
+			work: float64(it.MB) / deckDecryptMbps, mb: it.MB, mbps: deckDecryptMbps,
+		})
+		pl.nextProgID++
+		log.Printf("room: player %d run decrypt %s on deck", pl.id, dataName)
+		return
+	}
+	dev, ok := w.cyber.devices[hostID]
+	if !ok || !pl.scanned[hostID] || !w.reachableFor(pl.jackHost.id, pl)[hostID] {
+		w.dataDenied(pl, "too_far", "decrypt", dataName)
+		return
+	}
+	// Доступ к данным хоста = владение trojan'ом (как cp src, §16.1).
+	if dev.owner != pl.id {
+		w.dataDenied(pl, "not_owner", "decrypt", dataName)
+		return
+	}
+	if dev.npu <= 0 {
+		w.dataDenied(pl, "npu", "decrypt", dataName)
+		return
+	}
+	var it dataItem
+	found := false
+	for _, x := range dev.items {
+		if x.Name == dataName {
+			it, found = x, true
+		}
+	}
+	if !found {
+		w.dataDenied(pl, "too_far", "decrypt", dataName)
+		return
+	}
+	if !it.Enc {
+		w.dataDenied(pl, "dup", "decrypt", dataName)
+		return
+	}
+	for _, j := range dev.jobs {
+		if j.data == dataName {
+			w.dataDenied(pl, "dup", "decrypt", dataName) // джоба уже летит
+			return
+		}
+	}
+	dev.jobs = append(dev.jobs, &devJob{id: pl.nextProgID, data: dataName, mb: it.MB, by: pl.id, team: pl.team})
+	pl.nextProgID++
+	// Старт джобы палевен (§16.4): watcher'ы хоста триггерятся, команда
+	// сразу видит прогресс (job, prog=0).
+	w.fireWatchers(dev, pl, "job", "decrypt")
+	w.sendJob(dev.jobs[len(dev.jobs)-1], dev)
+	log.Printf("room: player %d run decrypt %s on %s", pl.id, dataName, hostID)
+}
+
+// devJobTick — тик SRV-джоб (§16.4): живут на хосте, честная NPU-очередь
+// (N джоб = каждая ×1/N от srvDecryptMbps). Смена владельца хоста mid-job
+// джобу НЕ отменяет — результат достанется новому владельцу (перехват).
+// Прогресс — команде запустившего 1 Гц (job, §16.9).
+func (w *world) devJobTick() {
+	for _, dev := range w.cyber.devices {
+		if len(dev.jobs) == 0 {
+			continue
+		}
+		rate := srvDecryptMbps / float64(len(dev.jobs))
+		var finished []*devJob
+		for _, j := range dev.jobs {
+			j.progress += rate * tickDT
+			if w.tick%jobReportEvery == 0 {
+				w.sendJob(j, dev)
+			}
+			if j.progress >= float64(j.mb) {
+				finished = append(finished, j)
+			}
+		}
+		for _, j := range finished {
+			for i, q := range dev.jobs {
+				if q == j {
+					dev.jobs = append(dev.jobs[:i], dev.jobs[i+1:]...)
+					break
+				}
+			}
+			w.finishDecrypt(dev, j)
+		}
+	}
+}
+
+// finishDecrypt — «либо прошло, либо нет» (§16.4): item на хосте →
+// enc:false + код; код команда знает навсегда (codes → HUD «КОД D3»).
+// Если item к финишу rm-нут — джоба потеряна зря (прогресс не персистит).
+func (w *world) finishDecrypt(dev *device, j *devJob) {
+	for i := range dev.items {
+		if dev.items[i].Name != j.data {
+			continue
+		}
+		dev.items[i].Enc = false
+		dev.items[i].Code = w.decryptCodeOf(j.data)
+		if dev.items[i].Code != "" {
+			if w.doorCodes == nil {
+				w.doorCodes = map[int]string{}
+			}
+			w.doorCodes[j.team] = dev.items[i].Code
+		}
+		w.sendCodes(j.team)
+		break
+	}
+	w.resendScanFor(dev.id)
+	// Финиш тоже watcher-событие (§16.4); запустивший мог умереть/выйти —
+	// кто жив, тот и получит alert (who=nil допустим).
+	var who *player
+	if p, ok := w.players[j.by]; ok {
+		who = p
+	}
+	w.fireWatchers(dev, who, "job", "decrypt")
+	w.sendJob(j, dev)
+	log.Printf("room: decrypt %s on %s finished (team %d)", j.data, dev.id, j.team)
+}
+
+// decryptCodeOf — код внутри item'а: door_key несёт код своего поколения
+// (§16.5: FNV-1a от имени + старта матча). safe_key появится с NETSAFE
+// (итерация 5); прочие данные кода не имеют.
+func (w *world) decryptCodeOf(name string) string {
+	if strings.HasPrefix(name, "door_key") {
+		return w.doorKeyCodeNow(name)
+	}
+	return ""
+}
+
+// sendJob — прогресс SRV-decrypt команде запустившего (§16.9 job 1 Гц,
+// в т.ч. после джек-аута/смерти запустившего).
+func (w *world) sendJob(j *devJob, dev *device) {
+	prog := j.progress / float64(j.mb)
+	if prog > 1 {
+		prog = 1
+	}
+	for _, p := range w.players {
+		if p.team == j.team {
+			w.sendTo(p.id, message{"t": "job", "dev": dev.id, "data": j.data, "prog": round3(prog)})
+		}
+	}
+}
+
+// sendCodes — код, узнанный командой (§16.9 codes): HUD «КОД D3: 4731».
+// Уходит всей команде при расшифровке и каждому вошедшему позже (addPlayer).
+func (w *world) sendCodes(team int) {
+	code := w.doorCodes[team]
+	if code == "" {
+		return
+	}
+	for _, p := range w.players {
+		if p.team == team {
+			w.sendTo(p.id, message{"t": "codes", "door": code})
+		}
+	}
 }
 
 // handleCtrl — {"t":"ctrl"} (§12.5): toggle двери; §14.2 — тот же контроллер
@@ -1794,6 +2024,26 @@ func (w *world) completeProgram(pl *player, p *program) {
 		if src := w.cyber.devices[p.dev]; src != nil {
 			w.fireWatchers(src, pl, "job", p.prog)
 		}
+	case "decrypt":
+		// §16.4: джоба на деке — результат в MEM деки: item → enc:false +
+		// код; код команда знает навсегда (codes → HUD «КОД D3»).
+		// Отмена джек-аутом/смертью случилась бы раньше (jackout: progs=nil).
+		for i := range pl.items {
+			if pl.items[i].Name != p.data {
+				continue
+			}
+			pl.items[i].Enc = false
+			pl.items[i].Code = w.decryptCodeOf(p.data)
+			if pl.items[i].Code != "" {
+				if w.doorCodes == nil {
+					w.doorCodes = map[int]string{}
+				}
+				w.doorCodes[pl.team] = pl.items[i].Code
+				w.sendCodes(pl.team)
+			}
+			break
+		}
+		log.Printf("room: decrypt %s on deck finished (team %d)", p.data, pl.team)
 	case "rm":
 		// §16.2: item удаляется (chaff: слить → rm → слить снова).
 		if p.dev == "deck" {
@@ -2103,6 +2353,13 @@ func (w *world) deckStatusTick() {
 			if pr.prog == "cp" || pr.prog == "mv" {
 				// §16.9: остаток МБ и текущая скорость (доля канала × номинал)
 				dp.Dst = pr.dst
+				dp.Data = pr.data
+				dp.MbLeft = int(math.Ceil(float64(pr.mb) * (1 - pr.progress/pr.work)))
+				dp.Mbps = round3(pr.mbps * f / float64(n))
+			}
+			if pr.prog == "decrypt" {
+				// §16.4: decrypt-джоба деки — тот же МБ-прогресс (NPU-доля
+				// вместо канала: честная очередь всех процессов деки)
 				dp.Data = pr.data
 				dp.MbLeft = int(math.Ceil(float64(pr.mb) * (1 - pr.progress/pr.work)))
 				dp.Mbps = round3(pr.mbps * f / float64(n))

@@ -50,6 +50,11 @@ type world struct {
 	// doorKeyNameLocked — тестовый хук: не сбрасывать поколение на старте матча.
 	doorKeyNameLocked bool
 
+	// doorCodes — коды, УЗНАННЫЕ командой через decrypt (§16.4: «команда
+	// получает код навсегда»): HUD «КОД D3», переживает смерть игрока,
+	// отсылается вошедшим позже (addPlayer). Чистится на новом матче.
+	doorCodes map[int]string
+
 	// now инъектится для тестов; в проде time.Now.
 	now func() time.Time
 	out []outMsg
@@ -165,10 +170,12 @@ func (w *world) startMatchIfNeeded() {
 		w.matchActive = true
 		w.matchEndsAt = w.now().Add(w.matchLen)
 		// §16.5: новый раунд — новое поколение door_key, старые поколения
-		// (SRV1 и деки) из прошлого матча не переезжают.
+		// (SRV1 и деки) из прошлого матча не переезжают. Коды, узнанные
+		// командами (§16.4), тоже матч-специфичны.
 		if !w.doorKeyNameLocked {
 			w.resetDoorKey()
 		}
+		w.doorCodes = map[int]string{}
 	}
 }
 
@@ -269,6 +276,12 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 	w.players[id] = pl
 	w.startMatchIfNeeded()
 	w.sendTo(id, message{"t": "welcome", "id": id, "team": pl.team, "tick": w.tick})
+	// §16.4: код, узнанный командой (decrypt → HUD «КОД D3»), knows навсегда
+	// в рамках матча — вошедшему позже досылаем (вор убил носителя — код
+	// у команды не пропадает).
+	if code := w.doorCodes[pl.team]; code != "" {
+		w.sendTo(id, message{"t": "codes", "door": code})
+	}
 	// Death overlay is drawn only by the private `death` message; при возврате
 	// из сессии мёртвым оно уже упущено — без досыла игрок застревает с 0 HP
 	// без кнопки респавна (баг-репорт владельца 2026-11-17, ГДД §9.2/§11).
@@ -414,6 +427,7 @@ func (w *world) simulateTick() {
 	}
 	w.shieldRegenTick() // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
 	w.doorKeyTick()     // §16.5: ротация door_key на SRV1 (T=120 с)
+	w.devJobTick()      // §16.4: SRV-decrypt джобы (живут на хосте, job 1 Гц)
 	w.gasTick(tickDT)   // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
 	w.fireTick(tickDT)  // §14.6.1: DoT огня (сразу за газом, тот же порядок)
 	w.matchCheck()

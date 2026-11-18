@@ -393,6 +393,7 @@ export class Hud {
     snaps: byId('snaps'),
     jackinHint: byId('jackinHint'),
     hudWarn: byId('hudWarn'),
+    hudCode: byId('hudCode'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -828,6 +829,20 @@ export class Hud {
     el.classList.remove('hidden')
     if (this.warnTimer !== undefined) clearTimeout(this.warnTimer)
     this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
+  }
+
+  /** Код, узнанный командой (§16.4/§16.9 codes → HUD «КОД D3: 4731»):
+   *  постоянная строка — команда знает код до конца матча. null — скрыть
+   *  (новый матч: коды перегенерированы). */
+  setDoorCode(code: string | null): void {
+    const el = this.el.hudCode
+    if (el === null) return
+    if (code === null) {
+      el.classList.add('hidden')
+      return
+    }
+    el.textContent = `КОД D3: ${code}`
+    el.classList.remove('hidden')
   }
 
   /** Текущее оружие (хакер: пистолет) — рядом с HP. */

@@ -3000,3 +3000,196 @@ func TestCodeLock(t *testing.T) {
 		t.Fatalf("valid code must unlock+open d3: okMsg=%v locked=%v open=%v", okMsg, d3.locked, d3.open)
 	}
 }
+
+// --- §16.4 decrypt ------------------------------------------------------------
+
+// decryptWorld — мир для decrypt-тестов: cyberTestWorld + SRV-станция на s1
+// (cable 20). seedData сеет door_key на SRV1 сам (§16.5).
+func decryptWorld(t *testing.T) (*world, *player, *time.Time) {
+	t.Helper()
+	const j = `{
+	 "name":"cyber","bounds":[40,8,40],
+	 "colliders":[
+	  {"min":[0,0,0],"max":[40,1,40],"kind":"floor"},
+	  {"min":[0,1,37],"max":[0.7,1.5,39],"kind":"stair"}
+	 ],
+	 "spawns":{"0":[[5,1,5]],"1":[[35,1,35]]},
+	 "props":[
+	  {"kind":"terminal","id":"t1","pos":[5,1,8]},
+	  {"kind":"terminal","id":"t2","pos":[35,1,32]},
+	  {"kind":"radio","id":"r1","pos":[20,1,5],"radius":8},
+	  {"kind":"switch","id":"s1","pos":[5,1,15]},
+	  {"kind":"switch","id":"s2","pos":[35,1,25]},
+	  {"kind":"srv","id":"srv1","pos":[20,1,33]},
+	  {"kind":"door","id":"d1","pos":[20,1,20],"size":[4,3,0.3],"axis":"x","to":"s1"},
+	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
+	  {"kind":"cable","id":"c2","from":"t2","to":"s2"},
+	  {"kind":"cable","id":"c3","from":"s1","to":"s2","points":[[5,1.15,15],[5,1.15,28],[35,1.15,28],[35,1.15,25]]},
+	  {"kind":"cable","id":"c4","from":"s1","to":"d1"},
+	  {"kind":"cable","id":"c5","from":"s1","to":"srv1","bw":20}
+	 ]}`
+	m, err := parseGameMap([]byte(j))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	w := newWorld(m)
+	clock := time.UnixMilli(1_700_000_000_000)
+	w.now = func() time.Time { return clock }
+	h := w.addPlayer(1, "h1", "hacker", 0)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	// Троян на SRV ставим напрямую (щит — механика vulnscan/trojan, здесь не
+	// тестируется); знания скана — напрямую (топология t1-s1-srv1 тривиальна).
+	w.cyber.devices["srv1"].owner = h.id
+	h.scanned = map[string]bool{"t1": true, "srv1": true}
+	w.takeOut()
+	return w, h, &clock
+}
+
+func hasWire(out []outMsg, to uint64, typ string) bool {
+	for _, m := range out {
+		if m.to == to && m.msg["t"] == typ {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDecryptSrvJob — §16.4: джоба на SRV (NPU ×3 = 6 МБ/с): 60 МБ = 10 с.
+// Результат enc:false + код поколения; codes команде; job-прогресс (старт +
+// 1 Гц); джоба живёт на хосте — переживает джек-аут; смена владельца SRV
+// mid-job джобу не отменяет (перехват).
+func TestDecryptSrvJob(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	srv := w.cyber.devices["srv1"]
+	if len(srv.items) == 0 || !srv.items[0].Enc {
+		t.Fatalf("seedData must leave an encrypted door_key on srv1")
+	}
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": srv.items[0].Name})
+	if len(srv.jobs) != 1 {
+		t.Fatalf("srv job not started")
+	}
+	if out := w.takeOut(); !hasWire(out, h.id, "job") {
+		t.Fatalf("job start must carry an immediate progress message")
+	}
+	// джек-аут запустившего: джоба живёт на хосте
+	w.handleMessage(h, message{"t": "jackout"})
+	if len(srv.jobs) != 1 {
+		t.Fatalf("job must survive jackout (lives on the host)")
+	}
+	// 2 с тика: job 1 Гц виден + смена владельца mid-job не отменяет джобу
+	for i := 0; i < 2*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	srv.owner = 999 // перехват: результат достанется новому владельцу хоста
+	if len(srv.jobs) != 1 {
+		t.Fatalf("owner change mid-job must NOT cancel the job")
+	}
+	for i := 0; i < 9*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	it := srv.items[0]
+	if it.Enc || it.Code == "" || it.Code != w.doorKeyCodeNow(it.Name) {
+		t.Fatalf("item must be decrypted with the generation code, got enc=%v code=%q", it.Enc, it.Code)
+	}
+	out := w.takeOut()
+	if !hasWire(out, h.id, "codes") {
+		t.Fatalf("finished decrypt must send codes to the initiator team")
+	}
+	foundCode := false
+	for _, m := range out {
+		if m.msg["t"] == "codes" && m.msg["door"] == it.Code {
+			foundCode = true
+		}
+	}
+	if !foundCode {
+		t.Fatalf("codes must carry the decrypted door code %q", it.Code)
+	}
+}
+
+// TestDecryptNpuDenied — §16.4: decrypt только на NPU-хостах (дека/SRV);
+// терминал — denied npu («НУЖЕН NPU»).
+func TestDecryptNpuDenied(t *testing.T) {
+	w, h, _ := decryptWorld(t)
+	t1 := w.cyber.devices["t1"]
+	t1.owner = h.id
+	t1.items = []dataItem{{Name: "junk", MB: 10, Enc: true}}
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "t1", "data": "junk"})
+	if !hasDenied(w.takeOut(), h.id, "npu") {
+		t.Fatalf("terminal must be denied npu")
+	}
+}
+
+// TestDecryptDeckJob — §16.4: джоба на деке — процесс деки (NPU ×1, 2 МБ/с:
+// 60 МБ = 30 с), отменяется джек-аутом; результат enc:false + код в MEM деки.
+func TestDecryptDeckJob(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	h.items = append(h.items, dataItem{Name: "door_key", MB: 60, Enc: true})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	p := findProg(h, "decrypt")
+	if p == nil {
+		t.Fatalf("deck decrypt not started")
+	}
+	if p.work != 30 {
+		t.Fatalf("deck decrypt work = %v, want 30 (60 МБ / 2 МБ/с)", p.work)
+	}
+	for i := 0; i < 31*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.progs) != 0 {
+		t.Fatalf("deck job must finish in 30 s")
+	}
+	if len(h.items) != 1 || h.items[0].Enc || h.items[0].Code == "" {
+		t.Fatalf("deck item must be decrypted with code, items=%v", h.items)
+	}
+	out := w.takeOut()
+	if !hasWire(out, h.id, "codes") {
+		t.Fatalf("deck decrypt must send codes to the team")
+	}
+	// уже расшифрованный item — dup (denied)
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	if !hasDenied(w.takeOut(), h.id, "dup") {
+		t.Fatalf("decrypt of a plain (enc:false) item must be denied dup")
+	}
+	// джек-аут отменяет дековую джобу (процесс деки, §16.4)
+	h.items[0].Enc = true
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	for i := 0; i < 2*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	w.handleMessage(h, message{"t": "jackout"})
+	if findProg(h, "decrypt") != nil {
+		t.Fatalf("deck job must die on jackout")
+	}
+}
+
+// TestDecryptNpuQueue — §16.4 честная NPU-очередь: две джобы на SRV = каждая
+// ×0.5 (3 МБ/с): на 10-й секунде ни одна не готова, к 21-й — обе.
+func TestDecryptNpuQueue(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	srv := w.cyber.devices["srv1"]
+	srv.items = append(srv.items, dataItem{Name: "door_key_2", MB: 60, Enc: true})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": srv.items[0].Name})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": "door_key_2"})
+	if len(srv.jobs) != 2 {
+		t.Fatalf("two jobs must queue, got %d", len(srv.jobs))
+	}
+	for i := 0; i < 10*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if srv.items[0].Enc == false || srv.items[1].Enc == false {
+		t.Fatalf("fair queue: 10 s of two jobs (half rate) must not finish either")
+	}
+	for i := 0; i < 11*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if srv.items[0].Enc || srv.items[1].Enc {
+		t.Fatalf("both jobs must finish by 21 s at half rate")
+	}
+}

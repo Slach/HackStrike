@@ -56,6 +56,9 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   // §13.5 (плейтест M4): скан упёрся в чужой фильтр — скан не отменён,
   // но за хостом из dev ничего нового не открыто.
   firewall_scan: 'СКАН УПОРСЯ В FIREWALL',
+  // §16.4: decrypt требует нейромодуля — терминалы/свитчи/двери не умеют.
+  npu: 'НУЖЕН NPU — DECRYPT ТОЛЬКО НА ДЕКЕ ИЛИ SRV',
+  dup: 'УЖЕ ЕСТЬ / УЖЕ РАСШИФРОВАНО',
 }
 
 // Только сетевые устройства: fire (M4 §14.6.1) — не девайс, в деку не попадает
@@ -84,6 +87,7 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   cp: 'CP',
   mv: 'MV',
   rm: 'RM',
+  decrypt: 'DECRYPT',
 }
 
 /** Программы слэш-палитры (ГДД §13.3) — порядок = порядок ряда хоткеев 1..6. */
@@ -116,9 +120,9 @@ const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
 }
 
 /** Кандидат слэш-палитры: устройство, программа, item данных (§16.2),
- *  подкоманда data или сама команда data. */
+ *  подкоманда data, сама команда data или decrypt (§16.4). */
 interface PalCand {
-  kind: 'dev' | 'prog' | 'item' | 'sub' | 'datacmd'
+  kind: 'dev' | 'prog' | 'item' | 'sub' | 'datacmd' | 'decryptcmd'
   /** Что вставляется в токен при автодополнении. */
   text: string
   dev?: string
@@ -274,6 +278,15 @@ export class HackView {
     status: HTMLElement
     missed: number
     seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
+  }[] = []
+  /** SRV-decrypt джобы команде (§16.9 job 1 Гц): карточка прогресса взлома
+   *  на сервере — союзник видит, что идёт decrypt, даже не будучи в сети. */
+  private jobToasts: {
+    dev: string
+    data: string
+    wrap: HTMLElement
+    fill: HTMLElement
+    status: HTMLElement
   }[] = []
   private deckMemUsed = 0
   private deckMemCap = 0
@@ -526,7 +539,7 @@ export class HackView {
     // оптимистичную карточку красным мигающим баром (плейтест: «два
     // прогрессбара» — вторую не плодим); карточки нет (rm или рассинхрон) —
     // создаём готовую красную.
-    if (msg.prog === 'cp' || msg.prog === 'mv' || msg.prog === 'rm') {
+    if (msg.prog === 'cp' || msg.prog === 'mv' || msg.prog === 'rm' || msg.prog === 'decrypt') {
       const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
       const r =
         msg.prog === 'rm'
@@ -547,7 +560,7 @@ export class HackView {
   }
 
   /** Карточка отказа data-операции: бар полный красный, мигает (§16.2). */
-  private denyCard(prog: 'cp' | 'mv' | 'rm', key: string, reason: string): void {
+  private denyCard(prog: 'cp' | 'mv' | 'rm' | 'decrypt', key: string, reason: string): void {
     const wrap = el('div', 'hv-toast hv-cptoast fail')
     const row = el('div', 'cprow')
     row.append(
@@ -1118,6 +1131,51 @@ export class HackView {
       this.cpToasts = this.cpToasts.filter((x) => x !== r)
       this.fadeCard(r.wrap, 2200)
     }
+  }
+
+  /** Отправка decrypt (§16.4): джоба на хосте, где лежат данные. Дековая
+   *  джоба видна в списке процессов деки; SRV-джоба приходит команде через
+   *  job 1 Гц (onJob → карточка прогресса). */
+  private sendDecrypt(src: string, key: string): void {
+    this.deps.send({ t: 'run', prog: 'decrypt', dev: src, data: key })
+    const mb = this.dataHostItems(src).find((it) => it.n === key)?.mb ?? 0
+    this.toast(
+      `DECRYPT ${key.toUpperCase()}${src === 'deck' ? ' · ДЕКА' : ` · ${src.toUpperCase()}`} — ${mb > 0 ? `${mb} МБ` : 'СТАРТ…'} · ${src === 'deck' ? '2 МБ/С' : 'NPU ×3'}`,
+    )
+  }
+
+  /** job 1 Гц (§16.9): прогресс SRV-decrypt — карточка с полосой, как у cp.
+   *  Приходит КОМАНДЕ (и после джек-аута/смерти запустившего); prog=1 —
+   *  «ГОТОВО ✓» (код уже у команды — codes/HUD). */
+  onJob(msg: { dev: string; data: string; prog: number }): void {
+    if (!this._active) return
+    let r = this.jobToasts.find((x) => x.dev === msg.dev && x.data === msg.data)
+    if (r === undefined) {
+      const wrap = el('div', 'hv-toast hv-cptoast')
+      const row = el('div', 'cprow')
+      row.append(
+        txt('span', 'cptitle', `DECRYPT ${msg.data.toUpperCase()}`),
+        txt('span', 'cpdst', `· ${msg.dev.toUpperCase()}`),
+      )
+      const bar = el('div', 'cpbar')
+      const fill = el('div', 'cpbar-fill')
+      fill.style.width = '0%'
+      bar.append(fill)
+      const status = txt('div', 'cpstatus', 'NPU-ОЧЕРЕДЬ…')
+      wrap.append(row, bar, status)
+      this.toasts.append(wrap)
+      r = { dev: msg.dev, data: msg.data, wrap, fill, status }
+      this.jobToasts.push(r)
+    }
+    if (msg.prog >= 1) {
+      r.fill.style.width = '100%'
+      r.status.textContent = 'ГОТОВО ✓ — КОД У КОМАНДЫ'
+      this.jobToasts = this.jobToasts.filter((x) => x !== r)
+      this.fadeCard(r.wrap, 1600)
+      return
+    }
+    r.fill.style.width = `${Math.round(msg.prog * 100)}%`
+    r.status.textContent = `${Math.round(msg.prog * 100)}% · NPU`
   }
 
   private pushHistoryClose(raw: string): void {
@@ -1714,6 +1772,9 @@ export class HackView {
         if (dq === '' || DATA_CMD.startsWith(dq)) {
           cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ДАННЫЕ LS/CP/MV/RM' })
         }
+        if (dq === '' || 'decrypt'.startsWith(dq)) {
+          cands.push({ kind: 'decryptcmd', text: 'decrypt', label: 'DECRYPT', hint: 'КЛЮЧ — NPU-ДЖОБА' })
+        }
         for (const it of revItems) {
           cands.push({
             kind: 'item',
@@ -1736,6 +1797,9 @@ export class HackView {
       }
       if (DATA_CMD.startsWith(dq)) {
         cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ENTER — ЛИСТИНГ ТАБА' })
+      }
+      if ('decrypt'.startsWith(dq)) {
+        cands.push({ kind: 'decryptcmd', text: 'decrypt', label: 'DECRYPT', hint: 'КЛЮЧ — NPU-ДЖОБА' })
       }
     } else if (dataMode) {
       // Аргументы data (§16.2): [host] sub key [dst]. Последний токен 'data'
@@ -1927,6 +1991,35 @@ export class HackView {
     // Команда данных (§16.2): 'data …' / '[host] data …'
     if (t0 === DATA_CMD) {
       this.runDataCmd(finalTokens.slice(1), null)
+      return
+    }
+    // §16.4: 'decrypt <key>[@host]' — джоба на хосте, где лежат данные
+    // (контекст-подсказка как у data: key@host или [key host]).
+    if (t0 === 'decrypt') {
+      const keyTok = (finalTokens[1] ?? '').toLowerCase()
+      if (keyTok === '') {
+        this.toast('УКАЖИ КЛЮЧ — DATA LS ПОКАЖЕТ СПИСОК')
+        return
+      }
+      const at = keyTok.indexOf('@')
+      const name = at >= 0 ? keyTok.slice(0, at) : keyTok
+      const hint =
+        at >= 0
+          ? this.dataHostAt(keyTok.slice(at + 1))
+          : finalTokens[2] !== undefined
+            ? this.dataHostAt(finalTokens[2].toLowerCase())
+            : null
+      const src = this.resolveDataSrc(name, hint)
+      if (src !== null) {
+        this.sendDecrypt(src.host, src.key)
+        this.pushHistoryClose(raw)
+      }
+      return
+    }
+    if (sel !== undefined && sel.kind === 'decryptcmd') {
+      pal.input.value = 'decrypt '
+      this.paletteSel = -1
+      this.updatePalette()
       return
     }
     if (t1 === DATA_CMD) {
@@ -2363,7 +2456,19 @@ export class HackView {
       const dv = el('span', 'dev-v')
       for (const it of d.data) {
         const line = el('div', 'dev-data-row')
-        line.append(txt('span', 'dev-data-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`))
+        line.append(txt('span', 'dev-data-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code !== undefined ? ` код ${it.code}` : ''}`))
+        if (it.enc) {
+          // §16.4: decrypt на хосте (SRV NPU ×3 — 6 МБ/с; без NPU сервер
+          // ответит denied npu «НУЖЕН NPU»)
+          const dc = el('button', 'dev-link')
+          dc.textContent = '🔓'
+          dc.title = `decrypt ${it.n} на хосте (NPU)`
+          dc.addEventListener('click', (e) => {
+            e.stopPropagation()
+            this.sendDecrypt(d.id, it.n)
+          })
+          line.append(dc)
+        }
         const rs = el('button', 'dev-link')
         rs.textContent = '→ ДЕКА'
         rs.addEventListener('click', (e) => {
@@ -2543,6 +2648,16 @@ export class HackView {
       for (const it of this.deckData) {
         const row = el('div', 'hv-prog')
         row.append(txt('span', 'prog-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code ? ` код ${it.code}` : ''}`))
+        if (it.enc) {
+          // §16.4: decrypt на деке (NPU ×1, 2 МБ/с) — джоба в списке процессов
+          const dc = el('button', 'dev-link')
+          dc.textContent = '🔓'
+          dc.title = `decrypt ${it.n} (дека, 2 МБ/с)`
+          dc.addEventListener('click', () => {
+            this.sendDecrypt('deck', it.n)
+          })
+          row.append(dc)
+        }
         const rm = el('button', 'dev-link')
         rm.textContent = '🗑'
         rm.title = `data deck rm ${it.n}`
@@ -2564,8 +2679,8 @@ export class HackView {
       const row = el('div', 'hv-prog')
       const name = `${PROG_LABEL[p.prog] ?? p.prog}${p.dev !== null ? ` → ${p.dev.toUpperCase()}` : ''}`
       row.append(txt('span', 'prog-name', `#${p.id} ${name}`))
-      if ((p.prog === 'cp' || p.prog === 'mv') && p.data !== undefined) {
-        // §16.9: остаток МБ и скорость трансфера
+      if ((p.prog === 'cp' || p.prog === 'mv' || p.prog === 'decrypt') && p.data !== undefined) {
+        // §16.9: остаток МБ и скорость трансфера (decrypt — NPU-доля)
         row.append(txt('span', 'prog-eta', `${p.data} ${p.mbLeft ?? '?'}МБ · ${p.mbps ?? '?'}МБ/с`))
       } else {
         row.append(txt('span', 'prog-eta', `${(p.etaMs / 1000).toFixed(1)}с`))

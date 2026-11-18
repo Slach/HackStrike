@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'cp' | 'mv' | 'rm' // GDD §12.4, §13.1-13.6, §16.2 (cp=копия, mv=перенос)
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'cp' | 'mv' | 'rm' | 'decrypt' // GDD §12.4, §13.1-13.6, §16.2 (cp=копия, mv=перенос), §16.4 decrypt
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -24,7 +24,7 @@ export type ClientMessage =
   | { t: 'ping'; c: number }
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
-  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2: cp/mv/rm — dst/data
+  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2/§16.4: cp/mv/rm — dst/data, decrypt — data (джоба на dev)
   | { t: 'enter'; dev: string; code: string } // §16.7: код на клавиатуре d3
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
@@ -120,9 +120,9 @@ export interface DeckProg {
   dev: string | null
   etaMs: number
   dst?: string // cp/mv: приёмник ("deck" | hostId)
-  data?: string // cp/mv/rm: имя item
-  mbLeft?: number // cp/mv: остаток МБ
-  mbps?: number // cp/mv: текущая скорость МБ/с
+  data?: string // cp/mv/rm/decrypt: имя item
+  mbLeft?: number // cp/mv/decrypt: остаток МБ
+  mbps?: number // cp/mv/decrypt: текущая скорость МБ/с
 }
 
 /** Один item данных в MEM (§16.1). */
@@ -195,6 +195,12 @@ export type ServerMessage =
   | { t: 'cam'; dev: string; seen: CamSeen[] }
   // M3 (GDD §13.1 №3): radar sweep — 1 Hz, only to the living watcher owner.
   | { t: 'radar'; dev: string; who: RadarWho[] }
+  // M5 (GDD §16.9 job): прогресс SRV-decrypt команде запустившего, 1 Гц —
+  // в т.ч. после джек-аута/смерти запустившего (джоба живёт на хосте).
+  | { t: 'job'; dev: string; data: string; prog: number }
+  // M5 (GDD §16.9 codes): код, узнанный командой через decrypt, — навсегда
+  // в рамках матча (HUD «КОД D3»). Поля omitempty, по мере узнавания.
+  | { t: 'codes'; door?: string; safe?: string }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
