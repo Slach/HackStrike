@@ -1275,7 +1275,7 @@ export class HackView {
       const b = el('button', 'hv-pal-cand hv-pal-dev')
       b.append(
         txt('span', 'hv-pal-name', `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`),
-        txt('span', 'hv-pal-hintc', d.mem !== undefined ? `${d.memFree ?? '?'}/${d.mem} МБ` : this.ownerLabel(d.owner)),
+        txt('span', 'hv-pal-hintc', d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : this.ownerLabel(d.owner)),
       )
       b.addEventListener('click', () => {
         this.closePalette()
@@ -1341,7 +1341,7 @@ export class HackView {
         text: d.id,
         dev: d.id,
         label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
-        hint: ownedOnly && d.mem !== undefined ? `${d.memFree ?? '?'}/${d.mem} МБ` : this.ownerLabel(d.owner),
+        hint: ownedOnly && d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : this.ownerLabel(d.owner),
       })
     }
     return out
@@ -2163,7 +2163,10 @@ export class HackView {
     if (d.bp !== undefined) row('ШИНА', `${Math.round(d.bp)} МБ/С`)
     // MEM (M5 §16.1): ёмкость и свободно (резервации cp учтены сервером).
     if (d.mem !== undefined) {
-      row('MEM', `${d.memFree ?? '—'}/${d.mem} МБ`)
+      // MEM (M5 §16.1): занято/ёмкость — как в шапке ls и на деке (плейтест:
+      // «4/64» в формате свободно/всего читалось как «почти пусто», хотя
+      // door_key 60 МБ уже лежал там)
+      row('MEM', `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ`)
     }
     // Данные (§16.9): листинг — только владельцу (сервер не шлёт чужим);
     // рядом кнопки RSYNC → ДЕКА и RM (chaff-игра §16.2).
