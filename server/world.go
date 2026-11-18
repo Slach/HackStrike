@@ -62,6 +62,14 @@ type world struct {
 	safeCode    string
 	safeCodes   map[int]string
 
+	// §16.6 PHYSAFE (итерация 7): физический сейф — офлайн, вне графа.
+	// Взятие space (любой класс), ×0.5, дроп при смерти/F5; канал «вскрываем
+	// 3 с» (код у сейфа или база) → matchend reason=extract.
+	physafe          physafeState
+	physafeHome      vec3
+	physafePresent   bool
+	safeFragsAwarded bool
+
 	// now инъектится для тестов; в проде time.Now.
 	now func() time.Time
 	out []outMsg
@@ -133,6 +141,14 @@ func newWorld(m *gameMap) *world {
 		gasDebt:   make(map[gasDebtKey]float64),
 		fireDebt:  make(map[fireDebtKey]float64),
 	}
+	// §16.6: домашняя позиция PHYSAFE из карты (за код-дверьми, у лавы)
+	for _, p := range m.props {
+		if p.Kind == "physafe" {
+			w.physafeHome = vec3(p.Pos)
+			w.physafePresent = true
+		}
+	}
+	w.physafe.pos = w.physafeHome
 	w.seedData() // §16.1: стартовые данные матча (итерация 2: door_key на t1)
 	return w
 }
@@ -184,6 +200,14 @@ func (w *world) startMatchIfNeeded() {
 		}
 		w.doorCodes = map[int]string{}
 		w.safeCodes = map[int]string{}
+		// §16.6: новый матч — сейф дома, каналы сброшены, +10 ещё не давали
+		w.physafe.pos = w.physafeHome
+		w.physafe.carrier = 0
+		w.physafe.chKind = ""
+		w.safeFragsAwarded = false
+		for _, p := range w.players {
+			p.carry = false
+		}
 	}
 }
 
@@ -301,6 +325,11 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 
 func (w *world) removePlayer(id uint64) {
 	if pl, ok := w.players[id]; ok {
+		if pl.carry {
+			// §16.6: носитель вышел (F5) — сейф остаётся на земле, каналы сброшены
+			w.physafe.pos = pl.pos
+			w.dropSafe()
+		}
 		// Сессия по имени: F5/обрыв восстанавливает команду, позицию, класс,
 		// hp, знания сети; владение устройствами перемапится на новый id
 		// при возврате (см. addPlayer). Экспирация — sessionTTL.
@@ -434,6 +463,7 @@ func (w *world) simulateTick() {
 	w.shieldRegenTick() // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
 	w.doorKeyTick()     // §16.5: ротация door_key на SRV1 (T=120 с)
 	w.devJobTick()      // §16.4: SRV-decrypt джобы (живут на хосте, job 1 Гц)
+	w.physafeTick(tickDT) // §16.6: канал «вскрываем 3 с» (код у сейфа / база)
 	w.gasTick(tickDT)   // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
 	w.fireTick(tickDT)  // §14.6.1: DoT огня (сразу за газом, тот же порядок)
 	w.matchCheck()
@@ -467,7 +497,17 @@ func (w *world) matchCheck() {
 	default:
 		return
 	}
-	w.broadcast(message{"t": "matchend", "scores": w.scores, "winner": winner})
+	w.endMatch(winner, "")
+}
+
+// endMatch — финал матча (§16.9): reason опционален (extract — победа
+// извлечением PHYSAFE, итерация 7).
+func (w *world) endMatch(winner int, reason string) {
+	m := message{"t": "matchend", "scores": w.scores, "winner": winner}
+	if reason != "" {
+		m["reason"] = reason
+	}
+	w.broadcast(m)
 	w.scores = [2]int{}
 	w.matchActive = false
 }
@@ -503,6 +543,25 @@ type snapPlayer struct {
 	Jacked bool `json:"jacked,omitempty"`
 }
 
+// snapProps — снап пропсов (§12.5) + PHYSAFE (§16.6): позиция дублирует
+// носителя, carriedBy — кто несёт (клиент двигает меш и глиф миникарты).
+func (w *world) snapProps() []any {
+	props := w.cyber.snapProps()
+	if w.physafePresent {
+		m := message{
+			"kind": "physafe",
+			"x":    round3(w.physafe.pos[0]),
+			"y":    round3(w.physafe.pos[1]),
+			"z":    round3(w.physafe.pos[2]),
+		}
+		if w.physafe.carrier != 0 {
+			m["carriedBy"] = w.physafe.carrier
+		}
+		props = append(props, m)
+	}
+	return props
+}
+
 func (w *world) broadcastSnap() {
 	ids := make([]uint64, 0, len(w.players))
 	for id := range w.players {
@@ -517,7 +576,7 @@ func (w *world) broadcastSnap() {
 			ID: p.id, Name: p.name, Team: p.team, Cls: p.cls,
 			X: pos[0], Y: pos[1], Z: pos[2],
 			Yaw: round3(p.yaw), Pitch: round3(p.pitch),
-			HP: p.hp, Alive: p.alive, Safe: false, Jacked: p.jacked,
+			HP: p.hp, Alive: p.alive, Safe: p.carry, Jacked: p.jacked,
 		})
 	}
 	// timeLeft — миллисекунды (клиент M1 читает это поле); timeLeftMs —
@@ -533,6 +592,6 @@ func (w *world) broadcastSnap() {
 		// §16.5: остаток до смены поколения door_key (ротация T=120 с) —
 		// таймер «до смены кода осталось» в паде d3. −1: вне матча.
 		"keyLeft": w.doorKeyLeftMs(),
-		"props":   w.cyber.snapProps(), // M2: двери/кабели/точки входа (§12.5)
+		"props":   w.snapProps(), // M2: двери/кабели/точки входа (§12.5) + PHYSAFE (§16.6)
 	})
 }

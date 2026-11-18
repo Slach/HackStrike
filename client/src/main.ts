@@ -103,7 +103,7 @@ function openCodePad(dev: string, kp: string): void {
   // двухстрочная шапка (плейтест: «таймера не видно»):
   //   ЗАМОК D3
   //   ДО СМЕНЫ КОДА 01:59
-  title.textContent = `ЗАМОК ${dev.toUpperCase()}`
+  title.textContent = dev === 'physafe' ? 'СЕЙФ // ВВОД КОДА' : `ЗАМОК ${dev.toUpperCase()}`
   const timer = document.createElement('div')
   timer.className = 'codepad-timer'
   title.append(timer)
@@ -153,6 +153,13 @@ function openCodePad(dev: string, kp: string): void {
     }, 4000)
   }
   const press = (k: string): void => {
+    if (k === 'ВЗЯТЬ') {
+      // §16.6: PAD-кнопка взятия (space занят открытием пада, когда команда
+      // знает код сейфа); сервер меряет дистанцию сам
+      sock.send({ t: 'takesafe' })
+      close()
+      return
+    }
     if (k === 'C') {
       digits = ''
       draw()
@@ -196,6 +203,15 @@ function openCodePad(dev: string, kp: string): void {
     b.addEventListener('click', () => press(k))
     grid.append(b)
   }
+  if (dev === 'physafe') {
+    // §16.6: у сейфа обе стратегии в одном паде — ввод кода (вскрытие на
+    // месте) или забрать и нести на базу
+    const take = document.createElement('button')
+    take.className = 'codepad-key clr'
+    take.textContent = 'ВЗЯТЬ'
+    take.addEventListener('click', () => press('ВЗЯТЬ'))
+    grid.append(take)
+  }
   const head = document.createElement('div')
   head.className = 'codepad-head'
   head.append(title, x)
@@ -211,10 +227,16 @@ function openCodePad(dev: string, kp: string): void {
     timer,
     showResult: (ok, match, open) => {
       if (ok) {
-        // §16.7 (плейтест): код-ТОГГЛ — повторный ввод ЗАКРЫВАЕТ и запирает
-        // дверь. «ОТКРЫТО» только когда створка реально открылась, иначе
-        // «ПРАВИЛЬНО» (сервер шлёт итоговое open; старый сервер — без поля).
-        status.textContent = open === false ? 'ПРАВИЛЬНО — ДВЕРЬ ЗАКРЫТА И ЗАПЕРТА' : 'ОТКРЫТО ✓'
+        if (dev === 'physafe') {
+          // §16.6: верный код сейфа — канал «вскрываем 3 с» стартовал
+          status.textContent = 'ПРАВИЛЬНО — ВСКРЫВАЕМ, СТОЙ НА МЕСТЕ'
+          status.className = 'codepad-status ok'
+        } else {
+          // §16.7 (плейтест): код-ТОГГЛ — повторный ввод ЗАКРЫВАЕТ и запирает
+          // дверь. «ОТКРЫТО» только когда створка реально открылась, иначе
+          // «ПРАВИЛЬНО» (сервер шлёт итоговое open; старый сервер — без поля).
+          status.textContent = open === false ? 'ПРАВИЛЬНО — ДВЕРЬ ЗАКРЫТА И ЗАПЕРТА' : 'ОТКРЫТО ✓'
+        }
         status.className = 'codepad-status ok'
         window.setTimeout(() => {
           if (codePad !== null && codePad.dev === dev) close()
@@ -403,9 +425,10 @@ function handleDeath(msg: DeathMsg): void {
 function handleEnd(msg: EndMsg): void {
   matchOver = true
   hackviewOff(false)
+  const reason = msg.reason === 'extract' ? `СЕЙФ ИЗВЛЕЧЁН — КОМАНДА ${msg.winner === 0 ? 'ЦИАН' : 'МАДЖЕНТА'}` : null
   hud.showEnd(msg.winner, msg.scores, () => {
     matchOver = false
-  })
+  }, reason)
 }
 
 const sock = new GameSocket({
@@ -450,6 +473,22 @@ const sock = new GameSocket({
         // §16.9 job: прогресс SRV-decrypt команде (1 Гц, в т.ч. после
         // джек-аута/смерти запустившего) — карточка прогресса в hackview.
         hackview.onJob(msg)
+        break
+      case 'extract':
+        // §16.9 extract (итерация 7): события PHYSAFE — общий телеграф.
+        switch (msg.stage) {
+          case 'taken':
+            hud.warn(`СЕЙФ ВЗЯТ — КОМАНДА ${msg.team === 0 ? 'ЦИАН' : 'МАДЖЕНТА'}`)
+            break
+          case 'channel':
+            hud.warn(msg.team === myTeam ? `ВСКРЫВАЕМ СЕЙФ — СТОЙ НА МЕСТЕ (${Math.round((msg.prog ?? 0) * 100)}%)` : `ВРАГ ВСКРЫВАЕТ СЕЙФ!`)
+            break
+          case 'broken':
+            hud.warn('КАНАЛ ПРЕРВАН')
+            break
+          case 'win':
+            break // следом matchend reason=extract
+        }
         break
       case 'codes': {
         // §16.9 codes: коды, узнанные командой через decrypt (door_key и
@@ -793,10 +832,21 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
       const pv = propsView
       controls.interactInterceptor = () => {
         if (codePad !== null || !playing || hackview.active) return false
-        const kp = pv.nearestKeypad(camera.position.x, camera.position.z, camera.position.y - EYE_HEIGHT)
-        if (kp === null || kp.dist > 2) return false
-        openCodePad(kp.door, kp.id)
-        return true
+        const feetY = camera.position.y - EYE_HEIGHT
+        const kp = pv.nearestKeypad(camera.position.x, camera.position.z, feetY)
+        if (kp !== null && kp.dist <= 2) {
+          openCodePad(kp.door, kp.id)
+          return true
+        }
+        // §16.6: у PHYSAFE пад ввода кода сейфа — ТОЛЬКО когда команда
+        // знает код (HUD «СЕЙФ: …»); без кода space честно берёт сейф
+        // (сервер interactTick), и несущему пад не нужен
+        const me = latestMeta.get(myId ?? -1)
+        if (teamSafeCode !== null && me?.safe !== true && pv.physafeTarget(camera.position.x, camera.position.z, feetY) !== null) {
+          openCodePad('physafe', 'physafe')
+          return true
+        }
+        return false
       }
     }
     window.__hs = window.__hs ?? undefined // noop-guard

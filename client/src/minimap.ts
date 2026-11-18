@@ -22,7 +22,7 @@ export interface MiniSelf {
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe'
 
 export interface MiniProp {
   x: number
@@ -256,6 +256,12 @@ export class Minimap {
         ctx.beginPath()
         ctx.arc(x, y, 1.4, 0, Math.PI * 2)
         ctx.fill()
+      } else if (p.kind === 'physafe') {
+        // PHYSAFE (§16.6): янтарный квадрат — гонка за сейф видна всей команде
+        ctx.strokeStyle = 'rgba(255,200,55,0.95)'
+        ctx.strokeRect(x - 4, y - 4, 8, 8)
+        ctx.fillStyle = 'rgba(255,200,55,0.95)'
+        ctx.fillRect(x - 1.5, y - 1.5, 3, 3)
       } else {
         // switch: ромб
         ctx.strokeStyle = 'rgba(255,210,55,0.9)'

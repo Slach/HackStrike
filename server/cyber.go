@@ -10,6 +10,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -31,6 +32,12 @@ const (
 	srvDecryptMbps  = 6.0
 
 	jobReportEvery = tickRate // прогресс SRV-decrypt команде 1 Гц (§16.9 job)
+
+	// PHYSAFE (§16.6, итерация 7): взятие — 1.8 м, зона базы — 6 м от точек
+	// спавна, канал «вскрываем» — 3 с (прерывается уроном/отходом).
+	physafeTakeRadius   = 1.8
+	physafeBaseRadius   = 6.0
+	physafeChannelWork  = 3.0
 	portscanWork  = 2.0 // с работы при полной CPU-доле (§12.4)
 	vulnscanWork  = 3.0
 	trojanWork    = 2.0
@@ -232,6 +239,20 @@ type cable struct {
 	bw       float64 // МБ/с (магистраль 40 / доступ 20 / ветка 10 / радио 5)
 }
 
+// physafeState — физический сейф (§16.6, итерация 7): офлайн (вне графа
+// сети), позиция ездит с носителем. Канал «вскрываем 3 с»: crack — ввод
+// верного кода сейфа у сейфа; base — носитель в зоне своей базы. Прерывается
+// уроном по вскрывающему, смертью, отходом (crack — от сейфа, base — из
+// зоны), дропом сейфа.
+type physafeState struct {
+	pos        vec3
+	carrier    uint64
+	chKind     string // "" | "crack" | "base"
+	chProgress float64
+	chBy       uint64
+	chTeam     int
+}
+
 // firePool — полоса огня (§14.6.1): НЕ сетевое устройство — ни owner/vuln,
 // ни графа. AABB для fireTick + ссылка на водяной клапан: его open тушит
 // пул (state виден всем через snap.props клапана).
@@ -273,6 +294,11 @@ func buildCyber(m *gameMap) *cyberState {
 	}
 	for _, p := range m.props {
 		if p.Kind == "cable" {
+			continue
+		}
+		if p.Kind == "physafe" {
+			// §16.6: физический сейф — НЕ сетевое устройство (офлайн, вне
+			// графа): состояние живёт на world, позиция ездит со носителем.
 			continue
 		}
 		if p.Kind == "fire" {
@@ -700,8 +726,27 @@ func progWork(name string) float64 {
 func (w *world) interactTick(pl *player) {
 	pressed := pl.keys.interact && !pl.prevInteract
 	pl.prevInteract = pl.keys.interact
-	if !pressed || !pl.alive || pl.jacked || pl.cls != "hacker" {
-		return // дека только у хакера; мёртвые и уже джекнутые не входят
+	if !pressed || !pl.alive || pl.jacked {
+		return // мёртвые и джекнутые ничего не берут
+	}
+	// §16.6 (итерация 7): PHYSAFE — ЛЮБОЙ класс берёт сейф space'ом.
+	// Несущий не джекается и повторно не берёт (ввод кода у сейфа — через
+	// кодовый пад клиента, см. enterPhysafe).
+	if w.physafePresent {
+		if pl.carry {
+			return
+		}
+		if w.physafe.carrier == 0 {
+			dp := w.physafe.pos.sub(pl.pos)
+			dp[1] = 0
+			if dp.length() <= physafeTakeRadius {
+				w.takeSafe(pl)
+				return
+			}
+		}
+	}
+	if pl.cls != "hacker" {
+		return // дека только у хакера
 	}
 	dev := w.jackTarget(pl)
 	if dev == nil || jackEntry(dev) {
@@ -1722,6 +1767,10 @@ func (w *world) handleCtrl(pl *player, msg message) {
 // «N/4 цифр на месте», журнал d3, alert владельцу агрегированно.
 func (w *world) handleEnter(pl *player, msg message) {
 	devID := str(msg, "dev")
+	if devID == "physafe" {
+		w.enterPhysafe(pl, msg)
+		return
+	}
 	at, ok := w.cyber.devices[devID]
 	if !ok {
 		return
@@ -2646,7 +2695,164 @@ func (w *world) movePlayer(pl *player, dt float64) {
 	if pl.jacked {
 		return
 	}
+	if pl.carry {
+		// §16.6: сейф тяжёлый — ×0.5 скорость носителя
+		w.m.movePlayerScaled(pl, dt, w.doorBlocker(pl), 0.5)
+		return
+	}
 	w.m.movePlayerBlocked(pl, dt, w.doorBlocker(pl))
+}
+
+// --- PHYSAFE (§16.6, итерация 7) -------------------------------------------
+
+// takeSafe — space у сейфа (любой класс); несущий ×0.5 и без джек-ина.
+func (w *world) takeSafe(pl *player) {
+	w.physafe.carrier = pl.id
+	pl.carry = true
+	w.broadcast(message{"t": "extract", "team": pl.team, "by": pl.id, "stage": "taken"})
+	log.Printf("room: player %d took the physafe", pl.id)
+}
+
+// dropSafe — сейф падает на месте носителя (смерть/F5/телепорт); канал
+// сбрасывается (§16.6: «сейф остаётся на земле, каналы сбрасываются»).
+func (w *world) dropSafe() {
+	if w.physafe.carrier == 0 {
+		return
+	}
+	if p, ok := w.players[w.physafe.carrier]; ok {
+		w.physafe.pos = p.pos
+		p.carry = false
+	}
+	w.physafe.carrier = 0
+	w.cancelSafeChannel()
+	log.Printf("room: physafe dropped")
+}
+
+// cancelSafeChannel — канал прерван (§16.6): прогресс теряется, рестарт —
+// новый старт (+10 фрагов повторно НЕ начисляются).
+func (w *world) cancelSafeChannel() {
+	if w.physafe.chKind == "" {
+		return
+	}
+	w.physafe.chKind = ""
+	w.broadcast(message{"t": "extract", "team": w.physafe.chTeam, "stage": "broken"})
+}
+
+// startSafeChannel — «вскрываем 3 с» (§16.6): первый старт канала в матче
+// даёт команде +10 фрагов (один раз; обрыв/рестарт не начисляют повторно).
+func (w *world) startSafeChannel(kind string, pl *player) {
+	w.physafe.chKind = kind
+	w.physafe.chProgress = 0
+	w.physafe.chBy = pl.id
+	w.physafe.chTeam = pl.team
+	if !w.safeFragsAwarded {
+		w.safeFragsAwarded = true
+		w.scores[pl.team] += 10
+	}
+	w.broadcast(message{"t": "extract", "team": pl.team, "by": pl.id, "stage": "channel"})
+	log.Printf("room: team %d started safe channel (%s), by player %d", pl.team, kind, pl.id)
+}
+
+// inBaseZone — зона сдачи: радиус 6 м от точек спавна СВОЕЙ команды (§16.6).
+func (w *world) inBaseZone(pl *player) bool {
+	for _, s := range w.m.Spawns[strconv.Itoa(pl.team)] {
+		dp := vec3{s[0] - pl.pos[0], 0, s[2] - pl.pos[2]}
+		if dp.length() <= physafeBaseRadius {
+			return true
+		}
+	}
+	return false
+}
+
+// physafeTick — канал «вскрываем» (§16.6): авто-старт на базе у несущего;
+// прерывание — смерть/отход (crack: от сейфа; base: из зоны/дроп); успех —
+// broadcast extract win + matchend reason=extract (победа в матче).
+func (w *world) physafeTick(dt float64) {
+	if !w.physafePresent {
+		return
+	}
+	// доставка на базу: несущий в зоне — канал стартует сам (§16.6)
+	if w.physafe.carrier != 0 && w.physafe.chKind == "" {
+		if c, ok := w.players[w.physafe.carrier]; ok && w.inBaseZone(c) {
+			w.startSafeChannel("base", c)
+		}
+	}
+	if w.physafe.chKind == "" {
+		return
+	}
+	pl, ok := w.players[w.physafe.chBy]
+	if !ok || !pl.alive {
+		w.cancelSafeChannel()
+		return
+	}
+	if w.physafe.chKind == "crack" {
+		// вскрытие на месте: вскрывающий стоит у сейфа (урон прерывает —
+		// см. damage/envDamage)
+		dp := w.physafe.pos.sub(pl.pos)
+		dp[1] = 0
+		if dp.length() > physafeTakeRadius+1 {
+			w.cancelSafeChannel()
+			return
+		}
+	} else if !pl.carry || !w.inBaseZone(pl) {
+		// base: сейф потерян или носитель ушёл из зоны
+		w.cancelSafeChannel()
+		return
+	}
+	w.physafe.chProgress += dt
+	if w.tick%tickRate == 0 {
+		w.broadcast(message{"t": "extract", "team": w.physafe.chTeam, "stage": "channel",
+			"prog": round3(math.Min(1, w.physafe.chProgress/physafeChannelWork))})
+	}
+	if w.physafe.chProgress >= physafeChannelWork {
+		team := w.physafe.chTeam
+		w.broadcast(message{"t": "extract", "team": team, "stage": "win"})
+		w.endMatch(team, "extract")
+		// канал закрыт: матч кончился, автостарт на базе не должен
+		// сработать в том же тике со старым состоянием
+		w.physafe.chKind = ""
+		log.Printf("room: team %d extracted the physafe — WIN", team)
+	}
+}
+
+// enterPhysafe — ввод кода сейфа у PHYSAFE (§16.6): {"t":"enter",
+// "dev":"physafe","code":"8241"}. Вернный код стартует канал crack «вскрываем
+// 3 с» — гейт лавы lv3 остаётся: стоит в огне = урон = обрыв канала.
+func (w *world) enterPhysafe(pl *player, msg message) {
+	if !pl.alive || pl.jacked {
+		w.dataDenied(pl, "not_jacked", "enter", "")
+		return
+	}
+	if pl.carry || w.physafe.carrier != 0 {
+		w.dataDenied(pl, "bad_target", "enter", "")
+		return
+	}
+	dp := w.physafe.pos.sub(pl.pos)
+	dp[1] = 0
+	if dp.length() > physafeTakeRadius+0.7 {
+		w.dataDenied(pl, "too_far", "enter", "")
+		return
+	}
+	now := w.now()
+	flood := !pl.enterAt.IsZero() && now.Sub(pl.enterAt) < 2*time.Second
+	if !flood {
+		pl.enterAt = now
+	}
+	code := str(msg, "code")
+	if code != w.safeCode {
+		if flood {
+			w.sendTo(pl.id, message{"t": "code", "dev": "physafe", "ok": false, "match": -1})
+			return
+		}
+		w.sendTo(pl.id, message{"t": "code", "dev": "physafe", "ok": false, "match": hintMatch(w.safeCode, code)})
+		return
+	}
+	// всегда отвечаем — молчание вешает пад на «ПРОВЕРКА…»
+	w.sendTo(pl.id, message{"t": "code", "dev": "physafe", "ok": true})
+	if w.physafe.chKind == "" {
+		w.startSafeChannel("crack", pl)
+	}
+	log.Printf("room: player %d entered the safe code at the physafe", pl.id)
 }
 
 // --- двери как препятствия для огня (плейтест M2-2) -----------------------

@@ -150,6 +150,10 @@ func (w *world) damage(shooter, victim *player, dmg int) bool {
 	if !victim.alive {
 		return false
 	}
+	// §16.6: урон по вскрывающему прерывает канал «вскрываем»
+	if w.physafe.chKind != "" && w.physafe.chBy == victim.id {
+		w.cancelSafeChannel()
+	}
 	victim.hp -= dmg
 	if victim.hp > 0 {
 		return false
@@ -157,6 +161,9 @@ func (w *world) damage(shooter, victim *player, dmg int) bool {
 	victim.hp = 0
 	victim.alive = false
 	victim.respawnAt = w.now().Add(respawnDelay)
+	if victim.carry {
+		w.dropSafe() // §16.6: смерть носителя — сейф падает на месте
+	}
 	w.jackout(victim) // смерть хакера = авто-джек-аут (§12.1)
 	victim.items = nil // §16.1: MEM деки умирает с хакером
 	w.scores[shooter.team]++
@@ -178,6 +185,10 @@ func (w *world) envDamage(victim *player, dmg int, owner uint64) bool {
 	if !victim.alive {
 		return false
 	}
+	// §16.6: лава/газ по вскрывающему прерывает канал (гейт лавы у сейфа)
+	if w.physafe.chKind != "" && w.physafe.chBy == victim.id {
+		w.cancelSafeChannel()
+	}
 	victim.hp -= dmg
 	if victim.hp > 0 {
 		return false
@@ -185,6 +196,9 @@ func (w *world) envDamage(victim *player, dmg int, owner uint64) bool {
 	victim.hp = 0
 	victim.alive = false
 	victim.respawnAt = w.now().Add(respawnDelay)
+	if victim.carry {
+		w.dropSafe() // §16.6: смерть носителя в лаве — сейф падает на месте
+	}
 	w.jackout(victim)
 	victim.items = nil // §16.1: MEM деки умирает с хакером
 	if owner != 0 && owner != victim.id {

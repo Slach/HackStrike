@@ -3028,6 +3028,7 @@ func decryptWorld(t *testing.T) (*world, *player, *time.Time) {
 	  {"kind":"switch","id":"s2","pos":[35,1,25]},
 	  {"kind":"srv","id":"srv1","pos":[20,1,33]},
 	  {"kind":"safe","id":"netsafe","pos":[20,1,27]},
+	  {"kind":"physafe","id":"physafe","pos":[20,1,36]},
 	  {"kind":"door","id":"d1","pos":[20,1,20],"size":[4,3,0.3],"axis":"x","to":"s1"},
 	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
 	  {"kind":"cable","id":"c2","from":"t2","to":"s2"},
@@ -3277,5 +3278,130 @@ func TestNetSafe(t *testing.T) {
 	}
 	if w.safeCodes[h.team] != "" {
 		t.Fatalf("known codes must be wiped on a new match")
+	}
+}
+
+// TestPhysafe — §16.6 (итерация 7): взятие space (любой класс), ввод кода
+// сейфа у PHYSAFE → канал «вскрываем 3 с», урон прерывает, рестарт не даёт
+// +10 повторно, успех — matchend reason=extract; смерть носителя роняет сейф;
+// доставка на базу стартует канал сама, отход из зоны прерывает.
+func TestPhysafe(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	if !w.physafePresent {
+		t.Fatalf("decryptWorld must carry a physafe prop")
+	}
+	w.takeOut()
+	// space у сейфа — берёт (любой класс; h — хакер, но джек-аут обязательный:
+	// джекнутый не двигается и ничего не берёт)
+	w.handleMessage(h, message{"t": "jackout"})
+	h.pos = vec3{20.5, 1, 36.5}
+	h.prevInteract = false // честный edge после jackAt
+	h.keys.interact = true
+	w.simulateTick()
+	h.keys.interact = false
+	if w.physafe.carrier == 0 {
+		t.Fatalf("space near the physafe must take it (any class)")
+	}
+	if !h.carry {
+		t.Fatalf("carrier flag must be set on the player")
+	}
+	// несущий: ввод кода у сейфа невозможен (сейф уже у него)
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": w.safeCode})
+	if !hasDenied(w.takeOut(), h.id, "bad_target") {
+		t.Fatalf("carrier must be denied code entry")
+	}
+	// смерть носителя роняет сейф на месте
+	foe := w.addPlayer(2, "f", "assault", 1)
+	w.damage(foe, h, 999)
+	if w.physafe.carrier != 0 || w.physafe.pos[0] != h.pos[0] {
+		t.Fatalf("death must drop the physafe at the body")
+	}
+	w.takeOut()
+	// воскресим носителя для crack-сценария (тест не про респаун)
+	h.alive = true
+	h.hp = 100
+
+	// crack-канал: неверный код — N/4 (ok=false), верный — канал + +10 фрагов
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": "0000"})
+	out := w.takeOut()
+	hint := false
+	for _, m := range out {
+		if m.msg["t"] == "code" && m.msg["ok"] == false {
+			hint = true
+		}
+	}
+	if !hint {
+		t.Fatalf("wrong code must answer ok=false with an N/4 hint")
+	}
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": w.safeCode})
+	out = w.takeOut()
+	okMsg := false
+	for _, m := range out {
+		if m.msg["t"] == "code" && m.msg["ok"] == true {
+			okMsg = true
+		}
+	}
+	if !okMsg || w.physafe.chKind != "crack" {
+		t.Fatalf("valid code must start the crack channel")
+	}
+	if w.scores[h.team] != 10 {
+		t.Fatalf("first channel start must award +10 frags, scores=%v", w.scores)
+	}
+	// урон по вскрывающему прерывает канал
+	w.damage(foe, h, 1)
+	if w.physafe.chKind != "" {
+		t.Fatalf("damage to the cracker must break the channel")
+	}
+	// рестарт канала: +10 НЕ начисляются повторно
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": w.safeCode})
+	w.takeOut()
+	if w.scores[h.team] != 10 {
+		t.Fatalf("channel restart must not re-award frags")
+	}
+	// успех: 3 с у сейфа → extract win + matchend reason=extract
+	for i := 0; i < 4*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	out = w.takeOut()
+	win, end := false, false
+	for _, m := range out {
+		if m.msg["t"] == "extract" && m.msg["stage"] == "win" {
+			win = true
+		}
+		if m.msg["t"] == "matchend" && m.msg["reason"] == "extract" {
+			end = true
+		}
+	}
+	if !win || !end {
+		t.Fatalf("3 s channel must win the match: win=%v end=%v", win, end)
+	}
+
+	// base-канал: другой класс у спавна — канал стартует сам
+	w.matchActive = true
+	w.physafe.pos = vec3{20, 1, 36}
+	w.physafe.carrier = 0
+	foe.pos = vec3{20.5, 1, 36.5}
+	foe.prevInteract = false
+	foe.keys.interact = true
+	w.simulateTick()
+	foe.keys.interact = false
+	if w.physafe.carrier != foe.id {
+		t.Fatalf("any class must be able to take the physafe")
+	}
+	foe.pos = vec3{35, 1, 35} // точка спавна команды 1
+	for i := 0; i < 2*30; i++ { // 2 с < канала: не даём врагу выиграть
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if w.physafe.chKind != "base" {
+		t.Fatalf("standing in the base zone must auto-start the base channel, kind=%q", w.physafe.chKind)
+	}
+	// отход из зоны прерывает
+	foe.pos = vec3{20, 1, 36}
+	*clock = clock.Add(time.Second / 30)
+	w.simulateTick()
+	if w.physafe.chKind != "" {
+		t.Fatalf("leaving the base zone must break the channel")
 	}
 }

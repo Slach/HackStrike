@@ -2714,6 +2714,15 @@
    "from": "s3",
    "to": "netsafe",
    "bw": 10
+  },
+  {
+   "kind": "physafe",
+   "id": "physafe",
+   "pos": [
+    32,
+    8,
+    40.5
+   ]
   }
  ],
  "spawns": {

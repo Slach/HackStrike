@@ -153,9 +153,15 @@ func (m *gameMap) movePlayer(pl *player, dt float64) {
 }
 
 func (m *gameMap) movePlayerBlocked(pl *player, dt float64, blocked blockFn) {
+	m.movePlayerScaled(pl, dt, blocked, 1)
+}
+
+// movePlayerScaled — ходьба с множителем скорости (§16.6: несущий PHYSAFE —
+// ×0.5).
+func (m *gameMap) movePlayerScaled(pl *player, dt float64, blocked blockFn, mul float64) {
 	wish := wishDir(pl.yaw, pl.keys)
 	if wish != (vec3{}) {
-		speed := classes[pl.cls].speed
+		speed := classes[pl.cls].speed * mul
 		m.moveAxis(pl, 0, wish[0]*speed*dt, blocked)
 		m.moveAxis(pl, 2, wish[2]*speed*dt, blocked)
 	}

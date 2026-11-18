@@ -1002,12 +1002,12 @@ export class Hud {
     this.el.death.classList.add('hidden')
   }
 
-  showEnd(winner: number, scores: readonly [number, number], onDone: () => void): void {
+  showEnd(winner: number, scores: readonly [number, number], onDone: () => void, reason?: string | null): void {
     this.endActive = true
     this.onEndDone = onDone
     this.endUntilMs = Date.now() + END_RESTART_MS
     this.el.endTitle.textContent =
-      winner === 0 || winner === 1 ? `ПОБЕДА — ${TEAM_LABEL[winner]}` : 'НИЧЬЯ'
+      (winner === 0 || winner === 1 ? `ПОБЕДА — ${TEAM_LABEL[winner]}` : 'НИЧЬЯ') + (reason ? ` · ${reason}` : '')
     this.el.endTitle.className =
       winner === 0 || winner === 1 ? `end-title t${winner}` : 'end-title'
     this.el.endScore.innerHTML = `<span class="t0">${scores[0]}</span> : <span class="t1">${scores[1]}</span>`

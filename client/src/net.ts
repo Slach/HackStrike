@@ -25,17 +25,18 @@ export type ClientMessage =
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
   | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2/§16.4: cp/mv/rm — dst/data, decrypt — data (джоба на dev)
-  | { t: 'enter'; dev: string; code: string } // §16.7: код на клавиатуре d3
+  | { t: 'enter'; dev: string; code: string } // §16.7: код на клавиатуре d3 / §16.6: у PHYSAFE (dev=physafe)
+  | { t: 'takesafe' } // §16.6: кнопка ВЗЯТЬ в паде PHYSAFE (space занят падом)
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
 // 'valve' — водяной клапан: сетевой кибер-контроллер огня (по образцу газа).
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe'
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe'
 
 /** Сетевые устройства — всё, что бывает в scan/деке. Fire вычтен по построению:
  *  он не сканируется и не взламывается (§14.6.1) — управляют огнём через valve. */
-export type CyberKind = Exclude<PropKind, 'fire'>
+export type CyberKind = Exclude<PropKind, 'fire' | 'physafe'> // fire/physafe — не сетевые устройства
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
  *  the server sent them, so an absent "open" means "keep the last
@@ -49,6 +50,7 @@ export interface SnapProp {
   open?: boolean // door / gas valve (M4 §14.3) / water valve (§14.6.1)
   radius?: number // radio
   owner?: number // camera (M3 §13.7): LED-индикатор владения; отсутствует = нейтральная
+  carriedBy?: number // physafe (§16.6): кто несёт; pos дублирует носителя
 }
 
 /** Link bandwidth of a scanned device (M5 §16.9, iter 1.5). */
@@ -176,7 +178,7 @@ export type ServerMessage =
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
   | { t: 'death'; by: number; respawnAt: number }
   | { t: 'envkill'; victim: number; owner: number } // M4 (GDD §14.3): broadcast; owner — trojan-владелец ловушки (0 = нейтрали)
-  | { t: 'matchend'; winner: number; scores: [number, number] }
+  | { t: 'matchend'; winner: number; scores: [number, number]; reason?: string } // reason=extract — победа извлечением PHYSAFE (§16.6)
   | { t: 'pong'; c: number; s: number; tick: number }
   // M2 (GDD §12.5)
   | { t: 'jackin'; host: string; deck: DeckInfo }
@@ -201,6 +203,9 @@ export type ServerMessage =
   // M5 (GDD §16.9 codes): код, узнанный командой через decrypt, — навсегда
   // в рамках матча (HUD «КОД D3»). Поля omitempty, по мере узнавания.
   | { t: 'codes'; door?: string; safe?: string }
+  // M5 (GDD §16.9 extract, итерация 7): сейф взят / канал «вскрываем» (prog
+  // 0..1) / канал прерван / успех (следом matchend reason=extract).
+  | { t: 'extract'; team: number; by?: number; stage: 'taken' | 'channel' | 'broken' | 'win'; prog?: number }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -221,7 +226,7 @@ const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
 // Полный whitelist: map props парсятся через parseMapProps (props.ts);
 // fire в snap.props/scan по построению не появляется — parseProp просто
 // принимает kind, собственного состояния у него нет (ГДД §14.6.1).
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe'] // srv — §16.5 SRV1-3; keypad — §16.7; safe — §16.6 NETSAFE
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe'] // srv — §16.5; keypad — §16.7; safe — §16.6 NETSAFE; physafe — §16.6 PHYSAFE
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
@@ -290,6 +295,8 @@ function parseProp(v: unknown): SnapProp | null {
   if (Number.isFinite(radius) && radius > 0) prop.radius = radius
   const owner = num(p.owner, Number.NaN)
   if (Number.isFinite(owner) && owner > 0) prop.owner = owner
+  const carriedBy = num(p.carriedBy, 0)
+  if (carriedBy > 0) prop.carriedBy = carriedBy
   return prop
 }
 
@@ -300,7 +307,7 @@ function parseDevice(v: unknown): ScanDevice | null {
   // Fire не сканируется (§14.6.1): урон-ландшафт отсечён и типом, и здесь —
   // scan-протокол его никогда не несёт; valve — обычное устройство.
   const pk = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
-  const kind = pk !== null && pk !== 'fire' ? pk : null
+  const kind = pk !== null && pk !== 'fire' && pk !== 'physafe' ? pk : null // fire/physafe — не сетевые устройства
   if (id === null || kind === null) return null
   const dev: ScanDevice = {
     id,
@@ -467,6 +474,16 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         t: 'matchend',
         winner: num(m.winner, -1),
         scores: scorePair(m.scores) ?? [0, 0],
+        reason: str(m.reason) ?? undefined,
+      }
+    case 'extract':
+      // §16.9 extract (итерация 7): события PHYSAFE.
+      return {
+        t: 'extract',
+        team: num(m.team, -1),
+        by: typeof m.by === 'number' && m.by > 0 ? m.by : undefined,
+        stage: m.stage === 'taken' || m.stage === 'channel' || m.stage === 'broken' || m.stage === 'win' ? m.stage : 'channel',
+        prog: typeof m.prog === 'number' ? m.prog : undefined,
       }
     case 'pong':
       return { t: 'pong', c: num(m.c, 0), s: num(m.s, 0), tick: num(m.tick, 0) }

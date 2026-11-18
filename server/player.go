@@ -97,4 +97,5 @@ type player struct {
 	scanned      map[string]bool
 	prevInteract bool      // edge-детект space между тиками
 	enterAt      time.Time // §16.7: анти-флуд кода на клавиатуре d3 (1/2 с)
+	carry        bool      // §16.6: несёт PHYSAFE (×0.5 скорость, джек-ин нельзя)
 }

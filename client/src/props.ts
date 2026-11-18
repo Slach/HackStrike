@@ -51,7 +51,7 @@ export interface MapProp {
   locked: boolean
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -188,6 +188,10 @@ export class PropsView {
   /** §16.6: NETSAFE-сейфы — отдельная карта: свой тултип/джек-лейбл
    *  («NETSAFE», не «ТЕРМИНАЛ») и свой глиф на миникарте. */
   private readonly safes = new Map<string, SimpleProp>()
+  /** §16.6: PHYSAFE — динамический проп (ездит с носителем), отдельные
+   *  меши и позиция; обновляется из snap.props каждый тик. */
+  private physafeParts: Mesh[] = []
+  private physafePos: { x: number; y: number; z: number; carrier: number } | null = null
   private readonly doors = new Map<string, DoorView>()
   /** §16.7: двери с код-замком и клавиатуры (space у клавиатуры → пад). */
   private readonly lockedDoors = new Set<string>()
@@ -249,6 +253,9 @@ export class PropsView {
           break
         case 'safe':
           view.buildSafe(prop.id, prop.pos)
+          break
+        case 'physafe':
+          view.buildPhysafe(prop.id, prop.pos)
           break
         case 'keypad':
           view.buildKeypad(prop.id, prop.pos, prop.to)
@@ -359,6 +366,25 @@ export class PropsView {
     handle.material = this.mats.led
     handle.isPickable = false
     this.safes.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
+  }
+
+  /** §16.6: PHYSAFE — янтарный сейф за код-дверьми (вне сети). Меши
+   *  переезжают из snap.props: на земле — на месте, carriedBy — у носителя. */
+  private buildPhysafe(id: string, pos: readonly [number, number, number]): void {
+    const body = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.9, height: 0.9, depth: 0.9 }, this.scene)
+    body.position.set(pos[0], pos[1] + 0.45, pos[2])
+    body.material = this.mats.body
+    body.isPickable = false
+    const face = MeshBuilder.CreateBox(`prop.${id}.face`, { width: 0.6, height: 0.6, depth: 0.06 }, this.scene)
+    face.position.set(pos[0], pos[1] + 0.45, pos[2] + 0.47)
+    face.material = this.mats.cable // янтарь — гонка за сейфом видна издалека
+    face.isPickable = false
+    const led = MeshBuilder.CreateBox(`prop.${id}.led`, { width: 0.2, height: 0.05, depth: 0.1 }, this.scene)
+    led.position.set(pos[0], pos[1] + 0.95, pos[2])
+    led.material = this.mats.cable
+    led.isPickable = false
+    this.physafeParts = [body, face, led]
+    this.physafePos = { x: pos[0], y: pos[1], z: pos[2], carrier: 0 }
   }
 
   /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space.
@@ -781,6 +807,23 @@ export class PropsView {
           }
           break
         }
+        case 'physafe': {
+          // §16.6: позиция из снапа (на земле или у носителя); перенос меша
+          // + глиф миникарты (rebuildMini дёшев, карта маленькая)
+          if (p.x === undefined || p.y === undefined || p.z === undefined) break
+          const cur = this.physafePos
+          const moved =
+            cur === null ||
+            Math.abs(cur.x - p.x) > 0.01 ||
+            Math.abs(cur.y - p.y) > 0.01 ||
+            Math.abs(cur.z - p.z) > 0.01 ||
+            cur.carrier !== (p.carriedBy ?? 0)
+          if (!moved) break
+          for (const m of this.physafeParts) m.position.addInPlaceFromFloats(p.x - (cur?.x ?? p.x), p.y - (cur?.y ?? p.y), p.z - (cur?.z ?? p.z))
+          this.physafePos = { x: p.x, y: p.y, z: p.z, carrier: p.carriedBy ?? 0 }
+          dirty = true
+          break
+        }
       }
     }
     if (dirty) this.rebuildMini()
@@ -844,6 +887,11 @@ export class PropsView {
         const max: [number, number, number] = [Math.max(a.x, b.x) + 0.25, Math.max(a.y, b.y) + 0.25, Math.max(a.z, b.z) + 0.25]
         boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()}`, min, max })
       }
+    }
+    // PHYSAFE (§16.6): динамический бокс — на земле или у носителя
+    if (this.physafePos !== null) {
+      const pf = this.physafePos
+      boxes.push({ label: `PHYSAFE — SPACE: ВЗЯТЬ${pf.carrier !== 0 ? ' (У НОСИТЕЛЯ)' : ''}`, min: [pf.x - 0.5, pf.y, pf.z - 0.5], max: [pf.x + 0.5, pf.y + 1, pf.z + 0.5] })
     }
     // Клавиатуры код-замков (§16.7): иначе наводка на панель ловила бокс
     // огня за стеной — у клавиатур вообще не было AABB в этом списке.
@@ -1126,6 +1174,16 @@ export class PropsView {
     return best
   }
 
+  /** §16.6: PHYSAFE рядом и на земле? Возвращает дистанцию (для пада
+   *  ввода кода — интерцептор space в main.ts; несущему пад не нужен). */
+  physafeTarget(x: number, z: number, y: number): number | null {
+    const pf = this.physafePos
+    if (pf === null || pf.carrier !== 0) return null
+    const d = Math.hypot(pf.x - x, pf.z - z)
+    if (Math.abs(pf.y - y) > 3) return null
+    return d <= 2 ? d : null
+  }
+
   hostKind(id: string): CyberKind | null {
     if (this.terminals.has(id)) return 'terminal'
     if (this.safes.has(id)) return 'safe'
@@ -1142,13 +1200,15 @@ export class PropsView {
 
   private known(id: string): boolean {
     return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id) ||
-      this.cameras.has(id) || this.gases.has(id) || this.fires.has(id) || this.valves.has(id) || this.safes.has(id)
+      this.cameras.has(id) || this.gases.has(id) || this.fires.has(id) || this.valves.has(id) || this.safes.has(id) ||
+      (id === 'physafe' && this.physafePos !== null)
   }
 
   private rebuildMini(): void {
     const out: MiniProp[] = []
     for (const t of this.terminals.values()) out.push({ x: t.x, z: t.z, kind: 'terminal' })
     for (const sf of this.safes.values()) out.push({ x: sf.x, z: sf.z, kind: 'safe' })
+    if (this.physafePos !== null) out.push({ x: this.physafePos.x, z: this.physafePos.z, kind: 'physafe' })
     for (const r of this.radios.values()) out.push({ x: r.x, z: r.z, kind: 'radio' })
     for (const s of this.switches.values()) out.push({ x: s.x, z: s.z, kind: 'switch' })
     for (const c of this.cameras.values()) out.push({ x: c.x, z: c.z, kind: 'camera' })
