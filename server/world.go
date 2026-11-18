@@ -35,8 +35,18 @@ type world struct {
 
 	matchActive bool
 	matchEndsAt time.Time
+	matchStart  time.Time // §16.5: старт матча — база ротации door_key
 	fragLimit   int
 	matchLen    time.Duration
+
+	// §16.5 (ревизия 2026-11-18): door_key — лут на время. SRV1 генерит
+	// поколение раз в doorKeyRot; код d3 меняется с поколением (грейс —
+	// предыдущее валидно). Старые ключи не удаляются сами — чистятся rm.
+	doorKeyHost     string
+	doorKeyGen      int
+	doorKeyName     string
+	doorKeyCode     string
+	doorKeyPrevCode string
 
 	// now инъектится для тестов; в проде time.Now.
 	now func() time.Time
@@ -393,6 +403,8 @@ func (w *world) simulateTick() {
 		w.interactTick(pl)
 		w.jackChannelTick(pl, tickDT) // §12.1 «дорогой вход»: канал не-точки входа
 	}
+	w.shieldRegenTick() // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
+	w.doorKeyTick()     // §16.5: ротация door_key на SRV1 (T=120 с)
 	w.gasTick(tickDT)  // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
 	w.fireTick(tickDT) // §14.6.1: DoT огня (сразу за газом, тот же порядок)
 	w.matchCheck()

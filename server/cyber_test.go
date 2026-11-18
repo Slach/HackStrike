@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -686,8 +687,9 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// c12 s3—cam3, c13 s3—cam4).
 	// §14.6.1 (ревизия v1): огонь lv1..lv3 — НЕ устройство; клапаны
 	// v1..v3 — устройства (+3 к графе), кабели c15/c16/c17 (+3).
-	if len(cs.order) != 20 || len(cs.cables) != 19 || len(cs.doors) != 3 || len(cs.gases) != 2 {
-		t.Fatalf("m1 M2+M3+M4 props: want 20 devices / 16 cables + 2 radio uplinks / 3 doors / 2 gas, got %d/%d/%d/%d",
+	// итерация 3 (§16.5): SRV1 — +1 устройство и +2 кабеля (c33/c34 к s1/s2)
+	if len(cs.order) != 21 || len(cs.cables) != 21 || len(cs.doors) != 3 || len(cs.gases) != 2 {
+		t.Fatalf("m1 props: want 21 devices / 19 cables + 2 radio uplinks / 3 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {
@@ -2584,6 +2586,9 @@ func cpSetup(t *testing.T) (*world, *player, *time.Time) {
 	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
 	ensureVulned(w, h, "t1")
 	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "t1"})
+	// §16.5: door_key сеется на SRV1 (за щитом); трансферные тесты проверяют
+	// механику cp/mv/rm — кладём item прямо на захваченный t1.
+	w.cyber.devices["t1"].items = append(w.cyber.devices["t1"].items, dataItem{Name: "door_key", MB: 60, Enc: true})
 	w.takeOut()
 	return w, h, clock
 }
@@ -2861,10 +2866,38 @@ func TestDeathWipesDeckMEM(t *testing.T) {
 
 // TestSeedTwoDoorKeys — решение владельца 2026-11-17: door_key сеется ДВУМЯ
 // копиями (t1+t2), rm убивает навсегда — матч-киллер исключён наличием
-// второй копии; альтернатива — физический перебор d3 (§16.7).
-func TestSeedTwoDoorKeys(t *testing.T) {
-	w, _, _ := cpSetup(t)
-	if !hostHasItem(w.cyber.devices["t1"], "door_key") || !hostHasItem(w.cyber.devices["t2"], "door_key") {
-		t.Fatalf("door_key must seed at BOTH t1 and t2")
+// TestSeedDoorKeyOnSrv1 — §16.5 (ревизия 2026-11-18): door_key живёт на SRV1
+// (одна копия — соревноваться короче), SRV1 стартует со щитом ×3, имя ключа —
+// поколение door_keyYYYYMMDDHHII.
+func TestSeedDoorKeyOnSrv1(t *testing.T) {
+	// SRV1 живёт во встроенной карте — крошечный cyberTestWorld его не несёт.
+	w := newWorld(mustParseEmbeddedMap(t))
+	now := time.Now()
+	w.now = func() time.Time { return now }
+	srv := w.cyber.devices["srv1"]
+	if srv == nil {
+		t.Fatalf("map must carry srv1")
+	}
+	if srv.shield != 3 {
+		t.Fatalf("srv1 shield = %d, want 3", srv.shield)
+	}
+	if len(srv.items) != 1 || !strings.HasPrefix(srv.items[0].Name, "door_key") || srv.items[0].MB != 60 {
+		t.Fatalf("srv1 must hold one door_key generation, items=%v", srv.items)
+	}
+	if w.cyber.devices["t1"].items != nil || w.cyber.devices["t2"].items != nil {
+		t.Fatalf("t1/t2 must not hold door_key anymore")
+	}
+	// Ротация T=120 с: следующее поколение появляется и код меняется.
+	code0 := w.doorKeyCode
+	now = now.Add(121 * time.Second)
+	w.simulateTick()
+	if len(srv.items) != 2 {
+		t.Fatalf("rotation must add a new generation, items=%v", srv.items)
+	}
+	if w.doorKeyCode == code0 || w.doorKeyPrevCode != code0 {
+		t.Fatalf("rotation must change code with grace: prev=%s cur=%s (old %s)", w.doorKeyPrevCode, w.doorKeyCode, code0)
+	}
+	if !w.doorKeyValid(nil, code0) || !w.doorKeyValid(nil, w.doorKeyCode) {
+		t.Fatalf("current and previous generation codes must be valid")
 	}
 }

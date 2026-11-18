@@ -50,7 +50,7 @@ export interface MapProp {
   to: string | null
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -233,6 +233,9 @@ export class PropsView {
         case 'terminal':
           view.buildTerminal(prop.id, prop.pos)
           break
+        case 'srv':
+          view.buildSrv(prop.id, prop.pos)
+          break
         case 'radio':
           view.buildRadio(prop.id, prop.pos, prop.radius)
           break
@@ -304,6 +307,19 @@ export class PropsView {
     sphere.material = this.mats.sphere
     sphere.isPickable = false
     this.radios.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius })
+  }
+
+  /** SRV (§16.5): серверная стойка — выше и толще терминала. */
+  private buildSrv(id: string, pos: readonly [number, number, number]): void {
+    const tower = MeshBuilder.CreateBox(`prop.${id}`, { width: 1.2, height: 2.2, depth: 0.8 }, this.scene)
+    tower.position.set(pos[0], pos[1] + 1.1, pos[2])
+    tower.material = this.mats.body
+    tower.isPickable = false
+    const led = MeshBuilder.CreateBox(`prop.${id}.led`, { width: 0.9, height: 0.08, depth: 0.6 }, this.scene)
+    led.position.set(pos[0], pos[1] + 2.26, pos[2])
+    led.material = this.mats.led
+    led.isPickable = false
+    this.terminals.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
   }
 
   private buildSwitch(id: string, pos: readonly [number, number, number]): void {
@@ -594,6 +610,12 @@ export class PropsView {
           }
           break
         }
+        case 'srv':
+          if (p.x === undefined || p.y === undefined || p.z === undefined) break
+          if (this.known(p.id)) break
+          this.buildSrv(p.id, [p.x, p.y, p.z])
+          dirty = true
+          break
         case 'terminal':
         case 'radio':
         case 'switch': {

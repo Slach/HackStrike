@@ -70,6 +70,7 @@ const KIND_LABEL: Readonly<Record<CyberKind, string>> = {
   cable: 'КАБЕЛЬ',
   gas: 'ГАЗ',
   valve: 'КЛАПАН',
+  srv: 'СЕРВЕР',
 }
 
 const PROG_LABEL: Readonly<Record<string, string>> = {

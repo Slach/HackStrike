@@ -30,7 +30,7 @@ export type ClientMessage =
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
 // 'valve' — водяной клапан: сетевой кибер-контроллер огня (по образцу газа).
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve'
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv'
 
 /** Сетевые устройства — всё, что бывает в scan/деке. Fire вычтен по построению:
  *  он не сканируется и не взламывается (§14.6.1) — управляют огнём через valve. */

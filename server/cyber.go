@@ -6,6 +6,7 @@ package main
 // кабели. Всё состояние трогает только горутина комнаты (инвариант 2).
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"sort"
@@ -84,6 +85,7 @@ var deviceStats = map[string]struct {
 	"gas":      {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §14.2: клапан — контроллер, как дверь
 	"valve":    {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §14.6.1: водяной клапан — контроллер, как газовый
 	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1}, // §13.7: сенсор, как switch
+	"srv":      {cpu: 1.0, npu: 1.0, net: 100, ram: 4}, // §16.5: сервер — CPU+NPU станция
 }
 
 // device — кибер-устройство (§12.2). Железо неизменно; динамика — owner
@@ -146,6 +148,11 @@ type device struct {
 	// трансферы/сканы ЧЕРЕЗ свитч делят её по-честному; слабый свитч = узкое
 	// место даже при толстых кабелях.
 	backplane float64
+
+	// shield/shieldAt — встроенный щит SRV (§16.5): заряды ×3 и момент
+	// последнего отбоя (реген +1/30 с от него, общий таймер).
+	shield   int
+	shieldAt time.Time
 
 	// log — журнал событий watcher'а (§13.1 №1): ring-buffer последних
 	// watcherLogCap записей; пишется пока на устройстве есть хотя бы один
@@ -233,6 +240,10 @@ func buildCyber(m *gameMap) *cyberState {
 		}
 		if d.kind == "radio" && d.radius <= 0 {
 			d.radius = jackRadioRadius
+		}
+		if d.kind == "srv" {
+			// §16.5: встроенный щит ×3 — свойство железа, не программа
+			d.shield = shieldMax
 		}
 		if d.kind == "door" {
 			d.box = aabb{
@@ -900,12 +911,137 @@ func (w *world) cpNominal(path []string) float64 {
 // матч-киллер исключён второй копией; альтернативный путь без ключа —
 // физический перебор d3 с подсказками §16.7). enc:true — код не читаем,
 // decrypt придёт в итерации 4. Дом-door_key SRV1 появится в итерации 3.
-func (w *world) seedData() {
-	for _, id := range []string{"t1", "t2"} {
-		if d := w.cyber.devices[id]; d != nil {
-			d.items = append(d.items, dataItem{Name: "door_key", MB: 60, Enc: true})
+// shieldMax — зарядов встроенного щита SRV (§16.5).
+const shieldMax = 3
+
+// shieldRegen — +1 заряд за 30 с от последнего отбоя (общий таймер на SRV,
+// решение владельца «ну давай 30с»): прожжённое отрастает, долбить надо одним
+// рывком.
+const shieldRegen = 30 * time.Second
+
+// shieldTick — реген щита SRV: от shieldAt, не больше shieldMax.
+func (w *world) shieldRegenTick() {
+	for _, d := range w.cyber.devices {
+		if d.kind != "srv" || d.shield >= shieldMax || d.shieldAt.IsZero() {
+			continue
+		}
+		now := w.now()
+		n := int(now.Sub(d.shieldAt) / shieldRegen)
+		if n <= 0 {
+			continue
+		}
+		step := time.Duration(n) * shieldRegen
+		d.shield = min(d.shield+n, shieldMax)
+		d.shieldAt = d.shieldAt.Add(step)
+		if d.shield >= shieldMax {
+			d.shieldAt = time.Time{}
 		}
 	}
+}
+
+// hitShield — щит SRV отбивает попытку (vulnscan/trojan/софт): −1 заряд,
+// таймер регена от последнего отбоя. true — отбито (нет зарядов = не отбито).
+func (w *world) hitShield(pl *player, d *device, prog string) bool {
+	if d.kind != "srv" || d.shield <= 0 || d.owner == pl.id {
+		return false
+	}
+	if d.owner != 0 && w.sameTeam(w.players[d.owner], pl) {
+		return false // §16.5: владелец и союзники щита не встречают
+	}
+	d.shield--
+	d.shieldAt = w.now()
+	w.dataDenied(pl, "shield", prog, "")
+	log.Printf("room: SRV %s shield repelled %s by player %d (%d left)", d.id, prog, pl.id, d.shield)
+	// watcher на SRV видит гринд (§16.5): ev shield — «гринд начался».
+	w.fireWatchers(d, pl, "shield", prog)
+	return true
+}
+
+// sameTeam — союзники ли (чистая проверка для щита).
+func (w *world) sameTeam(a, b *player) bool {
+	return a != nil && b != nil && a.team == b.team
+}
+
+// doorKeyName — имя поколения ключа (§16.5, ревизия 2026-11-18): данные —
+// лут на время, старые поколения — мусор (контрится rm).
+func doorKeyName(t time.Time) string {
+	return "door_key" + t.Format("200601021504")
+}
+
+// doorKeyGen — ротация ключа на SRV1 (T=120 с по времени мира, детерминизм):
+// новое поколение → на SRV1 кладётся свежий ключ; старые НЕ удаляются сами
+// (они мусор: код мёртв, MEM занят, чистится rm — choke-стратегия).
+const doorKeyRot = 120 * time.Second
+
+// doorKeyCodeOf — 4-значный код d3 от имени поколения (детерминированно,
+// FNV-1a: тесты и рестарты сервера дают тот же код для того же имени).
+func doorKeyCodeOf(name string) string {
+	hsh := uint32(2166136261)
+	for i := 0; i < len(name); i++ {
+		hsh ^= uint32(name[i])
+		hsh *= 16777619
+	}
+	return fmt.Sprintf("%04d", int(hsh%10000))
+}
+
+func (w *world) doorKeyTick() {
+	if w.matchStart.IsZero() || w.now().Sub(w.matchStart) < doorKeyRot {
+		return
+	}
+	// generation index по миру: раз в doorKeyRot
+	gen := int(w.now().Sub(w.matchStart) / doorKeyRot)
+	if w.doorKeyGen == gen {
+		return
+	}
+	w.doorKeyGen = gen
+	srv := w.cyber.devices[w.doorKeyHost]
+	if srv == nil {
+		return
+	}
+	name := doorKeyName(w.now())
+	for _, it := range srv.items {
+		if it.Name == name {
+			return // такое поколение уже лежит (минута та же)
+		}
+	}
+	srv.items = append(srv.items, dataItem{Name: name, MB: 60, Enc: true})
+	// грейс: предыдущее поколение валидно ещё одну ротацию (§16.7)
+	w.doorKeyPrevCode = w.doorKeyCode
+	w.doorKeyCode = doorKeyCodeOf(name)
+	w.doorKeyName = name
+	log.Printf("room: door_key rotated -> %s on %s", name, srv.id)
+}
+
+// doorKeyValidCodes — код d3 валиден для текущего и предыдущего поколения
+// (грейс одна ротация, §16.7): ротация за 2 с до ввода — не плевок в лицо.
+func (w *world) doorKeyValid(pl *player, code string) bool {
+	if code == w.doorKeyCode {
+		return true
+	}
+	return w.doorKeyPrevCode != "" && code == w.doorKeyPrevCode
+}
+
+// seedData — стартовые данные матча (§16.1): одно поколение door_key на SRV1.
+// Код d3 генерится здесь же (doorKeyCode), предыдущий пуст.
+func (w *world) seedData() {
+	if w.doorKeyHost == "" {
+		w.doorKeyHost = "srv1"
+	}
+	srv := w.cyber.devices[w.doorKeyHost]
+	if srv == nil {
+		return
+	}
+	w.matchStart = w.now()
+	w.doorKeyGen = 0
+	w.doorKeyName = doorKeyName(w.now())
+	w.doorKeyCode = doorKeyCodeOf(w.doorKeyName)
+	// идемпотентно: повторный seed (рестарт матча) не плодит копию поколения
+	for _, it := range srv.items {
+		if it.Name == w.doorKeyName {
+			return
+		}
+	}
+	srv.items = append(srv.items, dataItem{Name: w.doorKeyName, MB: 60, Enc: true})
 }
 
 // cpCancelled — трансфер умер (§16.2 «отмена»): сменился владелец
@@ -977,6 +1113,11 @@ func (w *world) handleRun(pl *player, msg message) {
 		}
 		if prog == "trojan" && !dev.vulnedBy[pl.id] {
 			w.denied(pl, "not_vulned", prog, devID)
+			return
+		}
+		// §16.5: встроенный щит SRV отбивает попытки взлома (−1 заряд). Стоит
+		// ПОСЛЕ not_vulned: сначала отмычка, потом щит.
+		if w.hitShield(pl, dev, prog) {
 			return
 		}
 		// Решение владельца (c) 2026-11-16 «vulnscan = отмычка»: утилиты
