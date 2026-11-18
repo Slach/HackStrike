@@ -184,7 +184,7 @@ export type ServerMessage =
   | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; memUsed?: number; mem?: number; data?: DataItem[]; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   // dev (omitempty, §13.5) — где упёрся скан: firewall_scan
-  | { t: 'code'; dev: string; ok: boolean; match?: number } // §16.7: итог ввода кода (match — N/4)
+  | { t: 'code'; dev: string; ok: boolean; match?: number; open?: boolean } // §16.7: итог ввода кода (match — N/4; open — итоговое состояние створки: код-тоггл, повторный ввод ЗАКРЫВАЕТ)
   | { t: 'denied'; reason: string; dev?: string; prog?: string; data?: string } // §16.2: data-операции несут prog/data (красная карточка отказа)
   // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
   // into my watched device) from firewall (enemy portscan hit my filter,

@@ -83,7 +83,7 @@ let jackChannel: { dev: string; s: number; at: number } | null = null
 let jackErrorUntil = 0
 let prevInteractUi = 0
 // §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
-let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; timer: HTMLElement; showResult: (ok: boolean, match?: number) => void } | null = null
+let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; timer: HTMLElement; showResult: (ok: boolean, match?: number, open?: boolean) => void } | null = null
 let keyLeftMs = -1 // §16.5: последний keyLeft из снапшота
 let lastSnapAt = 0 // performance.now() последнего снапшота (для локального отсчёта таймеров)
 
@@ -207,9 +207,12 @@ function openCodePad(dev: string, kp: string): void {
     wrap,
     status,
     timer,
-    showResult: (ok, match) => {
+    showResult: (ok, match, open) => {
       if (ok) {
-        status.textContent = 'ОТКРЫТО ✓'
+        // §16.7 (плейтест): код-ТОГГЛ — повторный ввод ЗАКРЫВАЕТ и запирает
+        // дверь. «ОТКРЫТО» только когда створка реально открылась, иначе
+        // «ПРАВИЛЬНО» (сервер шлёт итоговое open; старый сервер — без поля).
+        status.textContent = open === false ? 'ПРАВИЛЬНО — ДВЕРЬ ЗАКРЫТА И ЗАПЕРТА' : 'ОТКРЫТО ✓'
         status.className = 'codepad-status ok'
         window.setTimeout(() => {
           if (codePad !== null && codePad.dev === dev) close()
@@ -490,7 +493,7 @@ const sock = new GameSocket({
             codePad.status.textContent = 'СЛИШКОМ ЧАСТО — ПОДОЖДИ 2 С'
             codePad.status.className = 'codepad-status bad'
           } else {
-            codePad.showResult(msg.ok, msg.match)
+            codePad.showResult(msg.ok, msg.match, msg.open)
           }
         }
         break

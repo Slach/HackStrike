@@ -1729,18 +1729,15 @@ func (w *world) handleEnter(pl *player, msg message) {
 		if !dev.open {
 			dev.locked = true // ввод кода на открытой двери запирает обратно
 		}
-		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": true})
-		log.Printf("room: player %d entered valid code on %s", pl.id, devID)
+		// open — итоговое состояние створки: код-ТОГГЛ, повторный ввод
+		// ЗАКРЫВАЕТ и запирает дверь (плейтест: «пишет ОТКРЫТО, а дверь на
+		// самом деле закрывается — путаница»; клиент отвечает «ПРАВИЛЬНО»).
+		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": true, "open": dev.open})
+		log.Printf("room: player %d entered valid code on %s (open=%v)", pl.id, devID, dev.open)
 		return
 	}
 	if flood {
 		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": false, "match": -1})
-		return
-	}
-	if !dev.locked {
-		// дверь уже открыта кодом (или отперта): ввод трактуем как проверку
-		// кода без смены створки — иначе повторный ввод молчал бы
-		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": true})
 		return
 	}
 	// подсказка N/4: цифра верна И на своей позиции; секрет — поколение,
