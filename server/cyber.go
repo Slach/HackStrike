@@ -102,7 +102,7 @@ func deviceHalfExtents(kind string) vec3 {
 	case "srv":
 		return vec3{0.6, 2.2, 0.4}
 	case "radio":
-		return vec3{0.2, 0.6, 0.2}
+		return vec3{0.15, 1.6, 0.15} // §16.5-стиль: узкая мачта-столб, а не тумбочка
 	default:
 		return vec3{}
 	}
