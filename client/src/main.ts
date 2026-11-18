@@ -83,7 +83,9 @@ let jackChannel: { dev: string; s: number; at: number } | null = null
 let jackErrorUntil = 0
 let prevInteractUi = 0
 // §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
-let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; showResult: (ok: boolean, match?: number) => void } | null = null
+let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; timer: HTMLElement; showResult: (ok: boolean, match?: number) => void } | null = null
+let keyLeftMs = -1 // §16.5: последний keyLeft из снапшота
+let lastSnapAt = 0 // performance.now() последнего снапшота (для локального отсчёта таймеров)
 
 /** §16.7: клавиатура d3 — пад из 10 кнопок (как настоящий кодовый замок).
  *  Под pointer-lock фокус полю ввода не отдашь, поэтому ввод слушает window:
@@ -106,6 +108,8 @@ function openCodePad(dev: string, kp: string): void {
   const status = document.createElement('div')
   status.className = 'codepad-status'
   status.textContent = 'ЦИФРЫ ИЛИ КЛИК · ENTER — ВВОД · ESC — ЗАКРЫТЬ'
+  const timer = document.createElement('div')
+  timer.className = 'codepad-timer'
   const grid = document.createElement('div')
   grid.className = 'codepad-grid'
   let digits = ''
@@ -189,7 +193,7 @@ function openCodePad(dev: string, kp: string): void {
   const head = document.createElement('div')
   head.className = 'codepad-head'
   head.append(title, x)
-  wrap.append(head, disp, grid, status)
+  wrap.append(head, disp, grid, status, timer)
   document.body.append(wrap)
   draw()
   window.addEventListener('keydown', onKey, true)
@@ -198,6 +202,7 @@ function openCodePad(dev: string, kp: string): void {
     kp,
     wrap,
     status,
+    timer,
     showResult: (ok, match) => {
       if (ok) {
         status.textContent = 'ОТКРЫТО ✓'
@@ -321,6 +326,8 @@ function handleSnap(snap: SnapMsg): void {
   }
   hud.setVitals(me !== undefined ? me.hp : 0, CLASS_BY_KEY[myCls].hp, CLASS_BY_KEY[myCls].label)
   hud.setScores(snap.scores, snap.timeLeft / 1000) // hud expects seconds, wire has ms
+  if (snap.keyLeft !== undefined) keyLeftMs = snap.keyLeft
+  lastSnapAt = performance.now()
 
   // Killfeed from observed alive→dead transitions, attributed to the most
   // recent shot with a hit (raw shot spam at 8-12 shots/s would flood it).
@@ -881,6 +888,16 @@ engine.runRenderLoop(() => {
     }
   }
   hud.jackinHint(hint, channelProgress, hintError)
+  // §16.5: таймер «до смены кода» в паде — из последнего keyLeft снапшота,
+  // локально вычитаем прошедшее, чтобы он шёл секундами без 30 Гц пересылки.
+  if (codePad !== null && keyLeftMs >= 0 && lastSnapAt > 0) {
+    const msAge = performance.now() - lastSnapAt
+    const left = Math.max(0, keyLeftMs - msAge)
+    const mm = Math.floor(left / 60000)
+    const ss = Math.floor((left % 60000) / 1000)
+    codePad.timer.textContent = `ДО СМЕНЫ КОДА: ${mm}:${String(ss).padStart(2, '0')}`
+    codePad.timer.classList.toggle('soon', left < 20000)
+  }
 
   let fired = false
   // Авто-зум снайпера: враг в конусе ~25°, ближе 20 м и в прямой видимости

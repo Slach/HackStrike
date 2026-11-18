@@ -510,6 +510,9 @@ func (w *world) broadcastSnap() {
 		"scores":     w.scores,
 		"timeLeft":   w.timeLeftMs(),
 		"timeLeftMs": w.timeLeftMs(),
+		// §16.5: остаток до смены поколения door_key (ротация T=120 с) —
+		// таймер «до смены кода осталось» в паде d3. −1: вне матча.
+		"keyLeft": w.doorKeyLeftMs(),
 		"props":      w.cyber.snapProps(), // M2: двери/кабели/точки входа (§12.5)
 	})
 }

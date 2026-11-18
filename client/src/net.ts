@@ -165,6 +165,7 @@ export interface Snapshot {
   players: SnapPlayer[]
   scores: [number, number]
   timeLeft: number
+  keyLeft?: number // §16.5: мс до смены кода d3 (ротация door_key)
   props: readonly SnapProp[] // M2; empty for pre-M2 servers
 }
 
@@ -437,6 +438,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         players,
         scores,
         timeLeft: Math.max(0, num(m.timeLeft, 0)),
+        keyLeft: typeof m.keyLeft === 'number' ? m.keyLeft : undefined,
         props,
       }
     }

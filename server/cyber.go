@@ -1097,6 +1097,20 @@ func (w *world) resetDoorKey() {
 	log.Printf("room: door_key reset for new match -> %s", w.doorKeyName)
 }
 
+// doorKeyLeftMs — сколько осталось до следующей ротации поколения (§16.5):
+// клиент считает таймер в паде. −1 — матч не идёт.
+func (w *world) doorKeyLeftMs() int64 {
+	if w.matchStart.IsZero() {
+		return -1
+	}
+	el := w.now().Sub(w.matchStart)
+	if el < 0 {
+		return -1
+	}
+	left := doorKeyRot - el%doorKeyRot
+	return left.Milliseconds()
+}
+
 // doorKeyCodeNow — код d3 поколения: от имени + старта матча (чистая дата в
 // имени иначе повторяла бы код между матчами одного дня — запомнил и вошёл).
 func (w *world) doorKeyCodeNow(name string) string {
