@@ -867,13 +867,13 @@ export class PropsView {
    *     (§12.1 «дорогой вход», канал 6 с). */
   /** §16.7: ближайшая клавиатура замка в том же этаже — space у неё
    *  открывает пад кода вместо джек-ина. */
-  nearestKeypad(x: number, z: number, playerY?: number): { door: string; dist: number } | null {
+  nearestKeypad(x: number, z: number, playerY?: number): { door: string; id: string; dist: number } | null {
     const eyeY = (playerY ?? 0) + 1.6
-    let best: { door: string; dist: number } | null = null
+    let best: { door: string; id: string; dist: number } | null = null
     for (const k of this.codeDoors.values()) {
       if (Math.abs(k.y + 1.3 - eyeY) > 2.6) continue
       const dist = Math.hypot(k.x - x, k.z - z)
-      if (best === null || dist < best.dist) best = { door: k.door, dist }
+      if (best === null || dist < best.dist) best = { door: k.door, id: k.id, dist }
     }
     return best
   }

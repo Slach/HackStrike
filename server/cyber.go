@@ -556,6 +556,11 @@ func (w *world) jackTarget(pl *player) *device {
 	bestDot := math.Cos(25 * math.Pi / 180)
 	for _, id := range w.cyber.order {
 		d := w.cyber.devices[id]
+		// §16.7: клавиатура замка — настенный контроллер, не точка джек-ина
+		// (space у неё = пад кода, а не вход в сеть).
+		if d.kind == "keypad" {
+			continue
+		}
 		r := jackTerminalRadius
 		if d.kind == "radio" {
 			r = d.radius

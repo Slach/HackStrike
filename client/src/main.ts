@@ -83,20 +83,24 @@ let jackChannel: { dev: string; s: number; at: number } | null = null
 let jackErrorUntil = 0
 let prevInteractUi = 0
 // §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
-let codePad: { dev: string; wrap: HTMLElement; status: HTMLElement; showResult: (ok: boolean, match?: number) => void } | null = null
+let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; showResult: (ok: boolean, match?: number) => void } | null = null
 
 /** §16.7: клавиатура d3 — пад из 10 кнопок (как настоящий кодовый замок).
  *  Под pointer-lock фокус полю ввода не отдашь, поэтому ввод слушает window:
  *  цифры/Backspace/Enter/Esc, пока пад открыт; кнопки кликаются и тапаются.
  *  Ответ сервера `code` рисует ОК/НЕВЕРНО + «N/4 цифр на месте» — подсказка:
  *  N цифр из 4 стоят на СВОИХ местах (Fallout-style). */
-function openCodePad(dev: string): void {
+function openCodePad(dev: string, kp: string): void {
   if (codePad !== null) return
   const wrap = document.createElement('div')
   wrap.className = 'codepad'
   const title = document.createElement('div')
   title.className = 'codepad-title'
   title.textContent = `ЗАМОК ${dev.toUpperCase()}`
+  const x = document.createElement('button')
+  x.className = 'codepad-x'
+  x.textContent = '×'
+  x.addEventListener('click', () => close())
   const disp = document.createElement('div')
   disp.className = 'codepad-display'
   const status = document.createElement('div')
@@ -113,14 +117,19 @@ function openCodePad(dev: string): void {
     window.removeEventListener('keydown', onKey, true)
     wrap.remove()
     codePad = null
+    // вернуть пиксельный захват мыши — пад был модальным окном над игрой
+    canvas.requestPointerLock?.()
   }
+  // под pointer-lock Esc выходит из захвата и до страницы не доходит —
+  // отпускаем lock на время пада, чтобы Esc/×/клики работали честно
+  document.exitPointerLock?.()
   const submit = (): void => {
     if (digits.length !== 4) {
       status.textContent = 'НУЖНО 4 ЦИФРЫ'
       status.className = 'codepad-status bad'
       return
     }
-    sock.send({ t: 'enter', dev, code: digits } as never)
+    sock.send({ t: 'enter', dev: kp, code: digits } as never)
     digits = ''
     draw()
     status.textContent = 'ПРОВЕРКА…'
@@ -177,12 +186,16 @@ function openCodePad(dev: string): void {
     b.addEventListener('click', () => press(k))
     grid.append(b)
   }
-  wrap.append(title, disp, grid, status)
+  const head = document.createElement('div')
+  head.className = 'codepad-head'
+  head.append(title, x)
+  wrap.append(head, disp, grid, status)
   document.body.append(wrap)
   draw()
   window.addEventListener('keydown', onKey, true)
   codePad = {
     dev,
+    kp,
     wrap,
     status,
     showResult: (ok, match) => {
@@ -750,7 +763,7 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
         if (codePad !== null || !playing || hackview.active) return false
         const kp = pv.nearestKeypad(camera.position.x, camera.position.z, camera.position.y - EYE_HEIGHT)
         if (kp === null || kp.dist > 2) return false
-        openCodePad(kp.door)
+        openCodePad(kp.door, kp.id)
         return true
       }
     }

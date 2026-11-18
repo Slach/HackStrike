@@ -1631,9 +1631,32 @@
         z-index: 30;
         touch-action: manipulation;
       }
+      .codepad-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+      }
       .codepad-title {
         font-size: 11px;
         opacity: 0.8;
+      }
+      .codepad-x {
+        background: none;
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 3px;
+        color: #baffdd;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1;
+        padding: 2px 7px;
+        cursor: pointer;
+      }
+      .codepad-x:hover {
+        background: rgba(255, 77, 94, 0.2);
+        color: #ffb3dd;
+        border-color: rgba(255, 77, 94, 0.6);
       }
       .codepad-display {
         font-size: 22px;
@@ -1672,7 +1695,8 @@
         background: rgba(255, 77, 94, 0.08);
       }
       .codepad-key.ok {
-        grid-column: span 2;
+        grid-column: span 3;
+        justify-self: stretch;
         width: auto;
         color: #eafff3;
         border-color: rgba(55, 255, 155, 0.7);
