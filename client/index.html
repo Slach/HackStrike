@@ -1917,6 +1917,66 @@
         }
       }
 
+      /* DECRYPT-карточка (§16.4, плейтест «другую анимацию, со %»): голубой
+         NPU-бар с медленным ходом (transition 1 с сглаживает job 1 Гц и deck
+         2 Гц), пульс яркости, крупный процент и бегущая hex-строка. */
+      .hv-cptoast.dec {
+        border-color: rgba(125, 215, 255, 0.55);
+        color: #cfeeff;
+        box-shadow: 0 0 16px rgba(95, 215, 255, 0.22);
+        min-width: 230px;
+      }
+      .hv-cptoast.dec .cpbar {
+        height: 9px;
+      }
+      .hv-cptoast.dec .cpbar-fill {
+        background: linear-gradient(90deg, #5fd7ff, #9d7bff);
+        transition: width 1s linear;
+        animation: decpulse 0.9s ease-in-out infinite;
+      }
+      @keyframes decpulse {
+        0%,
+        100% {
+          filter: brightness(1);
+        }
+        50% {
+          filter: brightness(1.45);
+        }
+      }
+      .hv-cptoast.dec .decmeta {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        margin-top: 4px;
+      }
+      .hv-cptoast.dec .decpct {
+        font-size: 15px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        color: #8ee0ff;
+        text-shadow: 0 0 8px rgba(95, 215, 255, 0.65);
+      }
+      .hv-cptoast.dec .decscr {
+        font-size: 9px;
+        letter-spacing: 2px;
+        color: rgba(142, 224, 255, 0.5);
+        white-space: nowrap;
+        overflow: hidden;
+        max-width: 130px;
+      }
+      .hv-cptoast.dec.ok .cpbar-fill {
+        animation: none;
+        background: #37ff9b;
+      }
+      .hv-cptoast.dec.ok .decpct {
+        color: #7dff9e;
+        text-shadow: 0 0 8px rgba(55, 255, 155, 0.6);
+      }
+      .hv-cptoast.dec.ok .decscr {
+        color: rgba(125, 255, 158, 0.8);
+      }
+
       /* ── Мобильная адаптация (ГДД §15): оверлей meatview + touch-слой деки.
          Всё под body.touch — класс вешает mobile.ts при детекте пальца;
          на десктопе правила не применяются (нулевая регрессия). ── */

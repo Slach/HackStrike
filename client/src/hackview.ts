@@ -279,14 +279,21 @@ export class HackView {
     missed: number
     seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
   }[] = []
-  /** SRV-decrypt джобы команде (§16.9 job 1 Гц): карточка прогресса взлома
-   *  на сервере — союзник видит, что идёт decrypt, даже не будучи в сети. */
-  private jobToasts: {
+  /** DECRYPT-карточки (§16.4, плейтест «другую анимацию, со %»): голубой
+   *  NPU-бар, крупный процент, бегущая hex-строка. Прогресс из двух каналов:
+   *  job 1 Гц (SRV-джобы, всей команде) и deck-сообщение 2 Гц (джоба деки);
+   *  CSS transition сглаживает низкую частоту. timer — hex-скрэмбл-интервал. */
+  private jobCards: {
+    key: string
     dev: string
     data: string
     wrap: HTMLElement
     fill: HTMLElement
-    status: HTMLElement
+    pct: HTMLElement
+    scr: HTMLElement
+    seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
+    missed: number // дековые: тики deck-сообщения без процесса (финиш)
+    timer: number
   }[] = []
   private deckMemUsed = 0
   private deckMemCap = 0
@@ -396,6 +403,11 @@ export class HackView {
     // cp-тосты прошлой сессии деки мертвы вместе с ней (transfers отменены
     // сервером при джек-ауте) — не оставляем висеть
     this.cpToasts = []
+    // DECRYPT-карточки тоже: дековые джобы отменены джек-аутом, SRV живёт,
+    // но её карточка пересоздастся из job при новом джек-ине. Интервалы —
+    // остановить (утечка setInterval, §16.4).
+    for (const r of this.jobCards) window.clearInterval(r.timer)
+    this.jobCards = []
     // Дедупликаторы тостов-«находок» живут в синглтоне страницы и переживали
     // смерть/реконнект: повторный vulnscan той же цели приходил как «не новое»
     // и тост «УЯЗВИМОСТЬ НАЙДЕНА» глох — выглядело «vulnscan не находит»
@@ -535,11 +547,22 @@ export class HackView {
       this.failCpToasts(msg.dev ?? '')
       return
     }
+    // Отказ decrypt (§16.4): красим ТУ ЖЕ DECRYPT-карточку (плейтест «два
+    // прогрессбара» — вторую не плодим); нет карточки — готовая красная.
+    if (msg.prog === 'decrypt') {
+      const r = this.jobCards.find((x) => x.data === msg.data)
+      if (r !== undefined) {
+        this.jobCardFinish(r, false)
+      } else {
+        this.denyCard('decrypt', msg.data ?? '', msg.reason)
+      }
+      return
+    }
     // Отказ data-операции (denied несёт prog/data, §16.2): красим ТУ ЖЕ
     // оптимистичную карточку красным мигающим баром (плейтест: «два
     // прогрессбара» — вторую не плодим); карточки нет (rm или рассинхрон) —
     // создаём готовую красную.
-    if (msg.prog === 'cp' || msg.prog === 'mv' || msg.prog === 'rm' || msg.prog === 'decrypt') {
+    if (msg.prog === 'cp' || msg.prog === 'mv' || msg.prog === 'rm') {
       const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
       const r =
         msg.prog === 'rm'
@@ -1107,9 +1130,10 @@ export class HackView {
         r.status.textContent = 'ГОТОВО ✓'
         this.fadeCard(r.wrap, 1300)
       } else {
-        this.failCard(r, 'НЕ ЗАПУЩЕНО СЕРВЕРОМ')
-      }
+      this.failCard(r, 'НЕ ЗАПУЩЕНО СЕРВЕРОМ')
     }
+    this.updateJobCards()
+  }
   }
 
   /** Покраснить карточку отказа: красный мигающий бар + причина (§16.2). */
@@ -1139,49 +1163,100 @@ export class HackView {
     }
   }
 
-  /** Отправка decrypt (§16.4): джоба на хосте, где лежат данные. Дековая
-   *  джоба видна в списке процессов деки; SRV-джоба приходит команде через
-   *  job 1 Гц (onJob → карточка прогресса). */
+  /** Отправка decrypt (§16.4): джоба на хосте, где лежат данные. Карточка
+   *  создаётся сразу (плеер видит, что стартовало); прогресс придёт из
+   *  deck-сообщения (дека, 2 Гц) или job 1 Гц (SRV, команде). */
   private sendDecrypt(src: string, key: string): void {
     this.deps.send({ t: 'run', prog: 'decrypt', dev: src, data: key })
-    const mb = this.dataHostItems(src).find((it) => it.n === key)?.mb ?? 0
-    this.toast(
-      `DECRYPT ${key.toUpperCase()}${src === 'deck' ? ' · ДЕКА' : ` · ${src.toUpperCase()}`} — ${mb > 0 ? `${mb} МБ` : 'СТАРТ…'} · ${src === 'deck' ? '2 МБ/С' : 'NPU ×3'}`,
-    )
+    this.jobCardStart(`decrypt:${src}/${key}`, src, key)
   }
 
-  /** job 1 Гц (§16.9): прогресс SRV-decrypt — карточка с полосой, как у cp.
+  /** DECRYPT-карточка: голубой NPU-бар с плавным ходом (CSS transition
+   *  сглаживает 1 Гц job / 2 Гц deck), крупный процент и бегущая hex-строка —
+   *  визуально «расшифровка», а не полоска трансфера (плейтест: «скучно»). */
+  private jobCardStart(key: string, dev: string, data: string): (typeof this.jobCards)[number] {
+    const wrap = el('div', 'hv-toast hv-cptoast dec')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `DECRYPT ${data.toUpperCase()}`),
+      txt('span', 'cpdst', `· ${dev === 'deck' ? 'ДЕКА · NPU ×1' : `${dev.toUpperCase()} · NPU ×3`}`),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    fill.style.width = '0%'
+    bar.append(fill)
+    const meta = el('div', 'decmeta')
+    const pct = txt('span', 'decpct', '0%')
+    const scr = txt('span', 'decscr', '')
+    meta.append(pct, scr)
+    wrap.append(row, bar, meta)
+    this.toasts.append(wrap)
+    const rec: (typeof this.jobCards)[number] = {
+      key, dev, data, wrap, fill, pct, scr, seen: false, missed: 0, timer: 0,
+    }
+    // hex-скрэмбл: «работа NPU» — интервал гасится только с карточкой
+    const HEX = '0123456789abcdef'
+    rec.timer = window.setInterval(() => {
+      let s = ''
+      for (let i = 0; i < 16; i++) s += HEX[Math.floor(Math.random() * 16)]
+      rec.scr.textContent = s
+    }, 70)
+    this.jobCards.push(rec)
+    return rec
+  }
+
+  private jobCardProgress(rec: (typeof this.jobCards)[number], p: number): void {
+    rec.seen = true
+    rec.missed = 0
+    const v = Math.min(1, Math.max(0, p))
+    rec.fill.style.width = `${Math.round(v * 100)}%`
+    rec.pct.textContent = `${Math.round(v * 100)}%`
+  }
+
+  private jobCardFinish(rec: (typeof this.jobCards)[number], ok: boolean): void {
+    window.clearInterval(rec.timer)
+    rec.wrap.classList.add(ok ? 'ok' : 'fail')
+    rec.fill.style.width = '100%'
+    if (ok) {
+      rec.pct.textContent = '100%'
+      rec.scr.textContent = '▸ ГОТОВО ✓ — КОД У КОМАНДЫ'
+    } else {
+      rec.scr.textContent = '▸ ОТКАЗ ✗'
+    }
+    this.jobCards = this.jobCards.filter((x) => x !== rec)
+    this.fadeCard(rec.wrap, ok ? 1600 : 2400)
+  }
+
+  /** job 1 Гц (§16.9): прогресс SRV-decrypt — та же DECRYPT-карточка.
    *  Приходит КОМАНДЕ (и после джек-аута/смерти запустившего); prog=1 —
    *  «ГОТОВО ✓» (код уже у команды — codes/HUD). */
   onJob(msg: { dev: string; data: string; prog: number }): void {
     if (!this._active) return
-    let r = this.jobToasts.find((x) => x.dev === msg.dev && x.data === msg.data)
-    if (r === undefined) {
-      const wrap = el('div', 'hv-toast hv-cptoast')
-      const row = el('div', 'cprow')
-      row.append(
-        txt('span', 'cptitle', `DECRYPT ${msg.data.toUpperCase()}`),
-        txt('span', 'cpdst', `· ${msg.dev.toUpperCase()}`),
-      )
-      const bar = el('div', 'cpbar')
-      const fill = el('div', 'cpbar-fill')
-      fill.style.width = '0%'
-      bar.append(fill)
-      const status = txt('div', 'cpstatus', 'NPU-ОЧЕРЕДЬ…')
-      wrap.append(row, bar, status)
-      this.toasts.append(wrap)
-      r = { dev: msg.dev, data: msg.data, wrap, fill, status }
-      this.jobToasts.push(r)
-    }
+    const key = `decrypt:${msg.dev}/${msg.data}`
+    let r = this.jobCards.find((x) => x.key === key)
+    if (r === undefined) r = this.jobCardStart(key, msg.dev, msg.data)
     if (msg.prog >= 1) {
-      r.fill.style.width = '100%'
-      r.status.textContent = 'ГОТОВО ✓ — КОД У КОМАНДЫ'
-      this.jobToasts = this.jobToasts.filter((x) => x !== r)
-      this.fadeCard(r.wrap, 1600)
+      this.jobCardFinish(r, true)
       return
     }
-    r.fill.style.width = `${Math.round(msg.prog * 100)}%`
-    r.status.textContent = `${Math.round(msg.prog * 100)}% · NPU`
+    this.jobCardProgress(r, msg.prog)
+  }
+
+  /** Дековые DECRYPT-джобы: МБ-прогресс из deck-сообщения 2 Гц; два тика
+   *  без процесса — джоба кончилась (финиш/отказ на старте — как у cp). */
+  private updateJobCards(): void {
+    for (const r of [...this.jobCards]) {
+      if (r.dev !== 'deck') continue // SRV-джобы идут через job 1 Гц
+      const mb = this.deckData.find((it) => it.n === r.data)?.mb ?? 0
+      const p = this.progs.find((q) => q.prog === 'decrypt' && q.data === r.data)
+      if (p !== undefined && mb > 0 && p.mbLeft !== undefined) {
+        this.jobCardProgress(r, 1 - p.mbLeft / mb)
+        continue
+      }
+      r.missed += 1
+      if (r.missed < 2) continue
+      this.jobCardFinish(r, r.seen)
+    }
   }
 
   private pushHistoryClose(raw: string): void {
