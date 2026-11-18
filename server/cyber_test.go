@@ -2623,6 +2623,25 @@ func TestCpDeckTransfer(t *testing.T) {
 	if used := w.deckItemsUsed(h); used != 60 {
 		t.Fatalf("deck after transfer = %d, want 60 (item, reservation gone)", used)
 	}
+	// Wire (§16.1): deck-сообщение обязано нести инвентарь — плейтест:
+	// data[] не клалось в сообщение, дека на клиенте была вечно пуста.
+	// Deck-тик 2 Гц (раз в 15 тиков) — флашим буфер (там до-финишные deck'и)
+	// и крутим до ближайшего окна после завершения трансфера.
+	w.takeOut()
+	var deckMsg message
+	for i := 0; i < 30 && deckMsg == nil; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+		for _, om := range w.takeOut() {
+			if om.msg["t"] == "deck" && om.to == h.id {
+				deckMsg = om.msg
+			}
+		}
+	}
+	inv, ok := deckMsg["data"].([]dataItem)
+	if !ok || len(inv) != 1 || inv[0].Name != "door_key" {
+		t.Fatalf("deck message must carry data inventory, got %+v", deckMsg["data"])
+	}
 }
 
 // TestCpDenied — §16.2: dup и mem_full.

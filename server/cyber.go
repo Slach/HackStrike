@@ -815,6 +815,16 @@ func (w *world) deckItemsUsed(pl *player) int {
 	return used
 }
 
+// deckInventory — копия инвентаря деки для deck-сообщения (§16.1: data[]).
+// Копия — marshal уходит в горутину записи, мутацию src.items в это время
+// никто не трогает, но скан-путь делает так же (единый стиль, без гонок).
+func deckInventory(pl *player) []dataItem {
+	if len(pl.items) == 0 {
+		return nil
+	}
+	return append([]dataItem(nil), pl.items...)
+}
+
 // hostMemFree — свободный MEM устройства (§16.2): ёмкость минус items минус
 // резервации активных cp всех игроков в этот хост.
 func (w *world) hostMemFree(dev *device) int {
@@ -1740,6 +1750,8 @@ func (w *world) deckStatusTick() {
 			// §16.1: MEM деки — занято данными + резервациями (МБ)
 			"memUsed": w.deckItemsUsed(p),
 			"mem":     deckMEM,
+			// §16.1: инвентарь деки — только владельцу, живёт пока джекнут
+			"data":    deckInventory(p),
 			// §12.1 «дорогой вход»: канал не-точки входа — худший кабель, а
 			// не паспортный netMbps устройства.
 			"netLoad": round3(math.Min(1, float64(n)*progNetMbps/w.deckNet(p))),
