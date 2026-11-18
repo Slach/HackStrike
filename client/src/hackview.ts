@@ -768,11 +768,15 @@ export class HackView {
 
   // ── команда данных `data` (§16.2) ───────────────────────────────────────
 
-  /** Хост активного таба для контекста data: 'deck' на деке, id устройства. */
-  private activeTabHost(): string {
+  /** Контекст данных (§16.2, плейтест: «жму data ls — а оно на деке, хотя
+   *  T1 затроянен»): устройство активного таба → выбранная на карте цель →
+   *  дека. Как у остального софта: цель — то, на что жал. */
+  private dataCtxHost(): string {
     const pane = this.panes[this.activePane]
     const dev = pane !== undefined ? (this.tabs.find((t) => t.key === pane.tabKey)?.dev ?? null) : null
-    return dev !== null ? dev : 'deck'
+    if (dev !== null) return dev
+    if (this.target !== null) return this.target
+    return 'deck'
   }
 
   /** Токен — адресуемый хост data: 'deck' или устройство (префикс, уникальный). */
@@ -820,14 +824,14 @@ export class HackView {
   private dataEntry(): void {
     this.openPalette('run')
     if (IS_TOUCH) {
-      const host = this.activeTabHost()
+      const host = this.dataCtxHost()
       if (this.dataHostItems(host).length > 0) this.paletteDataHost = host
       this.updatePalette()
       return
     }
     const pal = this.palette
     if (pal !== null && pal.input !== null) {
-      const host = this.activeTabHost()
+      const host = this.dataCtxHost()
       pal.input.value = host === 'deck' ? 'data ls' : `data ${host} ls`
       this.execDataLs(host, pal.input.value)
     }
@@ -845,7 +849,7 @@ export class HackView {
       }
       return { host, key: it.n }
     }
-    const active = this.activeTabHost()
+    const active = this.dataCtxHost()
     const srcs = this.dataSources()
     const hits = srcs.filter((s) => find(s.items) !== undefined)
     const pick = hits.find((s) => s.host === active) ?? hits.find((s) => s.host === 'deck')
@@ -890,7 +894,7 @@ export class HackView {
     if (sub === undefined) {
       // `data [host]` без подкоманды = ls (кнопка 7 даёт ровно это)
       if (a.length - i === 0) {
-        this.execDataLs(host ?? this.activeTabHost(), pal.input.value.trim())
+        this.execDataLs(host ?? this.dataCtxHost(), pal.input.value.trim())
         return
       }
       this.toast('ПОДКОМАНДА: LS / CP / RM — TAB ПОКАЖЕТ СПИСОК')
@@ -898,12 +902,12 @@ export class HackView {
     }
     const keyTok = a[i + 1]
     if (sub === 'ls') {
-      this.execDataLs(host ?? this.activeTabHost(), pal.input.value.trim())
+      this.execDataLs(host ?? this.dataCtxHost(), pal.input.value.trim())
       return
     }
     if (keyTok === undefined) {
       // fast-path: на источнике ровно один item — старт сразу (как кнопка)
-      const h = host ?? this.activeTabHost()
+      const h = host ?? this.dataCtxHost()
       const items = this.dataHostItems(h)
       if (sub === 'cp' && h === 'deck') {
         this.toast('С ДЕКИ — УКАЖИ ПРИЁМНИК: DATA CP <KEY> <HOST>')
@@ -1380,7 +1384,7 @@ export class HackView {
     const name = at >= 0 ? nameTok.slice(0, at) : nameTok
     const h = at >= 0 ? this.dataHostAt(nameTok.slice(at + 1)) : host
     if (h !== null) return this.dataHostItems(h).some((it) => it.n === name) ? h : null
-    const active = this.activeTabHost()
+    const active = this.dataCtxHost()
     const srcs = this.dataSources().filter((s) => s.items.some((it) => it.n === name))
     const pick = srcs.find((s) => s.host === active) ?? srcs.find((s) => s.host === 'deck')
     if (pick !== undefined) return pick.host
@@ -1495,7 +1499,7 @@ export class HackView {
       ![...this.devices.values()].some((d) => this.devMatch(d, dq))
     // reverse-форма (§16.2): первый токен — item активного таба
     // («door_key cp t2» из открытого таба с данными).
-    const activeHost = this.activeTabHost()
+    const activeHost = this.dataCtxHost()
     const revItems = isTabMode
       ? []
       : this.dataHostItems(activeHost).filter((it) => dq === '' || it.n.toLowerCase().startsWith(dq))
@@ -1751,7 +1755,7 @@ export class HackView {
     }
     // reverse-форма (§16.2): item активного таба + cp/rm. Гвард — точное
     // имя item, иначе «cam1 cp» даст тост про данные до тоста про программу.
-    if ((t1 === 'cp' || t1 === 'rm') && this.dataHostItems(this.activeTabHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
+    if ((t1 === 'cp' || t1 === 'rm') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
       const src = this.resolveDataSrc((finalTokens[0] ?? '').toLowerCase(), null)
       if (src !== null) {
         if (t1 === 'rm') {
@@ -1787,7 +1791,7 @@ export class HackView {
     }
     if (sel === undefined && tokens.length === 1 && !/\s$/.test(pal.input.value)) {
       // «/door⏎» без выбора — единственный вхождение-префикс item таба
-      const host = this.activeTabHost()
+      const host = this.dataCtxHost()
       const hit = this.dataHostItems(host).find((it) => it.n.toLowerCase().startsWith(t0))
       if (
         hit !== undefined &&
@@ -1801,7 +1805,7 @@ export class HackView {
       }
     }
     if (sel !== undefined && sel.kind === 'datacmd') {
-      this.execDataLs(sel.dev ?? this.activeTabHost(), raw)
+      this.execDataLs(sel.dev ?? this.dataCtxHost(), raw)
       return
     }
     // Порядок токенов — тот же детектор, что в updatePalette: первый токен,
