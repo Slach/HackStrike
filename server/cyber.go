@@ -963,10 +963,12 @@ func (w *world) sameTeam(a, b *player) bool {
 }
 
 // doorKeyName — имя поколения ключа (§16.5, ревизия 2026-11-18): данные —
-// лут на время, старые поколения — мусор (контрится rm). Читаемо для
-// игрока: номер поколения + дата («door_key3_2026-11-18»).
-func doorKeyName(t time.Time, gen int) string {
-	return fmt.Sprintf("door_key%d_%s", gen+1, t.Format("2006-01-02"))
+// лут на время. Читаемо для игрока: ЧАСЫ-МИНУТЫ генерации + дата
+// («door_key1432_2026-11-18»), не порядковый номер — владелец: «HHII это
+// часы и минуты, а не просто 1,2,3,4». Ротация раз в 2 минуты → имена
+// уникальны внутри матча.
+func doorKeyName(t time.Time) string {
+	return fmt.Sprintf("door_key%s_%s", t.Format("1504"), t.Format("2006-01-02"))
 }
 
 // doorKeyGen — ротация ключа на SRV1 (T=120 с по времени мира, детерминизм):
@@ -1002,7 +1004,10 @@ func (w *world) doorKeyTick() {
 	if srv == nil {
 		return
 	}
-	name := doorKeyName(w.now(), gen)
+	name := doorKeyName(w.now())
+	if w.doorKeyName == name {
+		return // защитно: та же минута — то же поколение
+	}
 	// Решение владельца (плейтест 2026-11-18): старые поколения НЕ удаляем —
 	// за 10-минутный матч их максимум 6 × 60 = 360 МБ ≤ MEM 512. Хакер, не
 	// вскрывший SRV1, не знает, какой ключ валиден (грейс держит только
@@ -1024,7 +1029,7 @@ func (w *world) resetDoorKey() {
 	w.matchStart = w.now()
 	w.doorKeyGen = 0
 	w.doorKeyPrevCode = ""
-	w.doorKeyName = doorKeyName(w.now(), 0)
+	w.doorKeyName = doorKeyName(w.now())
 	w.doorKeyCode = w.doorKeyCodeNow(w.doorKeyName)
 	if srv := w.cyber.devices[w.doorKeyHost]; srv != nil {
 		kept := srv.items[:0]
