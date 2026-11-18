@@ -815,6 +815,11 @@ func TestEmbeddedMapCyberFloor2(t *testing.T) {
 	// террасы y=8), дверь data-отсека достижима от неё.
 	w.handleMessage(h, message{"t": "jackout"})
 	jackAt(w, h, "t3")
+	// Тело из лавы: lv3 покрывает весь пол комнаты (плейтест «лава по всей
+	// поверхности»), t3 — в её центре, 25 HP/с убивает за тики. Тест
+	// проверяет ТОПОЛОГИЮ (t3 → d3), а не урон среды — джекнутый хакер
+	// работает из сети, телу достаточно быть живым.
+	h.pos = vec3{19, 8, 32} // коридор 2 этажа к западу от d5
 	if !h.jacked || h.jackHost.id != "t3" {
 		t.Fatalf("hacker must be able to jack into the second-floor entry t3")
 	}
