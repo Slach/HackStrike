@@ -536,8 +536,28 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         dev,
         ok: m.ok === true,
         ...(Number.isFinite(match) ? { match } : {}),
+        // §16.7 (плейтест): итоговое состояние створки — код-ТОГГЛ, повторный
+        // ввод ЗАКРЫВАЕТ; без поля (старый сервер) — open undefined.
+        ...(typeof m.open === 'boolean' ? { open: m.open } : {}),
       }
     }
+    case 'job':
+      // §16.9 job 1 Гц: прогресс SRV-decrypt команде. Без кейса здесь
+      // защитный парсер дропал сообщение — проценты на карточке стояли на 0%
+      // (плейтест: «красиво, но проценты не увеличиваются»).
+      return {
+        t: 'job',
+        dev: str(m.dev) ?? '',
+        data: str(m.data) ?? '',
+        prog: num(m.prog, 0),
+      }
+    case 'codes':
+      // §16.9 codes: код, узнанный командой через decrypt (HUD «КОД D3»).
+      return {
+        t: 'codes',
+        door: str(m.door) ?? undefined,
+        safe: str(m.safe) ?? undefined,
+      }
     case 'denied': {
       const dev = str(m.dev)
       const prog = str(m.prog)
