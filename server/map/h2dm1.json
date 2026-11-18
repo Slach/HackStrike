@@ -2698,6 +2698,22 @@
      32
     ]
    ]
+  },
+  {
+   "kind": "safe",
+   "id": "netsafe",
+   "pos": [
+    29,
+    8,
+    33
+   ]
+  },
+  {
+   "kind": "cable",
+   "id": "c38",
+   "from": "s3",
+   "to": "netsafe",
+   "bw": 10
   }
  ],
  "spawns": {

@@ -55,6 +55,13 @@ type world struct {
 	// отсылается вошедшим позже (addPlayer). Чистится на новом матче.
 	doorCodes map[int]string
 
+	// §16.6: safe_key на NETSAFE — код сейфа (итерация 5): фиксирован на
+	// матч (safe_key не ротируется, в отличие от door_key), узнаётся тем же
+	// decrypt-путём (cp → decrypt → codes.safe → HUD «КОД СЕЙФА»).
+	safeKeyHost string
+	safeCode    string
+	safeCodes   map[int]string
+
 	// now инъектится для тестов; в проде time.Now.
 	now func() time.Time
 	out []outMsg
@@ -176,6 +183,7 @@ func (w *world) startMatchIfNeeded() {
 			w.resetDoorKey()
 		}
 		w.doorCodes = map[int]string{}
+		w.safeCodes = map[int]string{}
 	}
 }
 
@@ -276,12 +284,10 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 	w.players[id] = pl
 	w.startMatchIfNeeded()
 	w.sendTo(id, message{"t": "welcome", "id": id, "team": pl.team, "tick": w.tick})
-	// §16.4: код, узнанный командой (decrypt → HUD «КОД D3»), knows навсегда
+	// §16.4/§16.6: коды, узнанные командой (decrypt → HUD), знает навсегда
 	// в рамках матча — вошедшему позже досылаем (вор убил носителя — код
 	// у команды не пропадает).
-	if code := w.doorCodes[pl.team]; code != "" {
-		w.sendTo(id, message{"t": "codes", "door": code})
-	}
+	w.sendCodes(pl.team)
 	// Death overlay is drawn only by the private `death` message; при возврате
 	// из сессии мёртвым оно уже упущено — без досыла игрок застревает с 0 HP
 	// без кнопки респавна (баг-репорт владельца 2026-11-17, ГДД §9.2/§11).

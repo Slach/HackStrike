@@ -84,7 +84,7 @@ func (m *gameMap) parseProps() error {
 			return fmt.Errorf("map: prop %d: %w", i, err)
 		}
 		switch p.Kind {
-		case "terminal", "radio", "switch", "door", "gas", "fire", "valve", "camera", "cable", "srv", "keypad":
+		case "terminal", "radio", "switch", "door", "gas", "fire", "valve", "camera", "cable", "srv", "keypad", "safe":
 		default:
 			return fmt.Errorf("map: prop %d: unknown kind %q", i, p.Kind)
 		}

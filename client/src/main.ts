@@ -85,6 +85,8 @@ let prevInteractUi = 0
 // §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
 let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; timer: HTMLElement; showResult: (ok: boolean, match?: number, open?: boolean) => void } | null = null
 let keyLeftMs = -1 // §16.5: последний keyLeft из снапшота
+let teamDoorCode: string | null = null // §16.4: код d3, узнанный командой (codes)
+let teamSafeCode: string | null = null // §16.6: код сейфа, узнанный командой (codes)
 let lastSnapAt = 0 // performance.now() последнего снапшота (для локального отсчёта таймеров)
 
 /** §16.7: клавиатура d3 — пад из 10 кнопок (как настоящий кодовый замок).
@@ -440,18 +442,23 @@ const sock = new GameSocket({
         break
       case 'matchend':
         handleEnd(msg)
-        hud.setDoorCode(null) // новый матч — коды перегенерированы (§16.4)
+        teamDoorCode = null // новый матч — коды перегенерированы (§16.4/§16.6)
+        teamSafeCode = null
+        hud.setCodes(null, null)
         break
       case 'job':
         // §16.9 job: прогресс SRV-decrypt команде (1 Гц, в т.ч. после
         // джек-аута/смерти запустившего) — карточка прогресса в hackview.
         hackview.onJob(msg)
         break
-      case 'codes':
-        // §16.9 codes: код, узнанный командой через decrypt, — навсегда
-        // в рамках матча. HUD «КОД D3: 4731».
-        if (msg.door !== undefined) hud.setDoorCode(msg.door)
+      case 'codes': {
+        // §16.9 codes: коды, узнанные командой через decrypt (door_key и
+        // safe_key), — навсегда в рамках матча. HUD «КОД D3 · СЕЙФ».
+        if (msg.door !== undefined) teamDoorCode = msg.door
+        if (msg.safe !== undefined) teamSafeCode = msg.safe
+        hud.setCodes(teamDoorCode, teamSafeCode)
         break
+      }
       case 'jackin':
         hackviewOn(msg)
         jackChannel = null // канал установлен — подсказку прогресса гасим

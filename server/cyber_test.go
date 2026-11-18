@@ -690,8 +690,9 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// итерация 3 (§16.5): SRV1 — +1 устройство и +2 кабеля (c33/c34 к s1/s2);
 	// код-замок: d4/d5/d6 — +3 двери и +3 кабеля (c35–c37 к s3); клавиатуры
 	// на ОБЕИХ сторонах d3–d6 — +8 устройств и +8 кабелей (c380–c387 к s3).
-	if len(cs.order) != 32 || len(cs.cables) != 32 || len(cs.doors) != 6 || len(cs.gases) != 2 {
-		t.Fatalf("m1 props: want 32 devices / 30 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
+	// итерация 5 (§16.6): NETSAFE — +1 устройство и +1 кабель (c38 к s3, ветка 10).
+	if len(cs.order) != 33 || len(cs.cables) != 33 || len(cs.doors) != 6 || len(cs.gases) != 2 {
+		t.Fatalf("m1 props: want 33 devices / 31 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {
@@ -3026,12 +3027,14 @@ func decryptWorld(t *testing.T) (*world, *player, *time.Time) {
 	  {"kind":"switch","id":"s1","pos":[5,1,15]},
 	  {"kind":"switch","id":"s2","pos":[35,1,25]},
 	  {"kind":"srv","id":"srv1","pos":[20,1,33]},
+	  {"kind":"safe","id":"netsafe","pos":[20,1,27]},
 	  {"kind":"door","id":"d1","pos":[20,1,20],"size":[4,3,0.3],"axis":"x","to":"s1"},
 	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
 	  {"kind":"cable","id":"c2","from":"t2","to":"s2"},
 	  {"kind":"cable","id":"c3","from":"s1","to":"s2","points":[[5,1.15,15],[5,1.15,28],[35,1.15,28],[35,1.15,25]]},
 	  {"kind":"cable","id":"c4","from":"s1","to":"d1"},
-	  {"kind":"cable","id":"c5","from":"s1","to":"srv1","bw":20}
+	  {"kind":"cable","id":"c5","from":"s1","to":"srv1","bw":20},
+	  {"kind":"cable","id":"c6","from":"s1","to":"netsafe","bw":10}
 	 ]}`
 	m, err := parseGameMap([]byte(j))
 	if err != nil {
@@ -3196,5 +3199,83 @@ func TestDecryptNpuQueue(t *testing.T) {
 	}
 	if srv.items[0].Enc || srv.items[1].Enc {
 		t.Fatalf("both jobs must finish by 21 s at half rate")
+	}
+}
+
+// TestNetSafe — §16.6 (итерация 5): safe_key сеется на NETSAFE (MEM 128,
+// БЕЗ NPU — decrypt-станции только SRV/дека): decrypt на месте — denied npu;
+// путь — cp на деку (ветка 10: 120 МБ = 12 с) → decrypt → код сейфа команде
+// (codes.safe, HUD «КОД СЕЙФА»); safe-код фиксирован на матч и не равен
+// коду d3; новый матч пересеивает safe_key.
+func TestNetSafe(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	ns := w.cyber.devices["netsafe"]
+	if len(ns.items) != 1 || ns.items[0].Name != "safe_key" || ns.items[0].MB != 120 || !ns.items[0].Enc {
+		t.Fatalf("seedData must seed safe_key 120 enc on netsafe, got %v", ns.items)
+	}
+	if ns.npu > 0 {
+		t.Fatalf("NETSAFE must have no NPU (decrypt-stations are SRV/deck)")
+	}
+	ns.owner = h.id
+	h.scanned["netsafe"] = true
+	// decrypt на месте — denied npu
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "netsafe", "data": "safe_key"})
+	if !hasDenied(w.takeOut(), h.id, "npu") {
+		t.Fatalf("NETSAFE must be denied npu")
+	}
+	// cp на деку: ветка 10 МБ/с (c6) — бутылочка маршрута; 120 МБ = 12 с
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "netsafe", "dst": "deck", "data": "safe_key"})
+	p := findProg(h, "cp")
+	if p == nil {
+		t.Fatalf("cp netsafe->deck must start")
+	}
+	if p.mb != 120 || p.mbps != 10 {
+		t.Fatalf("cp mb/mbps = %d/%v, want 120/10 (branch cable c6)", p.mb, p.mbps)
+	}
+	for i := 0; i < 13*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !deckHasItem(h, "safe_key") {
+		t.Fatalf("deck must hold the safe_key copy")
+	}
+	if !hostHasItem(ns, "safe_key") {
+		t.Fatalf("cp must keep the source copy on netsafe")
+	}
+	// decrypt на деке (NPU ×1): 120 МБ / 2 = 60 с
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "safe_key"})
+	for i := 0; i < 61*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	it := h.items[0]
+	if it.Name != "safe_key" || it.Enc || it.Code == "" {
+		t.Fatalf("safe_key must be decrypted with the safe code, got %+v", it)
+	}
+	if it.Code == w.doorKeyCode {
+		t.Fatalf("safe code must differ from the d3 code")
+	}
+	out := w.takeOut()
+	found := false
+	for _, m := range out {
+		if m.msg["t"] == "codes" && m.msg["safe"] == it.Code {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("finished decrypt must send codes.safe to the team")
+	}
+	if w.safeCodes[h.team] != it.Code {
+		t.Fatalf("team must know the safe code permanently")
+	}
+	// новый матч: safe_key пересеян на NETSAFE, узнанные коды стёрты
+	w.doorCodes = map[int]string{}
+	w.safeCodes = map[int]string{}
+	w.resetDoorKey()
+	if !hostHasItem(ns, "safe_key") || ns.items[0].Enc == false {
+		t.Fatalf("new match must reseed an encrypted safe_key on netsafe")
+	}
+	if w.safeCodes[h.team] != "" {
+		t.Fatalf("known codes must be wiped on a new match")
 	}
 }

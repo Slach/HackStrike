@@ -22,7 +22,7 @@ export interface MiniSelf {
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe'
 
 export interface MiniProp {
   x: number
@@ -248,6 +248,14 @@ export class Minimap {
         ctx.fillRect(x - 4, y - 5, 8, 10)
         ctx.strokeRect(x - 4.5, y - 5.5, 9, 11)
         ctx.strokeRect(x - 2, y - 3, 4, 6)
+      } else if (p.kind === 'safe') {
+        // NETSAFE (§16.6): квадрат с точкой-замком, приглушённый синий
+        ctx.strokeStyle = 'rgba(95,180,255,0.9)'
+        ctx.strokeRect(x - 4, y - 4, 8, 8)
+        ctx.fillStyle = 'rgba(95,180,255,0.9)'
+        ctx.beginPath()
+        ctx.arc(x, y, 1.4, 0, Math.PI * 2)
+        ctx.fill()
       } else {
         // switch: ромб
         ctx.strokeStyle = 'rgba(255,210,55,0.9)'

@@ -51,7 +51,7 @@ export interface MapProp {
   locked: boolean
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -185,6 +185,9 @@ export class PropsView {
   private readonly terminals = new Map<string, SimpleProp>()
   private readonly radios = new Map<string, SimpleProp>()
   private readonly switches = new Map<string, SimpleProp>()
+  /** §16.6: NETSAFE-сейфы — отдельная карта: свой тултип/джек-лейбл
+   *  («NETSAFE», не «ТЕРМИНАЛ») и свой глиф на миникарте. */
+  private readonly safes = new Map<string, SimpleProp>()
   private readonly doors = new Map<string, DoorView>()
   /** §16.7: двери с код-замком и клавиатуры (space у клавиатуры → пад). */
   private readonly lockedDoors = new Set<string>()
@@ -243,6 +246,9 @@ export class PropsView {
           break
         case 'srv':
           view.buildSrv(prop.id, prop.pos)
+          break
+        case 'safe':
+          view.buildSafe(prop.id, prop.pos)
           break
         case 'keypad':
           view.buildKeypad(prop.id, prop.pos, prop.to)
@@ -334,6 +340,25 @@ export class PropsView {
     led.material = this.mats.led
     led.isPickable = false
     this.terminals.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
+  }
+
+  /** §16.6: NETSAFE — тумба-сейф у s3: корпус + дверца с ручкой. Хранит
+   *  safe_key; без щита (защита = дверь-код + лава + дистанция, §16.6). */
+  private buildSafe(id: string, pos: readonly [number, number, number]): void {
+    const body = MeshBuilder.CreateBox(`prop.${id}`, { width: 1.0, height: 1.1, depth: 1.0 }, this.scene)
+    body.position.set(pos[0], pos[1] + 0.55, pos[2])
+    body.material = this.mats.body
+    body.isPickable = false
+    const face = MeshBuilder.CreateBox(`prop.${id}.face`, { width: 0.7, height: 0.7, depth: 0.06 }, this.scene)
+    face.position.set(pos[0], pos[1] + 0.55, pos[2] + 0.51)
+    face.material = this.mats.pipe // приглушённый синий — отличим от терминала
+    face.isPickable = false
+    const handle = MeshBuilder.CreateCylinder(`prop.${id}.h`, { diameter: 0.08, height: 0.3 }, this.scene)
+    handle.position.set(pos[0] + 0.22, pos[1] + 0.55, pos[2] + 0.55)
+    handle.rotation.z = Math.PI / 2
+    handle.material = this.mats.led
+    handle.isPickable = false
+    this.safes.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
   }
 
   /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space.
@@ -778,6 +803,9 @@ export class PropsView {
     for (const t of this.terminals.values()) {
       boxes.push({ label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, min: [t.x - 0.6, t.y, t.z - 0.6], max: [t.x + 0.6, t.y + 1.4, t.z + 0.6] })
     }
+    for (const sf of this.safes.values()) {
+      boxes.push({ label: `NETSAFE ${sf.id.toUpperCase()}`, min: [sf.x - 0.6, sf.y, sf.z - 0.6], max: [sf.x + 0.6, sf.y + 1.2, sf.z + 0.6] })
+    }
     for (const r of this.radios.values()) {
       boxes.push({ label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, min: [r.x - 0.7, r.y, r.z - 0.7], max: [r.x + 0.7, r.y + 2, r.z + 0.7] })
     }
@@ -946,6 +974,11 @@ export class PropsView {
       if (!sameFloor(ty)) continue
       pts.push({ id: t.id, label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, dist: Math.hypot(t.x - x, t.z - z), range: TERMINAL_RANGE, dx: t.x - x, dz: t.z - z, ty })
     }
+    for (const sf of this.safes.values()) {
+      const ty = sf.y + 1.2
+      if (!sameFloor(ty)) continue
+      pts.push({ id: sf.id, label: `NETSAFE ${sf.id.toUpperCase()}`, dist: Math.hypot(sf.x - x, sf.z - z), range: TERMINAL_RANGE, dx: sf.x - x, dz: sf.z - z, ty })
+    }
     for (const r of this.radios.values()) {
       const range = r.radius ?? DEFAULT_RADIO_RANGE
       const ty = r.y + 1.5
@@ -1095,6 +1128,7 @@ export class PropsView {
 
   hostKind(id: string): CyberKind | null {
     if (this.terminals.has(id)) return 'terminal'
+    if (this.safes.has(id)) return 'safe'
     if (this.radios.has(id)) return 'radio'
     if (this.switches.has(id)) return 'switch'
     if (this.doors.has(id)) return 'door'
@@ -1108,12 +1142,13 @@ export class PropsView {
 
   private known(id: string): boolean {
     return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id) ||
-      this.cameras.has(id) || this.gases.has(id) || this.fires.has(id) || this.valves.has(id)
+      this.cameras.has(id) || this.gases.has(id) || this.fires.has(id) || this.valves.has(id) || this.safes.has(id)
   }
 
   private rebuildMini(): void {
     const out: MiniProp[] = []
     for (const t of this.terminals.values()) out.push({ x: t.x, z: t.z, kind: 'terminal' })
+    for (const sf of this.safes.values()) out.push({ x: sf.x, z: sf.z, kind: 'safe' })
     for (const r of this.radios.values()) out.push({ x: r.x, z: r.z, kind: 'radio' })
     for (const s of this.switches.values()) out.push({ x: s.x, z: s.z, kind: 'switch' })
     for (const c of this.cameras.values()) out.push({ x: c.x, z: c.z, kind: 'camera' })

@@ -831,17 +831,20 @@ export class Hud {
     this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
   }
 
-  /** Код, узнанный командой (§16.4/§16.9 codes → HUD «КОД D3: 4731»):
-   *  постоянная строка — команда знает код до конца матча. null — скрыть
-   *  (новый матч: коды перегенерированы). */
-  setDoorCode(code: string | null): void {
+  /** Коды, узнанные командой (§16.4/§16.6/§16.9 codes → HUD «КОД D3: 4731
+   *  · СЕЙФ: 8241»): постоянная строка — команда знает код до конца матча.
+   *  Оба null — скрыть (новый матч: коды перегенерированы). */
+  setCodes(door: string | null, safe: string | null): void {
     const el = this.el.hudCode
     if (el === null) return
-    if (code === null) {
+    const parts: string[] = []
+    if (door !== null) parts.push(`КОД D3: ${door}`)
+    if (safe !== null) parts.push(`СЕЙФ: ${safe}`)
+    if (parts.length === 0) {
       el.classList.add('hidden')
       return
     }
-    el.textContent = `КОД D3: ${code}`
+    el.textContent = parts.join('  ·  ')
     el.classList.remove('hidden')
   }
 

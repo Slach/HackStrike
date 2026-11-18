@@ -93,6 +93,7 @@ var deviceStats = map[string]struct {
 	"camera":   {cpu: 0.2, npu: 0, net: 100, ram: 1},   // §13.7: сенсор, как switch
 	"srv":      {cpu: 1.0, npu: 1.0, net: 100, ram: 4}, // §16.5: сервер — CPU+NPU станция
 	"keypad":   {cpu: 0.1, npu: 0, net: 10, ram: 1},    // §16.7: клавиатура замка — контроллер
+	"safe":     {cpu: 0.2, npu: 0, net: 100, ram: 1},   // §16.6: NETSAFE — хранилище без NPU (decrypt-станции — SRV/дека)
 }
 
 // deviceHalfExtents — корпус устройства для коллизии: [halfW, height,
@@ -110,6 +111,8 @@ func deviceHalfExtents(kind string) vec3 {
 		return vec3{0.6, 2.2, 0.4}
 	case "radio":
 		return vec3{0.15, 1.6, 0.15} // §16.5-стиль: узкая мачта-столб, а не тумбочка
+	case "safe":
+		return vec3{0.5, 1.1, 0.5} // §16.6: NETSAFE-тумба — непроходима, как терминал
 	default:
 		return vec3{}
 	}
@@ -1111,7 +1114,8 @@ func (w *world) doorKeyTick() {
 // resetDoorKey — новый матч (§16.5): SRV1 чистится от старых поколений,
 // код перегенерирован, грейс сброшен. Ключи в деках игроков тоже устарели —
 // матч-специфичный лут не переезжает в следующий раунд (плейтест:
-// «не чистятся после 10 минут, в новом раунде»).
+// «не чистятся после 10 минут, в новом раунде»). §16.6: NETSAFE так же
+// чистится и пересеивается safe_key, код сейфа перегенерирован.
 func (w *world) resetDoorKey() {
 	w.matchStart = w.now()
 	w.doorKeyGen = 0
@@ -1127,16 +1131,26 @@ func (w *world) resetDoorKey() {
 		}
 		srv.items = append(kept, dataItem{Name: w.doorKeyName, MB: 60, Enc: true})
 	}
+	// §16.6: safe_key — не ротируется, но матч-специфичен (код сейфа от
+	// старта матча — не повторяется между матчами, как и код d3).
+	if w.safeKeyHost == "" {
+		w.safeKeyHost = "netsafe"
+	}
+	w.safeCode = w.doorKeyCodeNow("safe_key")
+	if ns := w.cyber.devices[w.safeKeyHost]; ns != nil {
+		ns.items = []dataItem{{Name: "safe_key", MB: 120, Enc: true}}
+	}
 	for _, pl := range w.players {
 		kept := pl.items[:0]
 		for _, it := range pl.items {
-			if !strings.HasPrefix(it.Name, "door_key") {
+			// матч-специфичный лут (door_key + safe_key) не переезжает
+			if !strings.HasPrefix(it.Name, "door_key") && it.Name != "safe_key" {
 				kept = append(kept, it)
 			}
 		}
 		pl.items = kept
 	}
-	log.Printf("room: door_key reset for new match -> %s", w.doorKeyName)
+	log.Printf("room: door_key reset for new match -> %s, safe_key reseeded (code %s)", w.doorKeyName, w.safeCode)
 }
 
 // doorKeyLeftMs — сколько осталось до следующей ротации поколения (§16.5):
@@ -1573,12 +1587,7 @@ func (w *world) finishDecrypt(dev *device, j *devJob) {
 		}
 		dev.items[i].Enc = false
 		dev.items[i].Code = w.decryptCodeOf(j.data)
-		if dev.items[i].Code != "" {
-			if w.doorCodes == nil {
-				w.doorCodes = map[int]string{}
-			}
-			w.doorCodes[j.team] = dev.items[i].Code
-		}
+		w.noteTeamCode(j.team, j.data, dev.items[i].Code)
 		w.sendCodes(j.team)
 		break
 	}
@@ -1595,13 +1604,35 @@ func (w *world) finishDecrypt(dev *device, j *devJob) {
 }
 
 // decryptCodeOf — код внутри item'а: door_key несёт код своего поколения
-// (§16.5: FNV-1a от имени + старта матча). safe_key появится с NETSAFE
-// (итерация 5); прочие данные кода не имеют.
+// (§16.5: FNV-1a от имени + старта матча); safe_key — код сейфа (§16.6,
+// фиксирован на матч). Прочие данные кода не имеют.
 func (w *world) decryptCodeOf(name string) string {
 	if strings.HasPrefix(name, "door_key") {
 		return w.doorKeyCodeNow(name)
 	}
+	if strings.HasPrefix(name, "safe_key") {
+		return w.safeCode
+	}
 	return ""
+}
+
+// noteTeamCode — команда узнала код (§16.4): ключ по имени — door_key
+// кладётся в doorCodes (HUD «КОД D3»), safe_key в safeCodes («КОД СЕЙФА»).
+func (w *world) noteTeamCode(team int, name, code string) {
+	if code == "" {
+		return
+	}
+	if w.doorCodes == nil {
+		w.doorCodes = map[int]string{}
+	}
+	if w.safeCodes == nil {
+		w.safeCodes = map[int]string{}
+	}
+	if strings.HasPrefix(name, "door_key") {
+		w.doorCodes[team] = code
+	} else if strings.HasPrefix(name, "safe_key") {
+		w.safeCodes[team] = code
+	}
 }
 
 // sendJob — прогресс SRV-decrypt команде запустившего (§16.9 job 1 Гц,
@@ -1618,16 +1649,25 @@ func (w *world) sendJob(j *devJob, dev *device) {
 	}
 }
 
-// sendCodes — код, узнанный командой (§16.9 codes): HUD «КОД D3: 4731».
-// Уходит всей команде при расшифровке и каждому вошедшему позже (addPlayer).
+// sendCodes — коды, узнанные командой (§16.9 codes): HUD «КОД D3» и
+// «КОД СЕЙФА». Уходит всей команде при расшифровке и вошедшим позже
+// (addPlayer); поле только то, что команда уже знает.
 func (w *world) sendCodes(team int) {
-	code := w.doorCodes[team]
-	if code == "" {
+	door := w.doorCodes[team]
+	safe := w.safeCodes[team]
+	if door == "" && safe == "" {
 		return
+	}
+	m := message{"t": "codes"}
+	if door != "" {
+		m["door"] = door
+	}
+	if safe != "" {
+		m["safe"] = safe
 	}
 	for _, p := range w.players {
 		if p.team == team {
-			w.sendTo(p.id, message{"t": "codes", "door": code})
+			w.sendTo(p.id, m)
 		}
 	}
 }
@@ -2031,13 +2071,8 @@ func (w *world) completeProgram(pl *player, p *program) {
 			}
 			pl.items[i].Enc = false
 			pl.items[i].Code = w.decryptCodeOf(p.data)
-			if pl.items[i].Code != "" {
-				if w.doorCodes == nil {
-					w.doorCodes = map[int]string{}
-				}
-				w.doorCodes[pl.team] = pl.items[i].Code
-				w.sendCodes(pl.team)
-			}
+			w.noteTeamCode(pl.team, p.data, pl.items[i].Code)
+			w.sendCodes(pl.team)
 			break
 		}
 		log.Printf("room: decrypt %s on deck finished (team %d)", p.data, pl.team)
