@@ -182,7 +182,7 @@ export type ServerMessage =
   | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; memUsed?: number; mem?: number; data?: DataItem[]; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   // dev (omitempty, §13.5) — где упёрся скан: firewall_scan
-  | { t: 'denied'; reason: string; dev?: string }
+  | { t: 'denied'; reason: string; dev?: string; prog?: string; data?: string } // §16.2: data-операции несут prog/data (красная карточка отказа)
   // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
   // into my watched device) from firewall (enemy portscan hit my filter,
   // one alert per scan run) or antivirus (enemy trojan repelled).
@@ -519,7 +519,15 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
     }
     case 'denied': {
       const dev = str(m.dev)
-      return { t: 'denied', reason: str(m.reason) ?? 'unknown', ...(dev !== null ? { dev } : {}) }
+      const prog = str(m.prog)
+      const data = str(m.data)
+      return {
+        t: 'denied',
+        reason: str(m.reason) ?? 'unknown',
+        ...(dev !== null ? { dev } : {}),
+        ...(prog !== null ? { prog } : {}),
+        ...(data !== null ? { data } : {}),
+      }
     }
     case 'alert': {
       const dev = str(m.dev)

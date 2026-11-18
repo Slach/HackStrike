@@ -513,16 +513,45 @@ export class HackView {
 
   onDenied(msg: DeniedMsg): void {
     if (!this._active) return
-    // cp_cancel (§16.2): у активного cp-тоста своя судьба — красное
-    // «ПРЕРВАНО» на его полосе, общий тост не нужен (дубль).
+    // cp_cancel (§16.2): у активного cp/mv-тоста своя судьба — полоса
+    // краснеет и мигает («ой-ой отказ»), общий тост не нужен (дубль).
     if (msg.reason === 'cp_cancel') {
       this.failCpToasts(msg.dev ?? '')
+      return
+    }
+    // Отказ data-операции (denied несёт prog/data, §16.2): красная
+    // мигающая карточка вместо безличного тоста (плейтест: «сам прогрессбар
+    // красным и мигающим — ой ой отказ»).
+    if (msg.prog === 'cp' || msg.prog === 'mv' || msg.prog === 'rm') {
+      this.denyCard(msg.prog, msg.data ?? '', msg.reason)
       return
     }
     const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
     // firewall_scan несёт хост с фильтром (§13.5) — показываем, ГДЕ упёрся
     // и что с этим делать (плейтест M4: тост без действия бесполезен).
     this.toast(msg.dev !== undefined ? `${base} (${msg.dev.toUpperCase()}) — НУЖЕН TROJAN НА ХОСТЕ` : base)
+  }
+
+  /** Карточка отказа data-операции: бар полный красный, мигает (§16.2). */
+  private denyCard(prog: 'cp' | 'mv' | 'rm', key: string, reason: string): void {
+    const wrap = el('div', 'hv-toast hv-cptoast fail')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `${prog.toUpperCase()} ${key.toUpperCase()} ✗`),
+      txt('span', 'cpdst', 'ОТКАЗ'),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    fill.style.width = '100%'
+    bar.append(fill)
+    const base = DENIED_TEXT[reason] ?? `ОТКАЗАНО: ${reason}`
+    const status = txt('div', 'cpstatus', base)
+    wrap.append(row, bar, status)
+    this.toasts.append(wrap)
+    window.setTimeout(() => {
+      wrap.classList.add('fade')
+      window.setTimeout(() => wrap.remove(), 500)
+    }, 2600)
   }
 
   /** Сработал watcher (M3 §13.2): чужой джек-ин в устройство с моим триггером. */
@@ -1055,7 +1084,7 @@ export class HackView {
     for (const r of [...this.cpToasts]) {
       if (r.dev !== dev) continue
       r.wrap.classList.add('fail')
-      r.status.textContent = 'ПРЕРВАНО — ПРОГРЕСС ПОТЕРЯН'
+      r.status.textContent = 'ОТКАЗ — ПРОГРЕСС ПОТЕРЯН'
       this.cpToasts = this.cpToasts.filter((x) => x !== r)
       window.setTimeout(() => {
         r.wrap.classList.add('fade')

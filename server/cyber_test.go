@@ -2707,6 +2707,16 @@ func TestCpDenied(t *testing.T) {
 	if !hasDenied(out, h.id, "dup") {
 		t.Fatalf("second cp of same item must be denied dup")
 	}
+	// Wire (§16.2 ред. «красный мигающий бар»): denied несёт prog+data.
+	deniedWire := false
+	for _, om := range out {
+		if om.to == h.id && om.msg["t"] == "denied" && om.msg["prog"] == "cp" && om.msg["data"] == "door_key" {
+			deniedWire = true
+		}
+	}
+	if !deniedWire {
+		t.Fatalf("data-op denied must carry prog+data on wire")
+	}
 	// mem_full: докачать до отказа нельзя (t1 один item) — вместо этого
 	// деку почти заполняем и пробуем второй item большего размера: seed
 	// дополнительного item'а на t2 (владелец h) через прямой доступ.

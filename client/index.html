@@ -1748,9 +1748,20 @@
         box-shadow: 0 0 16px rgba(255, 77, 94, 0.3);
         color: #ffb3dd;
       }
+      /* Отказ (плейтест: «прогрессбар красным и мигающим — ой ой отказ»):
+         бар красный и мигает, пока карточка не погаснет. */
       .hv-cptoast.fail .cpbar-fill {
-        animation: none;
         background: #ff4d5e;
+        animation: cpblink 0.45s ease-in-out infinite;
+      }
+      @keyframes cpblink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.2;
+        }
       }
 
       /* ── Мобильная адаптация (ГДД §15): оверлей meatview + touch-слой деки.

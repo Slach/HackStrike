@@ -797,6 +797,14 @@ func (w *world) denied(pl *player, reason string, detail ...string) {
 	w.sendTo(pl.id, message{"t": "denied", "reason": reason})
 }
 
+// dataDenied — отказ data-операции (cp/mv/rm, §16.2): на wire уходят prog и
+// data, чтобы клиент мог показать отказ КОНКРЕТНОЙ карточкой (красный
+// мигающий бар), а не безличным тостом. detail — как у denied, для лога.
+func (w *world) dataDenied(pl *player, reason, prog, data string) {
+	log.Printf("room: player %d denied: %s (%s %s)", pl.id, reason, prog, data)
+	w.sendTo(pl.id, message{"t": "denied", "reason": reason, "prog": prog, "data": data})
+}
+
 // --- M5 данные: MEM-учёт и трансферы (§16.1/§16.2) ------------------------
 
 // deckItemsUsed — занятый MEM деки: лежащие items + активные резервации
@@ -1014,7 +1022,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 	var it dataItem
 	if srcID == "deck" {
 		if dataName == "" || !deckHasItem(pl, dataName) {
-			w.denied(pl, "too_far", prog+" deck")
+			w.dataDenied(pl, "too_far", prog, dataName)
 			return
 		}
 		for _, x := range pl.items {
@@ -1025,12 +1033,12 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 	} else {
 		d, ok := w.cyber.devices[srcID]
 		if !ok || !pl.scanned[srcID] || d.owner != pl.id {
-			w.denied(pl, "not_owner", prog, srcID)
+			w.dataDenied(pl, "not_owner", prog, dataName)
 			return
 		}
 		if dataName == "" {
 			if len(d.items) == 0 {
-				w.denied(pl, "too_far", prog+" "+srcID)
+				w.dataDenied(pl, "too_far", prog, dataName)
 				return
 			}
 			it = d.items[0] // один item по умолчанию (данные с осмысленными именами)
@@ -1042,7 +1050,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 				}
 			}
 			if !found {
-				w.denied(pl, "too_far", prog+" "+srcID)
+				w.dataDenied(pl, "too_far", prog, dataName)
 				return
 			}
 		}
@@ -1054,7 +1062,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 	if !dstDeck {
 		d, ok := w.cyber.devices[dstID]
 		if !ok || !pl.scanned[dstID] || d.owner != pl.id {
-			w.denied(pl, "not_owner", prog, dstID)
+			w.dataDenied(pl, "not_owner", prog, dataName)
 			return
 		}
 		dstDev = d
@@ -1066,17 +1074,17 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 	for _, q := range pl.progs {
 		if (q.prog == "cp" || q.prog == "mv") && q.dev == srcID && q.data == it.Name {
 			if q.dst == dstID || (prog == "mv" && q.prog == "mv") {
-				w.denied(pl, "dup", prog, it.Name)
+				w.dataDenied(pl, "dup", prog, it.Name)
 				return
 			}
 		}
 	}
 	if dstDeck && deckHasItem(pl, it.Name) {
-		w.denied(pl, "dup", prog, it.Name)
+		w.dataDenied(pl, "dup", prog, it.Name)
 		return
 	}
 	if !dstDeck && hostHasItem(dstDev, it.Name) {
-		w.denied(pl, "dup", prog, it.Name)
+		w.dataDenied(pl, "dup", prog, it.Name)
 		return
 	}
 	// Маршрут: src→jackHost (слив в деку) или src→dst; входной хоп дека↔хост
@@ -1100,7 +1108,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 		}
 		path = w.cyber.widestPath(from, routeDst, blocked)
 		if len(path) == 0 {
-			w.denied(pl, "too_far", prog+" "+srcID+"->"+routeDst)
+			w.dataDenied(pl, "too_far", prog, dataName)
 			return
 		}
 		mbps = w.cpNominal(path)
@@ -1109,11 +1117,11 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 	// проталкиваются в один объём), отказ mem_full до старта.
 	if dstDeck {
 		if w.deckItemsUsed(pl)+it.MB > deckMEM {
-			w.denied(pl, "mem_full", prog, dstID)
+			w.dataDenied(pl, "mem_full", prog, dataName)
 			return
 		}
 	} else if w.hostMemFree(dstDev) < it.MB {
-		w.denied(pl, "mem_full", prog, dstID)
+		w.dataDenied(pl, "mem_full", prog, dataName)
 		return
 	}
 	p := &program{
@@ -1139,7 +1147,7 @@ func (w *world) handleRm(pl *player, devID, dataName string) {
 	}
 	if devID == "deck" {
 		if !deckHasItem(pl, dataName) {
-			w.denied(pl, "too_far", "rm deck")
+			w.dataDenied(pl, "too_far", "rm", dataName)
 			return
 		}
 		p := &program{id: pl.nextProgID, prog: "rm", dev: devID, data: dataName, work: rmWork}
@@ -1150,7 +1158,7 @@ func (w *world) handleRm(pl *player, devID, dataName string) {
 	}
 	dev, ok := w.cyber.devices[devID]
 	if !ok || !pl.scanned[devID] || dev.owner != pl.id || !hostHasItem(dev, dataName) {
-		w.denied(pl, "not_owner", "rm", devID)
+		w.dataDenied(pl, "not_owner", "rm", dataName)
 		return
 	}
 	p := &program{id: pl.nextProgID, prog: "rm", dev: devID, data: dataName, work: rmWork}
@@ -1408,7 +1416,7 @@ func (w *world) completeProgram(pl *player, p *program) {
 			dstHas = hostHasItem(dst, p.data)
 		}
 		if dstHas {
-			w.denied(pl, "dup", p.prog, p.data)
+			w.dataDenied(pl, "dup", p.prog, p.data)
 			break
 		}
 		if p.dst == "deck" {
