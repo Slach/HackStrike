@@ -232,6 +232,13 @@ export class Minimap {
         ctx.beginPath()
         ctx.arc(x, y, 1.4, 0, Math.PI * 2)
         ctx.fill()
+      } else if (p.kind === 'srv') {
+        // SRV (§16.5): двойной квадрат-стойка, голубовато-белый
+        ctx.fillStyle = 'rgba(230,245,255,0.25)'
+        ctx.strokeStyle = 'rgba(230,245,255,0.95)'
+        ctx.fillRect(x - 4, y - 5, 8, 10)
+        ctx.strokeRect(x - 4.5, y - 5.5, 9, 11)
+        ctx.strokeRect(x - 2, y - 3, 4, 6)
       } else {
         // switch: ромб
         ctx.strokeStyle = 'rgba(255,210,55,0.9)'
