@@ -864,10 +864,13 @@ export class HackView {
     return null
   }
 
-  /** ls: листинг прямо в палитре (§16.2 «терминал») — палитра не закрывается. */
+  /** ls: листинг прямо в палитре (§16.2 «терминал») — палитра не закрывается.
+   *  Явный хост — переключение цели (плейтест: «data ls t1 — по сути это
+   *  переключение цели»): дальше софт 1–6 жал на тот же хост. */
   private execDataLs(host: string, raw: string): void {
     const pal = this.palette
     if (pal === null) return
+    if (host !== 'deck') this.target = host
     if (pal.input !== null && pal.input.value.trim() !== raw) pal.input.value = raw
     if (this.cmdHistory[this.cmdHistory.length - 1] !== raw && raw !== '') {
       this.cmdHistory.push(raw)
@@ -903,6 +906,17 @@ export class HackView {
     }
     const keyTok = a[i + 1]
     if (sub === 'ls') {
+      // data ls [host] — хост может стоять и ПОСЛЕ подкоманды (плейтест:
+      // «data ls localhost» молча валился в контекст активного таба)
+      const rest = a.slice(i + 1)
+      if (rest.length > 0) {
+        const dh = this.dataHostAt(rest[0])
+        if (dh === null) {
+          this.toast('НЕТ ТАКОГО ХОСТА — TAB ПОКАЖЕТ СПИСОК')
+          return
+        }
+        host = dh
+      }
       this.execDataLs(host ?? this.dataCtxHost(), pal.input.value.trim())
       return
     }
@@ -1419,7 +1433,7 @@ export class HackView {
       if (host !== null) return this.dataSubCands(q)
       return [...this.dataHostCands(q, false), ...this.dataSubCands(q)]
     }
-    if (sub === 'ls') return [] // Enter уже выполнит листинг
+    if (sub === 'ls') return this.dataHostCands(q, false) // data ls [host]
     const keyTok = prev[i + 1]
     if (keyTok === undefined) return this.dataKeyCands(q, host)
     if (sub === 'rm') return []
@@ -1448,7 +1462,9 @@ export class HackView {
     const mem = this.dataHostMem(host)
     pal.list.append(txt('div', 'hv-pal-lshead', `${this.dataHostLabel(host)}${mem !== '' ? ` · MEM ${mem}` : ''}`))
     if (!owner) {
-      pal.list.append(txt('div', 'hv-dim', 'ДАННЫЕ НЕДОСТУПНЫ — ЗАХВАТИ (TROJAN)'))
+      // Доступ — это ошибка, а не подсказка: красным (плейтест: «надо красным
+      // показать, что для данных нужен trojan на цели»)
+      pal.list.append(txt('div', 'hv-pal-red', 'ДОСТУП ЗАПРЕЩЁН — НУЖЕН TROJAN НА ЦЕЛИ'))
       return
     }
     if (items.length === 0) {
