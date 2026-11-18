@@ -808,7 +808,7 @@ func (w *world) deckItemsUsed(pl *player) int {
 		used += it.MB
 	}
 	for _, q := range pl.progs {
-		if q.prog == "cp" && q.dst == "deck" {
+		if (q.prog == "cp" || q.prog == "mv") && q.dst == "deck" {
 			used += q.mb
 		}
 	}
@@ -834,7 +834,7 @@ func (w *world) hostMemFree(dev *device) int {
 	}
 	for _, pl := range w.players {
 		for _, q := range pl.progs {
-			if q.prog == "cp" && q.dst == dev.id {
+			if (q.prog == "cp" || q.prog == "mv") && q.dst == dev.id {
 				free -= q.mb
 			}
 		}
@@ -938,10 +938,11 @@ func (w *world) handleRun(pl *player, msg message) {
 		return
 	}
 	prog := str(msg, "prog")
-	// §16.2: cp/rm — данные-программы со своей семантикой (MEM, владельцы,
-	// маршрут). Валидируются отдельно и уходят со своими полями.
-	if prog == "cp" {
-		w.handleCp(pl, str(msg, "dev"), str(msg, "dst"), str(msg, "data"))
+	// §16.2: cp/mv/rm — данные-программы со своей семантикой (MEM, владельцы,
+	// маршрут). Валидируются отдельно и уходят со своими полями. Ревизия 3:
+	// cp — копия (источник хранит экземпляр), mv — перенос.
+	if prog == "cp" || prog == "mv" {
+		w.handleCp(pl, str(msg, "dev"), str(msg, "dst"), str(msg, "data"), prog)
 		return
 	}
 	if prog == "rm" {
@@ -999,12 +1000,13 @@ func (w *world) handleRun(pl *player, msg message) {
 	log.Printf("room: player %d run %s %s", pl.id, prog, devID)
 }
 
-// handleCp — §16.2: {"t":"run","prog":"cp","dev":src,"dst":deck|id}.
+// handleCp — §16.2: {"t":"run","prog":"cp|mv","dev":src,"dst":deck|id}.
 // Контроль src/dst (трояновый хост или дека), не-дубликат, MEM приёмника с
 // резервацией (denied mem_full), маршрут widest-path, скорость = бутылочка.
-func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
+// prog различает судьбу источника на финише: mv уносит item, cp оставляет.
+func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 	if srcID == "" || dstID == "" {
-		w.denied(pl, "too_far", "cp", srcID)
+		w.denied(pl, "too_far", prog, srcID)
 		return
 	}
 	// Источник: своя дека или трояновый хост (перехват чужих данных §16.1).
@@ -1012,7 +1014,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
 	var it dataItem
 	if srcID == "deck" {
 		if dataName == "" || !deckHasItem(pl, dataName) {
-			w.denied(pl, "too_far", "cp deck")
+			w.denied(pl, "too_far", prog+" deck")
 			return
 		}
 		for _, x := range pl.items {
@@ -1023,12 +1025,12 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
 	} else {
 		d, ok := w.cyber.devices[srcID]
 		if !ok || !pl.scanned[srcID] || d.owner != pl.id {
-			w.denied(pl, "not_owner", "cp", srcID)
+			w.denied(pl, "not_owner", prog, srcID)
 			return
 		}
 		if dataName == "" {
 			if len(d.items) == 0 {
-				w.denied(pl, "too_far", "cp "+srcID)
+				w.denied(pl, "too_far", prog+" "+srcID)
 				return
 			}
 			it = d.items[0] // один item по умолчанию (данные с осмысленными именами)
@@ -1040,7 +1042,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
 				}
 			}
 			if !found {
-				w.denied(pl, "too_far", "cp "+srcID)
+				w.denied(pl, "too_far", prog+" "+srcID)
 				return
 			}
 		}
@@ -1052,26 +1054,29 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
 	if !dstDeck {
 		d, ok := w.cyber.devices[dstID]
 		if !ok || !pl.scanned[dstID] || d.owner != pl.id {
-			w.denied(pl, "not_owner", "cp", dstID)
+			w.denied(pl, "not_owner", prog, dstID)
 			return
 		}
 		dstDev = d
 	}
-	// Дубликаты запрещены (denied dup, §16.2) — в том числе уже летящий
-	// трансфер этого item с этого источника (второй протолкнулся бы в те же
-	// 60 МБ и на финише нашёл бы источник пустым).
+	// Дубликаты запрещены (denied dup, §16.2). Ревизия 3 (cp=копия):
+	// точный повтор (тот же src+dst+data) — всегда dup; два mv одного item
+	// с одного источника — dup (второй на финише нашёл бы источник пустым);
+	// cp того же item на другой приёмник легальна — копии множатся.
 	for _, q := range pl.progs {
-		if q.prog == "cp" && q.dev == srcID && q.data == it.Name {
-			w.denied(pl, "dup", "cp", it.Name)
-			return
+		if (q.prog == "cp" || q.prog == "mv") && q.dev == srcID && q.data == it.Name {
+			if q.dst == dstID || (prog == "mv" && q.prog == "mv") {
+				w.denied(pl, "dup", prog, it.Name)
+				return
+			}
 		}
 	}
 	if dstDeck && deckHasItem(pl, it.Name) {
-		w.denied(pl, "dup", "cp", it.Name)
+		w.denied(pl, "dup", prog, it.Name)
 		return
 	}
 	if !dstDeck && hostHasItem(dstDev, it.Name) {
-		w.denied(pl, "dup", "cp", it.Name)
+		w.denied(pl, "dup", prog, it.Name)
 		return
 	}
 	// Маршрут: src→jackHost (слив в деку) или src→dst; входной хоп дека↔хост
@@ -1095,7 +1100,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
 		}
 		path = w.cyber.widestPath(from, routeDst, blocked)
 		if len(path) == 0 {
-			w.denied(pl, "too_far", "cp "+srcID+"->"+routeDst)
+			w.denied(pl, "too_far", prog+" "+srcID+"->"+routeDst)
 			return
 		}
 		mbps = w.cpNominal(path)
@@ -1104,25 +1109,25 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName string) {
 	// проталкиваются в один объём), отказ mem_full до старта.
 	if dstDeck {
 		if w.deckItemsUsed(pl)+it.MB > deckMEM {
-			w.denied(pl, "mem_full", "cp", dstID)
+			w.denied(pl, "mem_full", prog, dstID)
 			return
 		}
 	} else if w.hostMemFree(dstDev) < it.MB {
-		w.denied(pl, "mem_full", "cp", dstID)
+		w.denied(pl, "mem_full", prog, dstID)
 		return
 	}
 	p := &program{
-		id: pl.nextProgID, prog: "cp",
+		id: pl.nextProgID, prog: prog,
 		dev: srcID, dst: dstID, data: it.Name, mb: it.MB,
 		work: float64(it.MB) / mbps, // прогресс в секундах чистой полосы
 		path: path, mbps: mbps,
 	}
 	pl.progs = append(pl.progs, p)
 	pl.nextProgID++
-	log.Printf("room: player %d run cp %s->%s %s (%dMB @%vMBps)", pl.id, srcID, dstID, it.Name, it.MB, mbps)
+	log.Printf("room: player %d run %s %s->%s %s (%dMB @%vMBps)", pl.id, prog, srcID, dstID, it.Name, it.MB, mbps)
 	// Watcher-событие job (старт трансфера на устройстве, §16.9).
 	if srcDev != nil {
-		w.fireWatchers(srcDev, pl, "job", "cp")
+		w.fireWatchers(srcDev, pl, "job", prog)
 	}
 }
 
@@ -1254,7 +1259,7 @@ func (w *world) computeNetFactors() map[*program]float64 {
 						}
 					}
 				}
-			case "cp":
+			case "cp", "mv":
 				// §16.2: трансфер ест свои МБ/с на линках маршрута — тот же
 				// честный пул, что и сканы (chaff-контрига §16.3).
 				for i := 0; i+1 < len(p.path); i++ {
@@ -1302,7 +1307,7 @@ func (w *world) cyberTick(pl *player, dt float64) {
 	for _, p := range pl.progs {
 		// §16.2 «отмена трансфера»: сменился владелец src/dst, чужой firewall
 		// на маршруте — прогресс теряется («либо прошло, либо нет»).
-		if p.prog == "cp" && w.cpCancelled(pl, p) {
+		if (p.prog == "cp" || p.prog == "mv") && w.cpCancelled(pl, p) {
 			cancelled = append(cancelled, p)
 			continue
 		}
@@ -1388,28 +1393,45 @@ func (w *world) completeProgram(pl *player, p *program) {
 			dev.vulnedBy[pl.id] = true // M2: навсегда (§12.4)
 			w.sendScan(pl)             // обновить карту: узел помечается «уязвимо»
 		}
-	case "cp":
-		// §16.2: item переезжает в MEM приёмника (резервация освобождается
-		// вместе с программой). Отмена невозможна здесь — cyberTick отменил
-		// бы раньше финиша.
+	case "cp", "mv":
+		// §16.2 ревизия 3: mv — item переезжает в MEM приёмника (уходит из
+		// источника), cp — копируется (источник хранит экземпляр, MEM занят
+		// на обеих сторонах). Резервация освобождается вместе с программой.
+		// Отмена невозможна здесь — cyberTick отменил бы раньше финиша.
+		// Гард на финиш: два cp одного item с РАЗНЫХ источников в один
+		// приёмник могли пройти стартовые dup (друг друга в полёте не видели)
+		// — дубль не кладём, denied dup (для mv — item остаётся в источнике).
+		dstHas := false
 		if p.dst == "deck" {
-			// item уходит из MEM источника в деку (дубликат отсечён на старте).
+			dstHas = deckHasItem(pl, p.data)
+		} else if dst := w.cyber.devices[p.dst]; dst != nil {
+			dstHas = hostHasItem(dst, p.data)
+		}
+		if dstHas {
+			w.denied(pl, "dup", p.prog, p.data)
+			break
+		}
+		if p.dst == "deck" {
 			if src := w.cyber.devices[p.dev]; src != nil {
 				for i, it := range src.items {
 					if it.Name == p.data {
 						pl.items = append(pl.items, it)
-						src.items = append(src.items[:i], src.items[i+1:]...)
+						if p.prog == "mv" {
+							src.items = append(src.items[:i], src.items[i+1:]...)
+						}
 						break
 					}
 				}
 			}
 		} else if dst := w.cyber.devices[p.dst]; dst != nil {
-			// deck→host (chaff) и host→host: забрать из источника, положить в приёмник.
+			// deck→host (chaff) и host→host.
 			if p.dev == "deck" {
 				for i, it := range pl.items {
 					if it.Name == p.data {
 						dst.items = append(dst.items, it)
-						pl.items = append(pl.items[:i], pl.items[i+1:]...)
+						if p.prog == "mv" {
+							pl.items = append(pl.items[:i], pl.items[i+1:]...)
+						}
 						break
 					}
 				}
@@ -1417,7 +1439,9 @@ func (w *world) completeProgram(pl *player, p *program) {
 				for i, it := range src.items {
 					if it.Name == p.data {
 						dst.items = append(dst.items, it)
-						src.items = append(src.items[:i], src.items[i+1:]...)
+						if p.prog == "mv" {
+							src.items = append(src.items[:i], src.items[i+1:]...)
+						}
 						break
 					}
 				}
@@ -1425,7 +1449,7 @@ func (w *world) completeProgram(pl *player, p *program) {
 		}
 		w.sendScan(pl) // листинг/память приёмника-источника обновить
 		if src := w.cyber.devices[p.dev]; src != nil {
-			w.fireWatchers(src, pl, "job", "cp")
+			w.fireWatchers(src, pl, "job", p.prog)
 		}
 	case "rm":
 		// §16.2: item удаляется (chaff: слить → rm → слить снова).
@@ -1733,7 +1757,7 @@ func (w *world) deckStatusTick() {
 				remain = 0
 			}
 			dp := deckProg{ID: pr.id, Prog: pr.prog, Dev: pr.dev, EtaMs: int64(remain * 1000)}
-			if pr.prog == "cp" {
+			if pr.prog == "cp" || pr.prog == "mv" {
 				// §16.9: остаток МБ и текущая скорость (доля канала × номинал)
 				dp.Dst = pr.dst
 				dp.Data = pr.data

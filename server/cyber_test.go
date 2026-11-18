@@ -889,6 +889,8 @@ func TestSessionRestore(t *testing.T) {
 	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
 	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "d1"})
 	w.handleMessage(h, message{"t": "jackout"})
+	// §16.1 ревизия «хром»: инвентарь деки кладём в сессию (cp до отката)
+	h.items = []dataItem{{Name: "door_key", MB: 60, Enc: true}}
 	home := h.pos
 	homeTeam := h.team
 
@@ -919,6 +921,9 @@ func TestSessionRestore(t *testing.T) {
 	}
 	if w.cyber.devices["d1"].owner != h2.id {
 		t.Fatalf("door ownership must be remapped to the new id, owner=%v", w.cyber.devices["d1"].owner)
+	}
+	if len(h2.items) != 1 || h2.items[0].Name != "door_key" {
+		t.Fatalf("deck inventory must survive rejoin, items=%v", h2.items)
 	}
 	*clock = clock.Add(time.Second)
 	jackAt(w, h2, "t1") // джек-стейт не переживает реконнект — точка входа та же
@@ -2592,19 +2597,19 @@ func findProg(pl *player, prog string) *program {
 	return nil
 }
 
-// TestCpDeckTransfer — §16.2: cp door_key из троянового t1 в деку:
-// 60 МБ по доступу 20 МБ/с = 3 с чистой полосы; item переезжает (не копия).
-func TestCpDeckTransfer(t *testing.T) {
+// TestMvDeckTransfer — §16.2 ревизия 3: mv door_key из троянового t1 в деку:
+// 60 МБ по магистрали 40 = 1.5 с чистой полосы; item переезжает (не копия).
+func TestMvDeckTransfer(t *testing.T) {
 	w, h, clock := cpSetup(t)
-	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
-	p := findProg(h, "cp")
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "t1", "dst": "deck"})
+	p := findProg(h, "mv")
 	if p == nil {
-		t.Fatalf("cp not started")
+		t.Fatalf("mv not started")
 	}
 	// Локальный трансфер (t1 = точка входа деки): полоса = входной канал
 	// хоста; в cyberTestWorld c1 без явного bw → дефолт-магистраль 40.
 	if p.mb != 60 || p.mbps != 40 {
-		t.Fatalf("cp mb/mbps = %d/%v, want 60/40", p.mb, p.mbps)
+		t.Fatalf("mv mb/mbps = %d/%v, want 60/40", p.mb, p.mbps)
 	}
 	// Резервация в деку: 60 из 256 занято сразу.
 	if used := w.deckItemsUsed(h); used != 60 {
@@ -2618,7 +2623,7 @@ func TestCpDeckTransfer(t *testing.T) {
 		t.Fatalf("door_key must land in deck, items=%v", h.items)
 	}
 	if hostHasItem(w.cyber.devices["t1"], "door_key") {
-		t.Fatalf("door_key must leave t1 (transfer, not copy)")
+		t.Fatalf("door_key must leave t1 (mv = transfer)")
 	}
 	if used := w.deckItemsUsed(h); used != 60 {
 		t.Fatalf("deck after transfer = %d, want 60 (item, reservation gone)", used)
@@ -2641,6 +2646,53 @@ func TestCpDeckTransfer(t *testing.T) {
 	inv, ok := deckMsg["data"].([]dataItem)
 	if !ok || len(inv) != 1 || inv[0].Name != "door_key" {
 		t.Fatalf("deck message must carry data inventory, got %+v", deckMsg["data"])
+	}
+}
+
+// TestCpCopyKeepsSrc — §16.2 ревизия 3 (владелец «cp это КОПИРОВАНИЕ»):
+// cp оставляет экземпляр в источнике — MEM занят на обеих сторонах;
+// точный повтор dup; та же копия на другой приёмник легальна.
+func TestCpCopyKeepsSrc(t *testing.T) {
+	w, h, clock := cpSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.items) != 1 || h.items[0].Name != "door_key" {
+		t.Fatalf("deck must hold the copy, items=%v", h.items)
+	}
+	if !hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("cp must keep the source copy (not mv)")
+	}
+	if used := w.deckItemsUsed(h); used != 60 {
+		t.Fatalf("deck after copy = %d, want 60", used)
+	}
+	// Тот же item с того же источника в тот же приёмник — dup.
+	w.takeOut()
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	out := w.takeOut()
+	if !hasDenied(out, h.id, "dup") {
+		t.Fatalf("exact repeat copy must be denied dup")
+	}
+	// Копия на ДРУГОЙ приёмник легальна (t2 тоже seed с door_key — dup
+	// там и правда должен сработать; свитч s1 — MEM 16 < 60; берём r1
+	// (радио 64 МБ) через два хопа скана).
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	r1 := w.cyber.devices["r1"]
+	r1.owner = h.id
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "r1", "data": "door_key"})
+	if findProg(h, "cp") == nil {
+		t.Fatalf("copy to another dst must start")
+	}
+	// радио-аплинк 5 МБ/с: 60 МБ = 12 с чистой полосы — окно с запасом
+	for i := 0; i < 15*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !hostHasItem(r1, "door_key") || !hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("copy: both src and dst must hold door_key")
 	}
 }
 
@@ -2739,18 +2791,18 @@ func TestCpCancelFirewall(t *testing.T) {
 }
 
 // TestRmAndDupChaff — §16.2: rm удаляет item с хоста; chaff-цикл
-// «слить → rm → слить снова» легален (dup снимается удалением).
+// «переслать → rm → ...» (mv-ноги: cp оставил бы копию в источнике).
 func TestRmAndDupChaff(t *testing.T) {
 	w, h, clock := cpSetup(t)
-	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "t1", "dst": "deck"})
 	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
 		*clock = clock.Add(time.Second / 30)
 		w.simulateTick()
 	}
-	// Слить обратно на t1 (chaff-закладка) и удалить с деки.
-	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "deck", "dst": "t1", "data": "door_key"})
-	if findProg(h, "cp") == nil {
-		t.Fatalf("deck->host cp must start (chaff)")
+	// Слить обратно на t1 (chaff-закладка, mv) и удалить с деки.
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "deck", "dst": "t1", "data": "door_key"})
+	if findProg(h, "mv") == nil {
+		t.Fatalf("deck->host mv must start (chaff)")
 	}
 	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
 		*clock = clock.Add(time.Second / 30)
@@ -2771,11 +2823,11 @@ func TestRmAndDupChaff(t *testing.T) {
 	if hostHasItem(w.cyber.devices["t1"], "door_key") {
 		t.Fatalf("rm must delete the item")
 	}
-	// И снова cp с t1 легален (item вернулся через seed? нет — item
-	// удалён; dup уже не мешает, но и качать нечего).
-	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
-	if findProg(h, "cp") != nil {
-		t.Fatalf("cp of removed item must not start")
+	// И снова cp/mv с t1 нечему (item удалён; dup уже не мешает, но и
+	// качать нечего — fast-path не находит items).
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "t1", "dst": "deck"})
+	if findProg(h, "mv") != nil {
+		t.Fatalf("mv of removed item must not start")
 	}
 }
 

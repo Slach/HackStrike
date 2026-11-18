@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'cp' | 'rm' // GDD §12.4, §13.1-13.6, §16.2
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'cp' | 'mv' | 'rm' // GDD §12.4, §13.1-13.6, §16.2 (cp=копия, mv=перенос)
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -24,7 +24,7 @@ export type ClientMessage =
   | { t: 'ping'; c: number }
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
-  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2: cp/rm — dst/data
+  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2: cp/mv/rm — dst/data
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
@@ -118,10 +118,10 @@ export interface DeckProg {
   prog: string
   dev: string | null
   etaMs: number
-  dst?: string // cp: приёмник ("deck" | hostId)
-  data?: string // cp/rm: имя item
-  mbLeft?: number // cp: остаток МБ
-  mbps?: number // cp: текущая скорость МБ/с
+  dst?: string // cp/mv: приёмник ("deck" | hostId)
+  data?: string // cp/mv/rm: имя item
+  mbLeft?: number // cp/mv: остаток МБ
+  mbps?: number // cp/mv: текущая скорость МБ/с
 }
 
 /** Один item данных в MEM (§16.1). */

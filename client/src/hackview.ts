@@ -80,6 +80,7 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   firewall: 'FIREWALL',
   antivirus: 'ANTIVIRUS',
   cp: 'CP',
+  mv: 'MV',
   rm: 'RM',
 }
 
@@ -96,8 +97,8 @@ const PALETTE_PROGS: readonly RunProg[] = [
 /** Шелл-команда данных (§16.2): `data [host] ls|cp|rm …` — клиентский
  *  парсер поверх wire-программ cp/rm; ls рендерится в палитре. */
 const DATA_CMD = 'data'
-type DataSub = 'ls' | 'cp' | 'rm'
-const DATA_SUBS: readonly DataSub[] = ['ls', 'cp', 'rm']
+type DataSub = 'ls' | 'cp' | 'mv' | 'rm'
+const DATA_SUBS: readonly DataSub[] = ['ls', 'cp', 'mv', 'rm']
 
 /** Короткие алиасы kind для фильтра палитры: /term, /cam (ГДД §13.3). */
 const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
@@ -261,6 +262,7 @@ export class HackView {
    *  трансфера из deck-сообщения 2 Гц; missed — тики без процесса (финиш). */
   private cpToasts: {
     key: string
+    prog: 'cp' | 'mv'
     dev: string
     dst: string
     data: string
@@ -322,7 +324,7 @@ export class HackView {
   /** Touch-дерево §16.2: уровень items хоста ('deck'|devId) / уровень
    *  приёмника cp (выбранный item). null — обычные уровни дерева. */
   private paletteDataHost: string | null = null
-  private paletteDataItem: { host: string; key: string } | null = null
+  private paletteDataItem: { host: string; key: string; prog: 'cp' | 'mv' } | null = null
 
   // Слэш-палитра (§13.3): командная строка запуска программ с клавиатуры.
   // input === null на тапе: дерево кнопок без поля ввода и без системной
@@ -947,8 +949,8 @@ export class HackView {
       // fast-path: на источнике ровно один item — старт сразу (как кнопка)
       const h = host ?? this.dataCtxHost()
       const items = this.dataHostItems(h)
-      if (sub === 'cp' && h === 'deck') {
-        this.toast('С ДЕКИ — УКАЖИ ПРИЁМНИК: DATA CP <KEY> <HOST>')
+      if ((sub === 'cp' || sub === 'mv') && h === 'deck') {
+        this.toast('С ДЕКИ — УКАЖИ ПРИЁМНИК: DATA CP/MV <KEY> <HOST>')
         return
       }
       if (items.length === 1) {
@@ -985,27 +987,27 @@ export class HackView {
     this.pushHistoryClose(pal.input.value.trim())
   }
 
-  /** Отправка cp/rm + тост (короткий путь для палитры, дерева и кнопок).
-   *  cp — анимированный тост-прогресс (§16.2), живёт до финиша/отмены. */
-  private sendData(sub: 'cp' | 'rm', src: string, key: string, dst: string | null): void {
+  /** Отправка cp/mv/rm + тост (короткий путь для палитры, дерева и кнопок).
+   *  cp/mv — анимированный тост-прогресс (§16.2), живёт до финиша/отмены. */
+  private sendData(sub: 'cp' | 'mv' | 'rm', src: string, key: string, dst: string | null): void {
     if (sub === 'rm') {
       this.deps.send({ t: 'run', prog: 'rm', dev: src, data: key })
       this.toast(`RM ${key.toUpperCase()}${src === 'deck' ? ' (ДЕКА)' : ` @${src.toUpperCase()}`}`)
       return
     }
     const realDst = dst ?? 'deck'
-    this.deps.send({ t: 'run', prog: 'cp', dev: src, dst: realDst, data: key })
-    this.cpToastStart(src, realDst, key, this.dataHostItems(src).find((it) => it.n === key)?.mb ?? 0)
+    this.deps.send({ t: 'run', prog: sub, dev: src, dst: realDst, data: key })
+    this.cpToastStart(sub, src, realDst, key, this.dataHostItems(src).find((it) => it.n === key)?.mb ?? 0)
   }
 
   /** Анимированный cp-тост: полоса с бегущими полосками, объём/скорость
    *  обновляются из deck-сообщения (updateCpToasts), финиш — «ГОТОВО ✓»
    *  (зелёный), отмена (denied cp_cancel) — «ПРЕРВАНО» (красный). */
-  private cpToastStart(src: string, dst: string, key: string, mb: number): void {
+  private cpToastStart(prog: 'cp' | 'mv', src: string, dst: string, key: string, mb: number): void {
     const wrap = el('div', 'hv-toast hv-cptoast')
     const row = el('div', 'cprow')
     row.append(
-      txt('span', 'cptitle', `CP ${key.toUpperCase()}${src === 'deck' ? ' · ДЕКА' : ` · ${src.toUpperCase()}`}`),
+      txt('span', 'cptitle', `${prog.toUpperCase()} ${key.toUpperCase()}${src === 'deck' ? ' · ДЕКА' : ` · ${src.toUpperCase()}`}`),
       txt('span', 'cpdst', dst === 'deck' ? '→ ДЕКА' : `→ ${dst.toUpperCase()}`),
     )
     const bar = el('div', 'cpbar')
@@ -1014,7 +1016,7 @@ export class HackView {
     const status = txt('div', 'cpstatus', mb > 0 ? `${mb} МБ` : 'ПЕРЕДАЧА…')
     wrap.append(row, bar, status)
     this.toasts.append(wrap)
-    this.cpToasts.push({ key: `${src}>${dst}/${key}`, dev: src, dst, data: key, mb, wrap, fill, status, missed: 0 })
+    this.cpToasts.push({ key: `${prog}:${src}>${dst}/${key}`, prog, dev: src, dst, data: key, mb, wrap, fill, status, missed: 0 })
   }
 
   /** 2 Гц: прогресс активных cp-тостов из deck-сообщения; два тика подряд
@@ -1022,7 +1024,7 @@ export class HackView {
   private updateCpToasts(): void {
     for (const r of [...this.cpToasts]) {
       const p = this.progs.find(
-        (q) => q.prog === 'cp' && q.dev === r.dev && q.dst === r.dst && q.data === r.data,
+        (q) => q.prog === r.prog && q.dev === r.dev && q.dst === r.dst && q.data === r.data,
       )
       if (p !== undefined) {
         r.missed = 0
@@ -1336,9 +1338,18 @@ export class HackView {
       )
       const cp = el('button', 'dev-link')
       cp.textContent = 'CP'
+      cp.title = 'копия (источник хранит свой экземпляр)'
       cp.addEventListener('click', (e) => {
         e.stopPropagation()
-        this.paletteDataItem = { host, key: it.n }
+        this.paletteDataItem = { host, key: it.n, prog: 'cp' }
+        this.updatePalette()
+      })
+      const mv = el('button', 'dev-link')
+      mv.textContent = 'MV'
+      mv.title = 'перенос (item уходит из источника)'
+      mv.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.paletteDataItem = { host, key: it.n, prog: 'mv' }
         this.updatePalette()
       })
       const rm = el('button', 'dev-link')
@@ -1348,7 +1359,7 @@ export class HackView {
         this.closePalette()
         this.sendData('rm', host, it.n, null)
       })
-      row.append(cp, rm)
+      row.append(cp, mv, rm)
       list.append(row)
     }
   }
@@ -1365,13 +1376,13 @@ export class HackView {
       this.updatePalette()
     })
     list.append(back)
-    list.append(txt('div', 'hv-pal-lshead', `CP ${item.key.toUpperCase()} → ?`))
+    list.append(txt('div', 'hv-pal-lshead', `${item.prog.toUpperCase()} ${item.key.toUpperCase()} → ?`))
     if (item.host !== 'deck') {
       const deck = el('button', 'hv-pal-cand hv-pal-dev')
       deck.append(txt('span', 'hv-pal-name', 'ДЕКА'), txt('span', 'hv-pal-hintc', 'ЭКСФИЛЬТРАЦИЯ'))
       deck.addEventListener('click', () => {
         this.closePalette()
-        this.sendData('cp', item.host, item.key, 'deck')
+        this.sendData(item.prog, item.host, item.key, 'deck')
       })
       list.append(deck)
     }
@@ -1386,7 +1397,7 @@ export class HackView {
       )
       b.addEventListener('click', () => {
         this.closePalette()
-        this.sendData('cp', item.host, item.key, d.id)
+        this.sendData(item.prog, item.host, item.key, d.id)
       })
       list.append(b)
     }
@@ -1420,7 +1431,7 @@ export class HackView {
 
   /** Кандидаты-подкоманды data (§16.2). */
   private dataSubCands(q: string, subs: readonly DataSub[] = DATA_SUBS): PalCand[] {
-    const hints: Record<DataSub, string> = { ls: 'ЛИСТИНГ', cp: 'ПЕРЕНОС', rm: 'УДАЛИТЬ' }
+    const hints: Record<DataSub, string> = { ls: 'ЛИСТИНГ', cp: 'КОПИЯ', mv: 'ПЕРЕНОС', rm: 'УДАЛИТЬ' }
     return subs
       .filter((s) => s.startsWith(q) || q === '')
       .map((s) => ({ kind: 'sub' as const, text: s, label: s.toUpperCase(), hint: hints[s] }))
@@ -1543,7 +1554,7 @@ export class HackView {
       dev: host,
       data: it.n,
       label: `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code !== undefined ? ` код ${it.code}` : ''}`,
-      hint: 'CP/RM',
+      hint: 'CP/MV/RM',
     }))
     if (this.paletteSel >= items.length) this.paletteSel = items.length - 1
     pal.list.replaceChildren()
@@ -1645,7 +1656,7 @@ export class HackView {
           if (p.startsWith(dq)) cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
         }
         if (dq === '' || DATA_CMD.startsWith(dq)) {
-          cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ДАННЫЕ LS/CP/RM' })
+          cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ДАННЫЕ LS/CP/MV/RM' })
         }
         for (const it of revItems) {
           cands.push({
@@ -1692,7 +1703,7 @@ export class HackView {
           })
         }
       } else if (this.paletteTok === 1) {
-        cands.push(...this.dataSubCands(pq, ['cp', 'rm']))
+        cands.push(...this.dataSubCands(pq, ['cp', 'mv', 'rm']))
       } else {
         const qq = (tokens[2] ?? '').toLowerCase()
         const src = this.dataSrcOf(dq, null)
@@ -1725,7 +1736,7 @@ export class HackView {
       }
       if (pq === '' || DATA_CMD.startsWith(pq)) {
         const n = dev !== undefined ? this.dataHostItems(dev.id).length : this.deckData.length
-        cands.push({ kind: 'datacmd', text: DATA_CMD, dev: dev?.id, label: 'DATA', hint: n > 0 ? `ДАННЫЕ (${n})` : 'ДАННЫЕ LS/CP/RM' })
+        cands.push({ kind: 'datacmd', text: DATA_CMD, dev: dev?.id, label: 'DATA', hint: n > 0 ? `ДАННЫЕ (${n})` : 'ДАННЫЕ LS/CP/MV/RM' })
       }
     }
     this.paletteCands = cands
@@ -1871,7 +1882,7 @@ export class HackView {
     }
     // reverse-форма (§16.2): item активного таба + cp/rm. Гвард — точное
     // имя item, иначе «cam1 cp» даст тост про данные до тоста про программу.
-    if ((t1 === 'cp' || t1 === 'rm') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
+    if ((t1 === 'cp' || t1 === 'mv' || t1 === 'rm') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
       const src = this.resolveDataSrc((finalTokens[0] ?? '').toLowerCase(), null)
       if (src !== null) {
         if (t1 === 'rm') {
@@ -1892,7 +1903,7 @@ export class HackView {
           this.toast('ИСТОЧНИК = ПРИЁМНИК')
           return
         }
-        this.sendData('cp', src.host, src.key, dst)
+        this.sendData(t1 as 'cp' | 'mv', src.host, src.key, dst)
         this.pushHistoryClose(raw)
         return
       }
@@ -2497,7 +2508,7 @@ export class HackView {
       const row = el('div', 'hv-prog')
       const name = `${PROG_LABEL[p.prog] ?? p.prog}${p.dev !== null ? ` → ${p.dev.toUpperCase()}` : ''}`
       row.append(txt('span', 'prog-name', `#${p.id} ${name}`))
-      if (p.prog === 'cp' && p.data !== undefined) {
+      if ((p.prog === 'cp' || p.prog === 'mv') && p.data !== undefined) {
         // §16.9: остаток МБ и скорость трансфера
         row.append(txt('span', 'prog-eta', `${p.data} ${p.mbLeft ?? '?'}МБ · ${p.mbps ?? '?'}МБ/с`))
       } else {

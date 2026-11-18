@@ -93,6 +93,7 @@ type session struct {
 	hp       int
 	alive    bool
 	scanned  map[string]bool
+	items    []dataItem // §16.1: инвентарь деки переживает reconnect («хром»)
 	at       time.Time
 }
 
@@ -208,6 +209,11 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 		}
 		pl.pos, pl.vy, pl.grounded = s.pos, s.vy, s.grounded
 		pl.hp, pl.alive, pl.scanned = s.hp, s.alive, s.scanned
+		// §16.1: MEM деки переживает reconnect (плейтест «хром»: cp сделал —
+		// перезашёл — дека пуста; джек-аут данные не стирает, reconnect тоже)
+		if len(s.items) > 0 {
+			pl.items = append([]dataItem(nil), s.items...)
+		}
 		// Ремап нужен только при смене id: реконнект под тем же id (быстрый
 		// рестарт страницы) при безусловном delete стирал бы метки
 		// vulnedBy/watcherBy (плейтест 2026-11-17, TestSessionRestore).
@@ -272,6 +278,7 @@ func (w *world) removePlayer(id uint64) {
 			hp:       pl.hp,
 			alive:    pl.alive,
 			scanned:  pl.scanned,
+			items:    append([]dataItem(nil), pl.items...), // §16.1: дека с собой
 			at:       w.now(),
 		}
 	}
