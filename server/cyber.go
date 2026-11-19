@@ -37,6 +37,9 @@ const (
 	// жму space — ничего»: ховер-метка ловится лучом до ~3 м, а взятие было
 	// 1.8 м — унифицировано), зона базы — 6 м от точек спавна, канал
 	// «вскрываем»: на месте (код) — 3 с, на базе — 6 с.
+	// Feedback-радиус: space у сейфа вне 2.5 м — не молчание, а отказ
+	// «ПОДОЙДИ БЛИЖЕ К СЕЙФУ» (плейтест: «надо как-то на space реагировать»).
+	physafeFeedbackRadius  = 4.5
 	physafeTakeRadius      = 2.5
 	physafeBaseRadius      = 6.0
 	physafeChannelWork     = 3.0
@@ -787,6 +790,16 @@ func (w *world) interactTick(pl *player) {
 	if pfScore > devScore {
 		w.takeSafe(pl)
 		return
+	}
+	// плейтест «надо на space реагировать — подойди ближе»: стоя у сейфа
+	// вне радиуса взятия (но рядом), молчание выглядит как сломанная кнопка
+	if w.physafePresent && w.physafe.carrier == 0 && !pl.carry {
+		dp := w.physafe.pos.sub(pl.pos)
+		dp[1] = 0
+		if dp.length() <= physafeFeedbackRadius {
+			w.dataDenied(pl, "too_far", "physafe", "")
+			return
+		}
 	}
 	if pl.cls != "hacker" {
 		return // дека только у хакера

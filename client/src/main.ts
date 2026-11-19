@@ -596,6 +596,12 @@ const sock = new GameSocket({
           codePad.status.className = 'codepad-status bad'
           break
         }
+        // §16.6: space у PHYSAFE вне радиуса взятия — «ПОДОЙДИ БЛИЖЕ» на HUD
+        // (в мире, hackview молчит)
+        if (msg.prog === 'physafe' && msg.reason === 'too_far') {
+          hud.warn('ПОДОЙДИ БЛИЖЕ К СЕЙФУ')
+          break
+        }
         // enemy_team (§12.5, ред. 2026-11-17) приходит ДО джек-ина — деки ещё
         // нет, hackview.onDenied молчит; предупреждение — на HUD.
         if (msg.reason === 'enemy_team') {
