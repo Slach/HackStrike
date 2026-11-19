@@ -450,8 +450,66 @@ function handleDeath(msg: DeathMsg): void {
   touch?.reset() // мёртвое тело не должно «бежать» через удержанную крестину (§15.1)
 }
 
+// CRT-рестарт матча (плейтест «выключение экрана белый шум в телевизоре
+// сжимается в точку… а потом бац… и новый экран»): шум → строка → точка →
+// «бац» (вспышка) → включение. Тайминг: старта нового матча ждём ~0.9 с.
+let crtBusy = false
+function playCrtRestart(): void {
+  if (crtBusy) return
+  crtBusy = true
+  const crt = document.getElementById('crt')
+  const noise = document.getElementById('crtNoise')
+  const flash = document.getElementById('crtFlash')
+  if (crt === null || noise === null || flash === null) {
+    crtBusy = false
+    return
+  }
+  // текстура шума генерится один раз за сессию
+  if (noise.style.backgroundImage === '') {
+    const nc = document.createElement('canvas')
+    nc.width = 160
+    nc.height = 160
+    const nctx = nc.getContext('2d')
+    if (nctx !== null) {
+      const img = nctx.createImageData(160, 160)
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = (Math.random() * 255) | 0
+        img.data[i] = v
+        img.data[i + 1] = v
+        img.data[i + 2] = v
+        img.data[i + 3] = 255
+      }
+      nctx.putImageData(img, 0, 0)
+      noise.style.backgroundImage = `url(${nc.toDataURL()})`
+    }
+  }
+  crt.classList.add('on')
+  noise.classList.add('on') // белый шум
+  document.body.classList.add('crt-collapse') // картинка → строка
+  window.setTimeout(() => {
+    document.body.classList.remove('crt-collapse')
+    document.body.classList.add('crt-dot') // строка → точка
+  }, 300)
+  window.setTimeout(() => {
+    document.body.classList.remove('crt-dot')
+    noise.classList.remove('on') // темнота
+  }, 620)
+  // «БАЦ» — новый матч уже стартовал: вспышка + включение экрана
+  window.setTimeout(() => {
+    document.body.classList.add('crt-on')
+    flash.classList.add('on')
+    window.setTimeout(() => flash.classList.remove('on'), 120)
+    window.setTimeout(() => {
+      document.body.classList.remove('crt-on')
+      crt.classList.remove('on')
+      crtBusy = false
+    }, 340)
+  }, 900)
+}
+
 function handleEnd(msg: EndMsg): void {
   matchOver = true
+  hud.onCrtOff = playCrtRestart // конец отсчёта → CRT-выключение → бац
   closeCodePad()
   hackviewOff(false)
   hud.setNav([])

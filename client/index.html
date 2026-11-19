@@ -1021,6 +1021,80 @@
       #hudChannel.hidden {
         display: none;
       }
+
+      /* CRT-рестарт матча (плейтест «выключение экрана белый шум в телевизоре
+         сжимается в точку… а потом бац»): шум → картинка сжимается в строку →
+         в точку → темнота → вспышка и включение нового экрана */
+      #crt {
+        position: fixed;
+        inset: 0;
+        z-index: 50; /* поверх end-оверлея (12) и пада (30) */
+        pointer-events: none;
+        display: none;
+      }
+      #crt.on {
+        display: block;
+      }
+      #crtNoise {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        background-size: 192px 192px;
+        mix-blend-mode: screen;
+        transition: opacity 0.18s linear;
+      }
+      #crtNoise.on {
+        opacity: 0.85;
+        animation: crtJitter 0.12s steps(6) infinite;
+      }
+      @keyframes crtJitter {
+        0% { background-position: 0 0; }
+        50% { background-position: 96px 48px; }
+        100% { background-position: -64px 96px; }
+      }
+      #crtFlash {
+        position: absolute;
+        inset: 0;
+        background: #fff;
+        opacity: 0;
+        transition: opacity 0.1s linear;
+      }
+      #crtFlash.on {
+        opacity: 0.85;
+        transition: none;
+      }
+      body.crt-collapse #renderCanvas,
+      body.crt-collapse #endOverlay,
+      body.crt-collapse #hackview {
+        transform: scaleY(0.008) scaleX(1.12);
+        filter: brightness(2.6);
+        transition: transform 0.3s cubic-bezier(0.7, 0, 1, 1), filter 0.3s ease-in;
+      }
+      body.crt-dot #renderCanvas,
+      body.crt-dot #endOverlay,
+      body.crt-dot #hackview {
+        transform: scale(0.002);
+        filter: brightness(5);
+        transition: transform 0.24s ease-in, filter 0.24s;
+      }
+      body.crt-on #renderCanvas,
+      body.crt-on #hackview {
+        animation: crtOn 0.32s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+      }
+      @keyframes crtOn {
+        0% {
+          transform: scaleY(0.02);
+          filter: brightness(4);
+        }
+        55% {
+          transform: scaleY(1.04) scaleX(1.02);
+          filter: brightness(1.6);
+        }
+        100% {
+          transform: none;
+          filter: none;
+        }
+      }
       #endReason.hidden {
         display: none;
       }
@@ -2984,6 +3058,7 @@
     <div id="hudWarn" class="hidden"></div>
     <div id="hudCode" class="hidden"></div>
     <div id="hudCarry" class="hidden"></div>
+    <div id="crt" class="hidden"><div id="crtNoise"></div><div id="crtFlash"></div></div>
     <div id="hudChannel" class="hidden">
       <div id="hudChannelTitle"></div>
       <div id="hudChannelBar"><div id="hudChannelFill"></div></div>

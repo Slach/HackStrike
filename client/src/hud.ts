@@ -1140,7 +1140,18 @@ export class Hud {
     if (this.endActive) {
       const remain = Math.max(0, this.endUntilMs - Date.now())
       this.el.endCount.textContent = String(Math.ceil(remain / 1000))
+      // CRT-рестарт (плейтест «выключение экрана белый шум сжимается в
+      // точку… а потом бац»): за ~0.9 с до конца отрисовываем выключение —
+      // «бац» попадает ровно на старт нового матча
+      if (remain <= 900 && this.onCrtOff !== null) {
+        const cb = this.onCrtOff
+        this.onCrtOff = null // один раз
+        cb()
+      }
       if (remain <= 0) this.hideEnd()
     }
   }
+
+  /** CRT-выключение перед рестартом (§16.6 end-анимация), ставит main.ts. */
+  onCrtOff: (() => void) | null = null
 }
