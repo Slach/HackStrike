@@ -476,6 +476,15 @@ const sock = new GameSocket({
         // джек-аута/смерти запустившего) — карточка прогресса в hackview.
         hackview.onJob(msg)
         break
+      case 'slow':
+        // §16.6: backoff на сейфе — явное «ждать или идти ногами» (плейтест:
+        // «надо показывать в ответе чтобы чувак запомнил что надо ждать»)
+        {
+          const text = `BACKOFF ×${msg.mult} — ${msg.prog.toUpperCase()} ${msg.eta} С · ЖДИ ИЛИ JACK-ИН В ${msg.dev.toUpperCase()}`
+          if (hackview.active) hackview.onAlert(text)
+          else hud.warn(text)
+        }
+        break
       case 'extract':
         // §16.9 extract (итерация 7): события PHYSAFE — общий телеграф.
         switch (msg.stage) {

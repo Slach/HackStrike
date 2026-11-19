@@ -3217,6 +3217,74 @@ func TestNetSafe(t *testing.T) {
 	if ns.npu > 0 {
 		t.Fatalf("NETSAFE must have no NPU (decrypt-stations are SRV/deck)")
 	}
+
+	// --- §16.6 итерация 5.5: экспоненциальный backoff на сетевые попытки ---
+	h.scanned["netsafe"] = true
+	// 1-й сетевой vulnscan — без пени (3 с)
+	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	if ns.vulnedBy[h.id] != true {
+		t.Fatalf("first network vulnscan must finish")
+	}
+	// 2-й — ×2 (6 с) + slow-сообщение
+	w.takeOut()
+	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p2 := findProg(h, "vulnscan")
+	if p2 == nil {
+		t.Fatalf("second vulnscan must start (slow, not denied)")
+	}
+	if p2.work != 6 {
+		t.Fatalf("second network vulnscan work = %v, want 6 (x2)", p2.work)
+	}
+	slow := false
+	for _, m := range w.takeOut() {
+		if m.msg["t"] == "slow" && m.msg["mult"] == 2 {
+			slow = true
+		}
+	}
+	if !slow {
+		t.Fatalf("backed-off start must carry a slow message (x2)")
+	}
+	for i := 0; i < 7*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	// 3-й — ×4 (12 с)
+	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p3 := findProg(h, "vulnscan")
+	if p3 == nil || p3.work != 12 {
+		t.Fatalf("third network vulnscan must be x4 (12 s), got work=%v", p3.work)
+	}
+	for i := 0; i < 13*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	// спад: −1 ступень/мин от последнего нарушения; было 3 → +3 мин = 0
+	*clock = clock.Add(3 * time.Minute)
+	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p4 := findProg(h, "vulnscan")
+	if p4 == nil || p4.work != 3 {
+		t.Fatalf("after 2 min decay vulnscan must be back to 3 s, got work=%v", p4.work)
+	}
+	w.takeOut()
+	// ЛОКАЛЬНЫЙ путь — без пени: джек-ин в сам сейф
+	w.handleMessage(h, message{"t": "jackout"})
+	jackAt(w, h, "netsafe")
+	// «дорогой вход»: 6 с установки канала у сейфа
+	for i := 0; i < 7*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if h.jackHost == nil || h.jackHost.id != "netsafe" {
+		t.Fatalf("hacker must jack into netsafe (expensive entry)")
+	}
+	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p5 := findProg(h, "vulnscan")
+	if p5 == nil || p5.work != 3 {
+		t.Fatalf("LOCAL vulnscan at the safe must have no penalty, got work=%v", p5.work)
+	}
+	// вернуться в t1 — дальше идёт исходный cp/decrypt сценарий
+	w.handleMessage(h, message{"t": "jackout"})
+	jackAt(w, h, "t1")
 	ns.owner = h.id
 	h.scanned["netsafe"] = true
 	// decrypt на месте — denied npu

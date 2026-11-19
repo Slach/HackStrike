@@ -192,6 +192,13 @@ type device struct {
 	// владельцу — перехват).
 	jobs []*devJob
 
+	// safeLevel — экспоненциальный backoff сейфа (§16.6, итерация 5.5,
+	// плейтест «NETSAFE больно легко вскрывается по сети»): каждая сетевая
+	// vulnscan/trojan ×2 к work следующих попыток ЭТОГО игрока; спад
+	// −1 ступень/60 с. Локальная работа (джек-ин в сам сейф) — без пени.
+	safeLevel int
+	safeAt    time.Time
+
 	owner       uint64          // владелец trojan (0 = нейтральное)
 	open        bool            // дверь/газ (§14.2): стартует закрытой
 	locked      bool            // §16.7: d3 заперта код-замком (клавиатура)
@@ -1076,6 +1083,26 @@ func (w *world) shieldRegenTick() {
 	}
 }
 
+// safeBackoffLevel — текущая ступень backoff игрока на сейфе (спад
+// −1 ступень за минуту с последнего нарушения, §16.6).
+func safeBackoffLevel(d *device, now time.Time) int {
+	if d.safeLevel <= 0 {
+		return 0
+	}
+	lvl := d.safeLevel - int(now.Sub(d.safeAt).Minutes())
+	if lvl < 0 {
+		lvl = 0
+	}
+	return lvl
+}
+
+// safeBackoffInc — нарушение зафиксировано: спад пере-вычислен, +1 ступень.
+func safeBackoffInc(d *device, now time.Time) {
+	lvl := safeBackoffLevel(d, now)
+	d.safeAt = now
+	d.safeLevel = lvl + 1
+}
+
 // hitShield — щит SRV отбивает попытку (vulnscan/trojan/софт): −1 заряд,
 // таймер регена от последнего отбоя. true — отбито (нет зарядов = не отбито).
 func (w *world) hitShield(pl *player, d *device, prog string) bool {
@@ -1344,6 +1371,21 @@ func (w *world) handleRun(pl *player, msg message) {
 			return w.firewallBlocksThrough(w.cyber.devices[id], pl)
 		}
 		path = w.cyber.widestPath(pl.jackHost.id, devID, blocked)
+	}
+	// §16.6 (итерация 5.5, плейтест «NETSAFE больно легко вскрывается по
+	// сети»): сетевая vulnscan/trojan на сейф — экспоненциальный backoff
+	// ×2^ступень (спад 1 ступень/мин). Локальная работа (джек-ин в сам
+	// сейф) и владелец — без пени. Обязательно ИНФО игроку (slow): «ждать
+	// или идти ногами» должно быть видно из ответа сервера.
+	if dev, ok := w.cyber.devices[devID]; ok && dev.kind == "safe" && (prog == "vulnscan" || prog == "trojan") && pl.jackHost.id != devID && dev.owner != pl.id {
+		lvl := safeBackoffLevel(dev, w.now())
+		if lvl > 0 {
+			mult := 1 << lvl
+			work *= float64(mult)
+			eta := int(math.Ceil(work))
+			w.sendTo(pl.id, message{"t": "slow", "dev": devID, "prog": prog, "mult": mult, "eta": eta})
+			log.Printf("room: safe backoff x%d on %s for player %d (%s, %d s)", mult, devID, pl.id, prog, eta)
+		}
 	}
 	pl.progs = append(pl.progs, &program{id: pl.nextProgID, prog: prog, dev: devID, work: work, path: path})
 	pl.nextProgID++
@@ -2051,6 +2093,11 @@ func (w *world) completeProgram(pl *player, p *program) {
 		w.sendScan(pl)
 	case "vulnscan":
 		if dev := w.cyber.devices[p.dev]; dev != nil {
+			// §16.6: успешный СЕТЕВОЙ vulnscan на сейф — +1 ступень backoff
+			// (локальный — без пени; свой сейф — тоже)
+			if dev.kind == "safe" && p.dev != "deck" && pl.jackHost != nil && pl.jackHost.id != p.dev && dev.owner != pl.id {
+				safeBackoffInc(dev, w.now())
+			}
 			dev.vulnedBy[pl.id] = true // M2: навсегда (§12.4)
 			w.sendScan(pl)             // обновить карту: узел помечается «уязвимо»
 		}
@@ -2166,6 +2213,11 @@ func (w *world) completeProgram(pl *player, p *program) {
 			// это «смена владельца» (ev=owner) либо «установка» (ev=install),
 			// если владелец не изменился (повторный trojan на своё).
 			ownerChanged := dev.owner != pl.id
+			// §16.6: успешный СЕТЕВОЙ trojan на сейф — +1 ступень backoff
+			// (до смены владельца, иначе сам себе пеню не начислит)
+			if dev.kind == "safe" && pl.jackHost != nil && pl.jackHost.id != p.dev && ownerChanged {
+				safeBackoffInc(dev, w.now())
+			}
 			dev.owner = pl.id // userland; двери дают владельцу toggle
 			// §13.5: новый trojan выкуривает чужой firewall — обход без
 			// тупика (взломщик получает и владение, и открытый вход).

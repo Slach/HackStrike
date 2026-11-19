@@ -206,6 +206,10 @@ export type ServerMessage =
   // M5 (GDD §16.9 extract, итерация 7): сейф взят / канал «вскрываем» (prog
   // 0..1) / канал прерван / успех (следом matchend reason=extract).
   | { t: 'extract'; team: number; by?: number; stage: 'taken' | 'channel' | 'broken' | 'win'; prog?: number }
+  // M5 (§16.6 итерация 5.5): сетевая попытка на сейф замедлена backoff'ом —
+  // НЕ отказ, программа пошла, но ×mult дольше. Игрок должен решить: ждать
+  // или джек-ин в сам сейф (без пени).
+  | { t: 'slow'; dev: string; prog: string; mult: number; eta: number }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -567,6 +571,15 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         dev: str(m.dev) ?? '',
         data: str(m.data) ?? '',
         prog: num(m.prog, 0),
+      }
+    case 'slow':
+      // §16.6: backoff — программа стартовала замедленной; инфо, не отказ.
+      return {
+        t: 'slow',
+        dev: str(m.dev) ?? '',
+        prog: str(m.prog) ?? '',
+        mult: num(m.mult, 1),
+        eta: num(m.eta, 0),
       }
     case 'codes':
       // §16.9 codes: код, узнанный командой через decrypt (HUD «КОД D3»).
