@@ -12,7 +12,7 @@ const TEAM_END_LABEL = ['WHITEHAT', 'BLACKHAT'] as const // team 0 = WhiteHat (�
 export const EXTRACT_LORE = 'ИЗВЛЕЧЕНО: ПРОТОКОЛ «ГЕНЕАЛОГИЯ» — КОМПОНЕНТ ВИРУСА, УБИВАЮЩЕГО ПО ДНК НОСИТЕЛЯ И ВСЕХ ЕГО ДЕТЕЙ'
 const KILLFEED_ROWS = 5
 const KILLFEED_FADE_MS = 4000
-const END_RESTART_MS = 10000
+const END_RESTART_MS = 30000
 
 /** Текст приглашения (§15.5): три лозунга владельца — каркас текста
  *  (заголовок → разворот → финал), между ними — только реальные механики.

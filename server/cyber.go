@@ -41,6 +41,8 @@ const (
 	// «ПОДОЙДИ БЛИЖЕ К СЕЙФУ» (плейтест: «надо как-то на space реагировать»).
 	physafeFeedbackRadius  = 4.5
 	physafeTakeRadius      = 2.5
+
+	matchRestartDelay = 30 * time.Second // §16.6: end-оверлей поживает 30 с (плейтест «отсчет рестарта 30 секунд =)»)
 	physafeBaseRadius      = 6.0
 	physafeChannelWork     = 3.0
 	physafeBaseChannelWork = 6.0
