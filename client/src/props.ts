@@ -51,7 +51,7 @@ export interface MapProp {
   locked: boolean
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe', 'lift', 'liftbtn']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -192,6 +192,13 @@ export class PropsView {
    *  меши и позиция; обновляется из snap.props каждый тик. */
   private physafeParts: Mesh[] = []
   private physafePos: { x: number; y: number; z: number; carrier: number } | null = null
+  /** §16.12: платформы лифтов — per-lift состояние: меши + лерп-Y
+   *  (снапы 20 Гц, платформа движется — без сглаживания дёргается). */
+  private lifts = new Map<
+    string,
+    { parts: Mesh[]; x: number; z: number; half: number; thick: number; curY: number; targetY: number }
+  >()
+  private readonly liftBtns = new Map<string, SimpleProp>()
   /** Текущая отрисованная позиция меша — lerp к снап-цели (носитель
    *  движется плавно, снапы 20 Гц — без lerp сейф дёргается). */
   private physafeCur: { x: number; y: number; z: number } | null = null
@@ -259,6 +266,12 @@ export class PropsView {
           break
         case 'physafe':
           view.buildPhysafe(prop.id, prop.pos)
+          break
+        case 'lift':
+          view.buildLift(prop.id, prop.pos, prop.size ?? [2.7, 0.85, 2.7])
+          break
+        case 'liftbtn':
+          view.buildLiftBtn(prop.id, prop.pos)
           break
         case 'keypad':
           view.buildKeypad(prop.id, prop.pos, prop.to)
@@ -389,6 +402,41 @@ export class PropsView {
     this.physafeParts = [body, face, led]
     this.physafePos = { x: pos[0], y: pos[1], z: pos[2], carrier: 0 }
     this.physafeCur = { x: pos[0], y: pos[1], z: pos[2] }
+  }
+
+  /** §16.12: платформа лифта — едет между этажами по снапу (лерп в tick). */
+  private buildLift(id: string, pos: readonly [number, number, number], size: readonly [number, number, number]): void {
+    const [w, h, d] = size
+    const plat = MeshBuilder.CreateBox(`prop.${id}`, { width: w, height: h, depth: d }, this.scene)
+    plat.position.set(pos[0], pos[1] - h / 2, pos[2])
+    plat.material = this.mats.body
+    plat.isPickable = false
+    const edge = MeshBuilder.CreateBox(`prop.${id}.edge`, { width: w, height: 0.05, depth: d }, this.scene)
+    edge.position.set(pos[0], pos[1] - 0.02, pos[2])
+    edge.material = this.mats.cable // янтарная кромка — видно, где площадка
+    edge.isPickable = false
+    this.lifts.set(id, {
+      parts: [plat, edge],
+      x: pos[0],
+      z: pos[2],
+      half: w / 2,
+      thick: h,
+      curY: pos[1],
+      targetY: pos[1],
+    })
+  }
+
+  /** §16.12: кнопка-пьедестал лифта на 2F — физика, space. */
+  private buildLiftBtn(id: string, pos: readonly [number, number, number]): void {
+    const ped = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.34, height: 1.1, depth: 0.34 }, this.scene)
+    ped.position.set(pos[0], pos[1] + 0.55, pos[2])
+    ped.material = this.mats.body
+    ped.isPickable = false
+    const lamp = MeshBuilder.CreateBox(`prop.${id}.lamp`, { width: 0.22, height: 0.16, depth: 0.08 }, this.scene)
+    lamp.position.set(pos[0], pos[1] + 1.1, pos[2])
+    lamp.material = this.mats.cable
+    lamp.isPickable = false
+    this.liftBtns.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
   }
 
   /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space.
@@ -811,6 +859,14 @@ export class PropsView {
           }
           break
         }
+        case 'lift': {
+          // §16.12: платформа едет — пишем target-Y, меш догоняет лерпом
+          const l = this.lifts.get(p.id)
+          if (l !== undefined && p.y !== undefined && Math.abs(l.targetY - p.y) > 0.01) {
+            l.targetY = p.y
+          }
+          break
+        }
         case 'physafe': {
           // §16.6: позиция из снапа (на земле или у носителя); перенос меша
           // + глиф миникарты (rebuildMini дёшев, карта маленькая)
@@ -891,6 +947,13 @@ export class PropsView {
         boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()}`, min, max })
       }
     }
+    // §16.12: платформы лифтов (динамические по Y) и кнопки
+    for (const l of this.lifts.values()) {
+      boxes.push({ label: 'ЛИФТ — SPACE: СПУСК (КНОПКА РЯДОМ)', min: [l.x - l.half, l.curY - 0.2, l.z - l.half], max: [l.x + l.half, l.curY + 0.2, l.z + l.half] })
+    }
+    for (const b of this.liftBtns.values()) {
+      boxes.push({ label: 'КНОПКА ЛИФТА — SPACE: СПУСК НА 1F', min: [b.x - 0.3, b.y, b.z - 0.3], max: [b.x + 0.3, b.y + 1.3, b.z + 0.3] })
+    }
     // PHYSAFE (§16.6): динамический бокс — на земле или у носителя
     if (this.physafePos !== null) {
       const pf = this.physafePos
@@ -952,6 +1015,14 @@ export class PropsView {
   }
 
   tick(dtSec: number): void {
+    // §16.12: платформы лифтов — плавный спуск к target-Y
+    for (const l of this.lifts.values()) {
+      const dy = l.targetY - l.curY
+      if (Math.abs(dy) < 0.005) continue
+      const step = Math.sign(dy) * Math.min(Math.abs(dy), 3.2 * dtSec)
+      l.curY += step
+      for (const m of l.parts) m.position.y = l.curY
+    }
     // PHYSAFE: меш плавно догоняет снап-цель (носитель ходит, сейф с ним)
     const pf = this.physafePos
     const cur = this.physafeCur
@@ -1208,6 +1279,7 @@ export class PropsView {
     for (const k of this.codeDoors.values()) out.push({ id: k.id, kind: 'keypad', x: k.x, y: k.y + 1.3, z: k.z })
     for (const sf of this.safes.values()) out.push({ id: sf.id, kind: 'safe', x: sf.x, y: sf.y + 0.6, z: sf.z })
     if (this.physafePos !== null) out.push({ id: 'phySafe', kind: 'physafe', x: this.physafePos.x, y: this.physafePos.y + 0.5, z: this.physafePos.z })
+    for (const b of this.liftBtns.values()) out.push({ id: b.id, kind: 'liftbtn', x: b.x, y: b.y + 1.1, z: b.z })
     return out
   }
 
@@ -1236,6 +1308,7 @@ export class PropsView {
     for (const t of this.terminals.values()) out.push({ x: t.x, z: t.z, kind: 'terminal' })
     for (const sf of this.safes.values()) out.push({ x: sf.x, z: sf.z, kind: 'safe' })
     if (this.physafePos !== null) out.push({ x: this.physafePos.x, z: this.physafePos.z, kind: 'physafe' })
+    for (const b of this.liftBtns.values()) out.push({ x: b.x, z: b.z, kind: 'liftbtn' })
     for (const r of this.radios.values()) out.push({ x: r.x, z: r.z, kind: 'radio' })
     for (const s of this.switches.values()) out.push({ x: s.x, z: s.z, kind: 'switch' })
     for (const c of this.cameras.values()) out.push({ x: c.x, z: c.z, kind: 'camera' })

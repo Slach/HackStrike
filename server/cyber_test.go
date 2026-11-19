@@ -3490,3 +3490,73 @@ func TestPhysafe(t *testing.T) {
 		t.Fatalf("leaving the base zone must break the channel")
 	}
 }
+
+// TestLift — §16.12 (итерация 8.5): кнопка на 2F спускает платформу,
+// стоящий на ней игрок едет до 1F; использованный лифт отвечает used;
+// новый матч поднимает лифты.
+func TestLift(t *testing.T) {
+	w, clock := testWorldWithEmbeddedMap(t)
+	// decryptWorld-мир содержит лифты; testWorldWithEmbeddedMap — встроенная
+	// карта (тоже с лифтами после итерации 8.5). Найдём кнопку и лифт:
+	var btnProp, liftID string
+	for i := range w.m.props {
+		if w.m.props[i].Kind == "liftbtn" {
+			btnProp, liftID = w.m.props[i].ID, w.m.props[i].To
+			break
+		}
+	}
+	if btnProp == "" {
+		t.Fatalf("embedded map must carry a liftbtn")
+	}
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	var btn *mapProp
+	for i := range w.m.props {
+		if w.m.props[i].ID == btnProp {
+			btn = &w.m.props[i]
+		}
+	}
+	var lift *liftState
+	for i := range w.lifts {
+		if w.lifts[i].id == liftID {
+			lift = &w.lifts[i]
+		}
+	}
+	// игрок на платформе у кнопки
+	h.pos = vec3{btn.Pos[0] - 1.0, liftFloor2Y, btn.Pos[2]}
+	h.prevInteract = false
+	h.keys.interact = true
+	w.simulateTick()
+	h.keys.interact = false
+	if !lift.moving {
+		t.Fatalf("space at the button must start the descent")
+	}
+	// едет вниз, игрок прижат к платформе
+	for i := 0; i < 3*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if lift.top != liftFloor1Y || lift.moving {
+		t.Fatalf("lift must arrive at floor 1 in ~2.5 s, top=%v", lift.top)
+	}
+	if h.pos[1] != liftFloor1Y {
+		t.Fatalf("rider must be carried to floor 1, y=%v", h.pos[1])
+	}
+	// повторный вызов — used (один спуск за матч)
+	w.takeOut()
+	h.keys.interact = true
+	h.prevInteract = false
+	w.simulateTick()
+	h.keys.interact = false
+	if !hasDenied(w.takeOut(), h.id, "used") {
+		t.Fatalf("second call of a spent lift must be denied used")
+	}
+	// новый матч — лифты наверх (матч не кончался — форсируем его конец)
+	w.matchActive = false
+	w.matchRestartAt = w.now().Add(matchRestartDelay)
+	*clock = clock.Add(matchRestartDelay + time.Second)
+	w.simulateTick()
+	if lift.top != liftFloor2Y {
+		t.Fatalf("new match must raise the lifts, top=%v", lift.top)
+	}
+}

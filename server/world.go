@@ -71,6 +71,9 @@ type world struct {
 	physafePresent   bool
 	safeFragsAwarded bool
 
+	// §16.12 лифты (итерация 8.5): платформы-физика, один спуск за матч.
+	lifts []liftState
+
 	// now инъектится для тестов; в проде time.Now.
 	now func() time.Time
 	out []outMsg
@@ -148,6 +151,13 @@ func newWorld(m *gameMap) *world {
 			w.physafeHome = vec3(p.Pos)
 			w.physafePresent = true
 		}
+		if p.Kind == "lift" {
+			w.lifts = append(w.lifts, liftState{
+				id: p.ID, x: p.Pos[0], z: p.Pos[2],
+				half: p.Size[0] / 2, thick: p.Size[1],
+				top: liftFloor2Y, // старт: платформа на 2 этаже
+			})
+		}
 	}
 	w.physafe.pos = w.physafeHome
 	w.seedData() // §16.1: стартовые данные матча (итерация 2: door_key на t1)
@@ -211,6 +221,11 @@ func (w *world) startMatchIfNeeded() {
 		w.safeFragsAwarded = false
 		for _, p := range w.players {
 			p.carry = false
+		}
+		// §16.12: лифты наверх — один спуск за матч
+		for i := range w.lifts {
+			w.lifts[i].top = liftFloor2Y
+			w.lifts[i].moving = false
 		}
 	}
 }
@@ -464,6 +479,7 @@ func (w *world) simulateTick() {
 		w.interactTick(pl)
 		w.jackChannelTick(pl, tickDT) // §12.1 «дорогой вход»: канал не-точки входа
 	}
+	w.liftTick()          // §16.12: платформы лифтов (до движения игроков — райдеры едут)
 	w.shieldRegenTick()   // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
 	w.doorKeyTick()       // §16.5: ротация door_key на SRV1 (T=120 с)
 	w.devJobTick()        // §16.4: SRV-decrypt джобы (живут на хосте, job 1 Гц)

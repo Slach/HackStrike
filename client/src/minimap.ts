@@ -22,7 +22,7 @@ export interface MiniSelf {
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe' | 'liftbtn'
 
 export interface MiniProp {
   x: number
@@ -256,6 +256,15 @@ export class Minimap {
         ctx.beginPath()
         ctx.arc(x, y, 1.4, 0, Math.PI * 2)
         ctx.fill()
+      } else if (p.kind === 'liftbtn') {
+        // §16.12: кнопка лифта — белый треугольник вниз (спуск)
+        ctx.strokeStyle = 'rgba(240,244,248,0.9)'
+        ctx.beginPath()
+        ctx.moveTo(x - 3.5, y - 3.5)
+        ctx.lineTo(x + 3.5, y - 3.5)
+        ctx.lineTo(x, y + 4)
+        ctx.closePath()
+        ctx.stroke()
       } else if (p.kind === 'physafe') {
         // PHYSAFE (§16.6): янтарный квадрат — гонка за сейф видна всей команде
         ctx.strokeStyle = 'rgba(255,200,55,0.95)'

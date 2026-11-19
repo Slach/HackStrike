@@ -43,6 +43,14 @@ const (
 	physafeTakeRadius      = 2.5
 
 	matchRestartDelay = 30 * time.Second // §16.6: end-оверлей поживает 30 с (плейтест «отсчет рестарта 30 секунд =)»)
+
+	// Лифты (§16.12, итерация 8.5): спуск 2F→1F один раз за матч (кнопка
+	// только на 2F — наверх никак; использованный лифт остаётся внизу).
+	// Скорость 2.8 м/с → 7 м за 2.5 с; платформа 2.7×2.7 — сейф влезает.
+	liftSpeed      = 2.8
+	liftFloor2Y    = 8.0
+	liftFloor1Y    = 1.0
+	liftBtnRadius  = 2.0
 	physafeBaseRadius      = 6.0
 	physafeChannelWork     = 3.0
 	physafeBaseChannelWork = 6.0
@@ -128,6 +136,8 @@ func deviceHalfExtents(kind string) vec3 {
 		return vec3{0.15, 1.6, 0.15} // §16.5-стиль: узкая мачта-столб, а не тумбочка
 	case "safe":
 		return vec3{0.5, 1.1, 0.5} // §16.6: NETSAFE-тумба — непроходима, как терминал
+	case "liftbtn":
+		return vec3{0.17, 1.1, 0.17} // §16.12: пьедестал кнопки лифта — сплошной
 	default:
 		return vec3{}
 	}
@@ -269,6 +279,18 @@ type physafeState struct {
 	chTeam     int
 }
 
+// liftState — платформа лифта (§16.12): физика, не сеть. top — Y верхней
+// поверхности (8 = 2 этаж, 1 = 1 этаж). Один спуск за матч: кнопка на 2F,
+// наверх платформа не возвращается до рестарта.
+type liftState struct {
+	id     string
+	x, z   float64
+	half   float64 // половина стороны платформы
+	thick  float64
+	top    float64
+	moving bool
+}
+
 // firePool — полоса огня (§14.6.1): НЕ сетевое устройство — ни owner/vuln,
 // ни графа. AABB для fireTick + ссылка на водяной клапан: его open тушит
 // пул (state виден всем через snap.props клапана).
@@ -315,6 +337,12 @@ func buildCyber(m *gameMap) *cyberState {
 		if p.Kind == "physafe" {
 			// §16.6: физический сейф — НЕ сетевое устройство (офлайн, вне
 			// графа): состояние живёт на world, позиция ездит со носителем.
+			continue
+		}
+		if p.Kind == "lift" || p.Kind == "liftbtn" {
+			// §16.12 (плейтест «тащить сейф по лестнице — самоубийство»):
+			// лифты и их кнопки — физика, НЕ сеть (взломать нельзя по
+			// определению — устройства нет). Состояние на world.
 			continue
 		}
 		if p.Kind == "fire" {
@@ -678,6 +706,22 @@ func (w *world) jackTargetScored(pl *player) (*device, float64) {
 	return nil, math.Inf(-1)
 }
 
+// nearestLiftButton — ближайшая кнопка лифта в радиусе (§16.12), "" = нет.
+func (w *world) nearestLiftButton(pl *player) string {
+	best, bestD := "", liftBtnRadius
+	for i := range w.m.props {
+		b := &w.m.props[i]
+		if b.Kind != "liftbtn" {
+			continue
+		}
+		dp := vec3{b.Pos[0] - pl.pos[0], 0, b.Pos[2] - pl.pos[2]}
+		if d := dp.length(); d < bestD {
+			best, bestD = b.ID, d
+		}
+	}
+	return best
+}
+
 // physafeScore — «сила прицела» на PHYSAFE (§16.6): как у джек-цели —
 // dot в конусе либо -дистанция; сейф должен быть на земле (не у носителя).
 func (w *world) physafeScore(pl *player) float64 {
@@ -787,6 +831,12 @@ func (w *world) interactTick(pl *player) {
 	// цель space выбирается ЕДИНЫМ сравнением «сила прицела» (dot в конусе
 	// 25°, вне конуса — ближайшая по дистанции с отрицательным score, который
 	// никогда не бьёт прицеленную). Взял сейф — takeSafe; иначе джек-флоу.
+	// §16.12: физическая кнопка лифта (space, любой класс) — рядом с ней
+	// нет сетевых устройств, конфликтов нет; радиус 2 м
+	if btn := w.nearestLiftButton(pl); btn != "" {
+		w.pressLiftButton(pl, btn)
+		return
+	}
 	pfScore := w.physafeScore(pl)
 	dev, devScore := w.jackTargetScored(pl)
 	if pfScore > devScore {
@@ -2939,6 +2989,87 @@ func (w *world) physafeTick(dt float64) {
 		// сработать в том же тике со старым состоянием
 		w.physafe.chKind = ""
 		log.Printf("room: team %d extracted the physafe — WIN", team)
+	}
+}
+
+// liftTick — движение платформ и райдеры (§16.12): платформа едет вниз
+// 2.8 м/с; игрок, стоящий на ней (AABB платформы, ноги в пределах), едёт —
+// каждый тик его ноги прижимаются к top. Динамический коллайдер платформы
+// пишется в m.dynamic ДО движения игроков — applyPhysics приземляет на неё.
+func (w *world) liftTick() {
+	if len(w.lifts) == 0 {
+		return
+	}
+	for i := range w.lifts {
+		l := &w.lifts[i]
+		if l.moving && l.top > liftFloor1Y {
+			l.top -= liftSpeed * tickDT
+			if l.top <= liftFloor1Y {
+				l.top = liftFloor1Y
+				l.moving = false
+				log.Printf("room: lift %s arrived at floor 1", l.id)
+			}
+		}
+	}
+	// райдеры: ноги на платформе (или чуть в воздухе над ней — едем вместе)
+	for i := range w.lifts {
+		l := &w.lifts[i]
+		for _, pl := range w.players {
+			if !pl.alive || pl.jacked {
+				continue
+			}
+			if math.Abs(pl.pos[0]-l.x) > l.half+playerHalf || math.Abs(pl.pos[2]-l.z) > l.half+playerHalf {
+				continue
+			}
+			if pl.pos[1] >= l.top-0.15 && pl.pos[1] <= l.top+0.4 {
+				pl.pos[1] = l.top
+				pl.vy = 0
+				pl.grounded = true
+			}
+		}
+	}
+	// динамические коллайдеры — платформы как пол (приземление applyPhysics)
+	dyn := make([]collider, 0, len(w.lifts))
+	for i := range w.lifts {
+		l := &w.lifts[i]
+		dyn = append(dyn, collider{
+			Min: [3]float64{l.x - l.half, l.top - l.thick, l.z - l.half},
+			Max: [3]float64{l.x + l.half, l.top, l.z + l.half},
+			Kind: "floor",
+		})
+	}
+	w.m.dynamic = dyn
+}
+
+// pressLiftButton — физическая кнопка на 2F (space, любой класс; §16.12):
+// лифт вверх → старт спуска; использованный лифт отвечает отказом.
+func (w *world) pressLiftButton(pl *player, btnID string) {
+	var btn *mapProp
+	for i := range w.m.props {
+		if w.m.props[i].Kind == "liftbtn" && w.m.props[i].ID == btnID {
+			btn = &w.m.props[i]
+		}
+	}
+	if btn == nil {
+		return
+	}
+	dp := vec3{btn.Pos[0] - pl.pos[0], 0, btn.Pos[2] - pl.pos[2]}
+	if dp.length() > liftBtnRadius {
+		w.dataDenied(pl, "too_far", "liftbtn", btnID)
+		return
+	}
+	for i := range w.lifts {
+		l := &w.lifts[i]
+		if l.id != btn.To || l.moving {
+			continue
+		}
+		if l.top <= liftFloor1Y+0.01 {
+			w.dataDenied(pl, "used", "liftbtn", btnID) // спущен — один раз за матч
+			return
+		}
+		l.moving = true
+		log.Printf("room: player %d called lift %s down", pl.id, l.id)
+		return
 	}
 }
 

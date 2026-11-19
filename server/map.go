@@ -23,6 +23,11 @@ type gameMap struct {
 	// deviceBoxes — корпуса устройств как препятствия (строит buildCyber,
 	// проверяет staticBlocked/doorBlocker): сеть и физика обязаны сойтись.
 	deviceBoxes []aabb
+
+	// dynamic — коллайдеры, двигающиеся каждый тик (платформы лифтов,
+	// §16.12): applyPhysics приземляет игроков на них, как на пол.
+	// Пишет liftTick до движения игроков.
+	dynamic []collider
 	Name        string                  `json:"name"`
 	Bounds      [3]float64              `json:"bounds"`
 	Colliders   []collider              `json:"colliders"`
@@ -84,7 +89,7 @@ func (m *gameMap) parseProps() error {
 			return fmt.Errorf("map: prop %d: %w", i, err)
 		}
 		switch p.Kind {
-		case "terminal", "radio", "switch", "door", "gas", "fire", "valve", "camera", "cable", "srv", "keypad", "safe", "physafe":
+		case "terminal", "radio", "switch", "door", "gas", "fire", "valve", "camera", "cable", "srv", "keypad", "safe", "physafe", "lift", "liftbtn":
 		default:
 			return fmt.Errorf("map: prop %d: unknown kind %q", i, p.Kind)
 		}

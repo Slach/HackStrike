@@ -129,9 +129,17 @@ func (m *gameMap) applyPhysics(pl *player, dt float64, blocked blockFn) {
 	}
 	if pl.vy < 0 {
 		// Встать на самый высокий бокс под ногами (top не выше старых ног).
+		// Динамические коллайдеры (платформы лифтов, §16.12) — наравне со
+		// статикой: стоящий на платформе приземляется на её текущий top.
 		best := math.Inf(-1)
 		for i := range m.Colliders {
 			c := &m.Colliders[i]
+			if boxesOverlap(box, aabb{vec3(c.Min), vec3(c.Max)}) && c.Max[1] <= pl.pos[1]+0.001 && c.Max[1] > best {
+				best = c.Max[1]
+			}
+		}
+		for i := range m.dynamic {
+			c := &m.dynamic[i]
 			if boxesOverlap(box, aabb{vec3(c.Min), vec3(c.Max)}) && c.Max[1] <= pl.pos[1]+0.001 && c.Max[1] > best {
 				best = c.Max[1]
 			}

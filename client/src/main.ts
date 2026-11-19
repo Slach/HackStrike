@@ -108,6 +108,7 @@ const NAV_COLOR: Readonly<Record<string, string>> = {
   srv: '#e6f5ff',
   safe: '#5fb4ff',
   physafe: '#ffc837',
+  liftbtn: '#f0f4f8',
   base: '#ffffff',
 }
 let lastSnapAt = 0 // performance.now() последнего снапшота (для локального отсчёта таймеров)

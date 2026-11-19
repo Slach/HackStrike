@@ -32,11 +32,11 @@ export type ClientMessage =
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
 // 'valve' — водяной клапан: сетевой кибер-контроллер огня (по образцу газа).
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe'
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe' | 'lift' | 'liftbtn'
 
 /** Сетевые устройства — всё, что бывает в scan/деке. Fire вычтен по построению:
  *  он не сканируется и не взламывается (§14.6.1) — управляют огнём через valve. */
-export type CyberKind = Exclude<PropKind, 'fire' | 'physafe'> // fire/physafe — не сетевые устройства
+export type CyberKind = Exclude<PropKind, 'fire' | 'physafe' | 'lift' | 'liftbtn'> // fire/physafe/lift — не сетевые устройства
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
  *  the server sent them, so an absent "open" means "keep the last
@@ -236,7 +236,7 @@ const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
 // Полный whitelist: map props парсятся через parseMapProps (props.ts);
 // fire в snap.props/scan по построению не появляется — parseProp просто
 // принимает kind, собственного состояния у него нет (ГДД §14.6.1).
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe'] // srv — §16.5; keypad — §16.7; safe — §16.6 NETSAFE; physafe — §16.6 PHYSAFE
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe', 'lift', 'liftbtn']
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
@@ -317,7 +317,7 @@ function parseDevice(v: unknown): ScanDevice | null {
   // Fire не сканируется (§14.6.1): урон-ландшафт отсечён и типом, и здесь —
   // scan-протокол его никогда не несёт; valve — обычное устройство.
   const pk = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
-  const kind = pk !== null && pk !== 'fire' && pk !== 'physafe' ? pk : null // fire/physafe — не сетевые устройства
+  const kind = pk !== null && pk !== 'fire' && pk !== 'physafe' && pk !== 'lift' && pk !== 'liftbtn' ? pk : null // fire/physafe/lift — не сетевые
   if (id === null || kind === null) return null
   const dev: ScanDevice = {
     id,
