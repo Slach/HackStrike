@@ -410,9 +410,12 @@ export class HackView {
     this.cpToasts = []
     // DECRYPT-карточки тоже: дековые джобы отменены джек-аутом, SRV живёт,
     // но её карточка пересоздастся из job при новом джек-ине. Интервалы —
-    // остановить (утечка setInterval, §16.4).
+    // остановить (утечка setInterval, §16.4). Контейнер — под ноль:
+    // никаких зомби-карточек прошлой сессии.
     for (const r of this.jobCards) window.clearInterval(r.timer)
     this.jobCards = []
+    this.cpToasts = []
+    this.toasts.replaceChildren()
     // Дедупликаторы тостов-«находок» живут в синглтоне страницы и переживали
     // смерть/реконнект: повторный vulnscan той же цели приходил как «не новое»
     // и тост «УЯЗВИМОСТЬ НАЙДЕНА» глох — выглядело «vulnscan не находит»
@@ -449,6 +452,13 @@ export class HackView {
     }
     this.root.classList.add('hidden')
     this.main.replaceChildren()
+    // Тосты деки умирают с декой (плейтест: после смерти на экране навсегда
+    // висела DECRYPT-карточка «51%» — массивы чистились, DOM нет). Интервалы
+    // hex-скрэмбла DECRYPT-карточек — тоже.
+    for (const r of this.jobCards) window.clearInterval(r.timer)
+    this.jobCards = []
+    this.cpToasts = []
+    this.toasts.replaceChildren()
     this.sparkRefs = []
     this.progLists = []
     this.netmapBoxes = []
