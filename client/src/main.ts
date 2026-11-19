@@ -87,6 +87,22 @@ let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; 
 let keyLeftMs = -1 // §16.5: последний keyLeft из снапшота
 let teamDoorCode: string | null = null // §16.4: код d3, узнанный командой (codes)
 let teamSafeCode: string | null = null // §16.6: код сейфа, узнанный командой (codes)
+
+/** Цвет edge-индикаторов по типу объекта (§15.14) — палитра миникарты. */
+const NAV_COLOR: Readonly<Record<string, string>> = {
+  terminal: '#37ff9b',
+  radio: '#ff4dd2',
+  switch: '#ffd237',
+  door: '#eafff3',
+  camera: '#78e6ff',
+  gas: '#a8ff60',
+  valve: '#5fd7ff',
+  keypad: '#ff9f43',
+  srv: '#e6f5ff',
+  safe: '#5fb4ff',
+  physafe: '#ffc837',
+  base: '#ffffff',
+}
 let lastSnapAt = 0 // performance.now() последнего снапшота (для локального отсчёта таймеров)
 
 /** §16.7: клавиатура d3 — пад из 10 кнопок (как настоящий кодовый замок).
@@ -425,7 +441,7 @@ function handleDeath(msg: DeathMsg): void {
 function handleEnd(msg: EndMsg): void {
   matchOver = true
   hackviewOff(false)
-  hud.setArrow(null, '')
+  hud.setNav([])
   // reason=extract — победа извлечением; ЛОР: ЧТО мы вынесли из сейфа
   // (формулировка владельца — протокол вируса по ДНК носителя и его детей)
   hud.showEnd(msg.winner, msg.scores, () => {
@@ -922,33 +938,66 @@ engine.runRenderLoop(() => {
     hud.propLabel(null)
   }
 
-  // Целеуказатель PHYSAFE (§16.6): несёшь — на базу; сейф лежит/у врага —
-  // на сейф (перехват). Виден и мёртвому («до респауна показывать куда»).
+  // Edge-индикаторы навигации (§15.14, плейтест: «треугольники по краям
+  // экрана с подписями… если на объект смотрим — не показывать»): ближайшие
+  // объекты ВНЕ поля зрения — маленький цветной треугольник на краю экрана
+  // с подписью id (CAM1, V1, D1… NETSAFE). Цвет — по типу объекта.
+  // PHYSAFE — всегда (гонка за сейфом); несущему — БАЗА его команды.
   {
-    const pf = propsView?.physafeInfo() ?? null
-    if (playing && propsView !== null && pf !== null) {
+    const items: { label: string; color: string; left: number; top: number; deg: number }[] = []
+    if (playing && propsView !== null && !hackview.active) {
+      const targets = propsView.navTargets()
       const carrying = latestMeta.get(myId ?? -1)?.safe === true
-      const target =
-        carrying
-          ? world?.baseOf(myTeam)
-          : { x: pf.x, z: pf.z }
-      if (target !== undefined && target !== null) {
-        const dx = target.x - camera.position.x
-        const dz = target.z - camera.position.z
-        if (dx * dx + dz * dz > 1) {
-          // yaw 0 = +Z, рост по часовой: экранный угол = азимут цели − yaw
-          const deg = ((Math.atan2(dx, dz) - controls.yaw) * 180) / Math.PI
-          const foeCarrying = pf.carrier !== 0 && !carrying
-          hud.setArrow(deg, carrying ? 'БАЗА' : foeCarrying ? `СЕЙФ · У ВРАГА` : 'СЕЙФ')
-        } else {
-          hud.setArrow(null, '')
-        }
-      } else {
-        hud.setArrow(null, '')
+      if (carrying) {
+        const b = world?.baseOf(myTeam)
+        if (b !== undefined && b !== null) targets.push({ id: 'БАЗА', kind: 'base', x: b.x, y: camera.position.y, z: b.z })
       }
-    } else {
-      hud.setArrow(null, '')
+      const fwd = camera.getDirection(Vector3.Forward())
+      const right = camera.getDirection(Vector3.Right())
+      const up = camera.getDirection(Vector3.Up())
+      const tanHalf = Math.tan(camera.fov / 2)
+      const aspect = engine.getRenderWidth() / engine.getRenderHeight()
+      const W = engine.getRenderWidth()
+      const H = engine.getRenderHeight()
+      const margin = 30
+      const cand: { t: (typeof targets)[number]; r: number; u: number; d2: number }[] = []
+      for (const t of targets) {
+        const dx = t.x - camera.position.x
+        const dy = t.y - camera.position.y
+        const dz = t.z - camera.position.z
+        const f = dx * fwd.x + dy * fwd.y + dz * fwd.z
+        const r = dx * right.x + dy * right.y + dz * right.z
+        const u = dx * up.x + dy * up.y + dz * up.z
+        // В поле зрения (и перед носом, не за спиной) — не показываем
+        if (f > 0.5 && Math.abs(r / f / (tanHalf * aspect)) < 0.98 && Math.abs(u / f / tanHalf) < 0.92) continue
+        cand.push({ t, r, u, d2: dx * dx + dy * dy + dz * dz })
+      }
+      cand.sort((a, b) => a.d2 - b.d2)
+      const shown: typeof cand = []
+      for (const c of cand) {
+        const always = c.t.kind === 'physafe' || c.t.id === 'БАЗА'
+        if (shown.length < 6 || always) shown.push(c)
+      }
+      for (const c of shown.slice(0, 8)) {
+        // направление на краю экрана: (rightDot, -upDot) — экранная Y вниз
+        const nx = c.r
+        const ny = -c.u
+        const len = Math.hypot(nx, ny)
+        if (len < 1e-6) continue
+        const dirX = nx / len
+        const dirY = ny / len
+        const t = Math.min((W / 2 - margin) / Math.max(Math.abs(dirX), 1e-6), (H / 2 - margin) / Math.max(Math.abs(dirY), 1e-6))
+        const deg = (Math.atan2(dirX, -dirY) * 180) / Math.PI
+        items.push({
+          label: c.t.kind === 'safe' ? 'NETSAFE' : c.t.id.toUpperCase(),
+          color: NAV_COLOR[c.t.kind] ?? '#cfeeff',
+          left: W / 2 + dirX * t,
+          top: H / 2 + dirY * t,
+          deg,
+        })
+      }
     }
+    hud.setNav(items)
   }
 
   let hint: string | null = null

@@ -1174,10 +1174,21 @@ export class PropsView {
     return best
   }
 
-  /** §16.6: позиция PHYSAFE + носитель (целеуказатель main.ts). */
-  physafeInfo(): { x: number; z: number; carrier: number } | null {
-    const pf = this.physafePos
-    return pf !== null ? { x: pf.x, z: pf.z, carrier: pf.carrier } : null
+  /** Навигационные точки (§15.14 edge-индикаторы): все сетевые пропсы +
+   *  PHYSAFE; y — центр объекта (проекция на экран в main.ts). */
+  navTargets(): { id: string; kind: string; x: number; y: number; z: number }[] {
+    const out: { id: string; kind: string; x: number; y: number; z: number }[] = []
+    for (const t of this.terminals.values()) out.push({ id: t.id, kind: 'terminal', x: t.x, y: t.y + 1, z: t.z })
+    for (const r of this.radios.values()) out.push({ id: r.id, kind: 'radio', x: r.x, y: r.y + 1, z: r.z })
+    for (const sw of this.switches.values()) out.push({ id: sw.id, kind: 'switch', x: sw.x, y: sw.y + 0.5, z: sw.z })
+    for (const d of this.doors.values()) out.push({ id: d.id, kind: 'door', x: d.x, y: d.baseY + d.h / 2, z: d.z })
+    for (const c of this.cameras.values()) out.push({ id: c.id, kind: 'camera', x: c.x, y: c.fy, z: c.z })
+    for (const g of this.gases.values()) out.push({ id: g.id, kind: 'gas', x: g.x, y: g.y, z: g.z })
+    for (const v of this.valves.values()) out.push({ id: v.id, kind: 'valve', x: v.x, y: v.y + 0.5, z: v.z })
+    for (const k of this.codeDoors.values()) out.push({ id: k.id, kind: 'keypad', x: k.x, y: k.y + 1.3, z: k.z })
+    for (const sf of this.safes.values()) out.push({ id: sf.id, kind: 'safe', x: sf.x, y: sf.y + 0.6, z: sf.z })
+    if (this.physafePos !== null) out.push({ id: 'phySafe', kind: 'physafe', x: this.physafePos.x, y: this.physafePos.y + 0.5, z: this.physafePos.z })
+    return out
   }
 
   /** §16.6: PHYSAFE рядом и на земле? Возвращает дистанцию (для пада

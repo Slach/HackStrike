@@ -396,8 +396,8 @@ export class Hud {
     jackinHint: byId('jackinHint'),
     hudWarn: byId('hudWarn'),
     hudCode: byId('hudCode'),
-    hudArrow: byId('hudArrow'),
     endReason: byId('endReason'),
+    hudNav: byId('hudNav'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -835,20 +835,38 @@ export class Hud {
     this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
   }
 
-  /** Целеуказатель PHYSAFE (§16.6, плейтест «стрелку с целеуказателем»):
-   *  DOM-стрелка по центру, поворот = азимут цели − мой yaw. null — скрыть. */
-  setArrow(deg: number | null, label: string): void {
-    const el = this.el.hudArrow
-    if (el === null) return
-    if (deg === null) {
-      el.classList.add('hidden')
-      return
+  /** Пул edge-индикаторов (§15.14, плейтест «треугольники по краям экрана
+   *  с подписями»): маленький цветной треугольник + подпись id на краю
+   *  экрана — направление на объект ВНЕ поля зрения. Пересоздания DOM нет:
+   *  пул переиспользуется, лишние скрываются. */
+  setNav(items: readonly { label: string; color: string; left: number; top: number; deg: number }[]): void {
+    const box = this.el.hudNav
+    if (box === null) return
+    for (let i = 0; i < items.length; i++) {
+      let el = this.navPool[i]
+      if (el === undefined) {
+        el = document.createElement('div')
+        el.className = 'nav-ind'
+        const tri = document.createElement('div')
+        tri.className = 'nav-tri'
+        const lab = document.createElement('div')
+        lab.className = 'nav-label'
+        el.append(tri, lab)
+        box.append(el)
+        this.navPool.push(el)
+      }
+      const it = items[i]
+      el.classList.remove('hidden')
+      el.style.left = `${it.left}px`
+      el.style.top = `${it.top}px`
+      const tri = el.firstElementChild as HTMLElement
+      tri.style.borderBottomColor = it.color
+      tri.style.transform = `rotate(${it.deg}deg)`
+      ;(el.lastElementChild as HTMLElement).textContent = it.label
     }
-    el.classList.remove('hidden')
-    const tip = el.firstElementChild as HTMLElement | null
-    if (tip !== null) tip.style.transform = `rotate(${deg}deg)`
-    el.lastElementChild!.textContent = label
+    for (let i = items.length; i < this.navPool.length; i++) this.navPool[i].classList.add('hidden')
   }
+  private navPool: HTMLElement[] = []
 
   /** Коды, узнанные командой (§16.4/§16.6/§16.9 codes → HUD «КОД D3: 4731
    *  · СЕЙФ: 8241»): постоянная строка — команда знает код до конца матча.
