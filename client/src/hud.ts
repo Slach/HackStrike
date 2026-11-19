@@ -399,6 +399,10 @@ export class Hud {
     endReason: byId('endReason'),
     hudNav: byId('hudNav'),
     hudCarry: byId('hudCarry'),
+    hudChannel: byId('hudChannel'),
+    hudChannelTitle: byId('hudChannelTitle'),
+    hudChannelFill: byId('hudChannelFill'),
+    hudChannelPct: byId('hudChannelPct'),
     endTable: byId('endTable'),
   }
 
@@ -835,6 +839,22 @@ export class Hud {
     el.classList.remove('hidden')
     if (this.warnTimer !== undefined) clearTimeout(this.warnTimer)
     this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
+  }
+
+  /** Канал «вскрываем сейф» (§16.6, плейтест «нужна анимация с процентами»):
+   *  янтарный бар для своей команды, красный — враг вскрывает. null — скрыть. */
+  setChannel(mine: boolean, text: string, prog: number): void {
+    const el = this.el.hudChannel
+    if (el === null) return
+    el.classList.remove('hidden')
+    el.classList.toggle('enemy', !mine)
+    this.el.hudChannelTitle.textContent = text
+    this.el.hudChannelFill.style.width = `${Math.round(Math.min(1, Math.max(0, prog)) * 100)}%`
+    this.el.hudChannelPct.textContent = `${Math.round(prog * 100)}%`
+  }
+
+  hideChannel(): void {
+    this.el.hudChannel?.classList.add('hidden')
   }
 
   /** Ноша PHYSAFE (§16.6): постоянная янтарная плашка, пока safe=true. */

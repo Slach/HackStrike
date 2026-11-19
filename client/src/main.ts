@@ -452,9 +452,10 @@ function handleDeath(msg: DeathMsg): void {
 
 function handleEnd(msg: EndMsg): void {
   matchOver = true
-  closeCodePad() // end-оверлей ниже пада по z — PIN-панель поверх победы недопустима
+  closeCodePad()
   hackviewOff(false)
   hud.setNav([])
+  hud.hideChannel()
   // reason: extract — лор ЧТО извлекли; time/frags — почему матч кончился
   // (плейтест: конец по таймеру посреди decrypt выглядел «выбросило из
   // коннекта»; напомнить, что матч-специфичный лут стёрт)
@@ -523,15 +524,22 @@ const sock = new GameSocket({
         // §16.9 extract (итерация 7): события PHYSAFE — общий телеграф.
         switch (msg.stage) {
           case 'taken':
-            hud.warn(`СЕЙФ ВЗЯТ — КОМАНДА ${msg.team === 0 ? 'ЦИАН' : 'МАДЖЕНТА'}`)
+            hud.warn(`СЕЙФ ВЗЯТ — КОМАНДА ${msg.team === 0 ? 'WHITEHAT' : 'BLACKHAT'}`)
+            hud.hideChannel()
             break
-          case 'channel':
-            hud.warn(msg.team === myTeam ? `ВСКРЫВАЕМ СЕЙФ — СТОЙ НА МЕСТЕ (${Math.round((msg.prog ?? 0) * 100)}%)` : `ВРАГ ВСКРЫВАЕТ СЕЙФ!`)
+          case 'channel': {
+            // плейтест «нужна анимация с процентами»: постоянный бар с %
+            // (1 Гц от сервера, сглаживается CSS transition)
+            const mine = msg.team === myTeam
+            hud.setChannel(mine, mine ? 'ВСКРЫВАЕМ СЕЙФ — СТОЙ НА МЕСТЕ' : 'ВРАГ ВСКРЫВАЕТ СЕЙФ!', msg.prog ?? 0)
             break
+          }
           case 'broken':
-            hud.warn('КАНАЛ ПРЕРВАН')
+            hud.warn('КАНАЛ ПРЕРВАН — ПРОГРЕСС ПОТЕРЯН')
+            hud.hideChannel()
             break
           case 'win':
+            hud.hideChannel()
             break // следом matchend reason=extract
         }
         break

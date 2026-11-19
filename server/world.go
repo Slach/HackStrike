@@ -33,11 +33,12 @@ type world struct {
 	tick    uint64
 	cyber   *cyberState
 
-	matchActive bool
-	matchEndsAt time.Time
-	matchStart  time.Time // §16.5: старт матча — база ротации door_key
-	fragLimit   int
-	matchLen    time.Duration
+	matchActive    bool
+	matchEndsAt    time.Time
+	matchRestartAt time.Time // §16.6: пауза 10 с после конца матча (end-оверлей)
+	matchStart     time.Time // §16.5: старт матча — база ротации door_key
+	fragLimit      int
+	matchLen       time.Duration
 
 	// §16.5 (ревизия 2026-11-18): door_key — лут на время. SRV1 генерит
 	// поколение раз в doorKeyRot; код d3 меняется с поколением (грейс —
@@ -189,7 +190,10 @@ func (w *world) spawnPlayer(pl *player, cls string) {
 
 // startMatchIfNeeded — таймер матча стартует с первым игроком (§3.3).
 func (w *world) startMatchIfNeeded() {
-	if !w.matchActive && len(w.players) > 0 {
+	// §16.6 (плейтест «непонятно что произошло, где анимация про победу»):
+	// следующий матч стартует не мгновенно — end-оверлей с таблицей фрагов
+	// должен пожить свои 10 с (клиент END_RESTART_MS=10000).
+	if !w.matchActive && len(w.players) > 0 && (w.matchRestartAt.IsZero() || !w.now().Before(w.matchRestartAt)) {
 		w.matchActive = true
 		w.matchEndsAt = w.now().Add(w.matchLen)
 		// §16.5: новый раунд — новое поколение door_key, старые поколения
@@ -460,12 +464,12 @@ func (w *world) simulateTick() {
 		w.interactTick(pl)
 		w.jackChannelTick(pl, tickDT) // §12.1 «дорогой вход»: канал не-точки входа
 	}
-	w.shieldRegenTick() // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
-	w.doorKeyTick()     // §16.5: ротация door_key на SRV1 (T=120 с)
-	w.devJobTick()      // §16.4: SRV-decrypt джобы (живут на хосте, job 1 Гц)
+	w.shieldRegenTick()   // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
+	w.doorKeyTick()       // §16.5: ротация door_key на SRV1 (T=120 с)
+	w.devJobTick()        // §16.4: SRV-decrypt джобы (живут на хосте, job 1 Гц)
 	w.physafeTick(tickDT) // §16.6: канал «вскрываем 3 с» (код у сейфа / база)
-	w.gasTick(tickDT)   // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
-	w.fireTick(tickDT)  // §14.6.1: DoT огня (сразу за газом, тот же порядок)
+	w.gasTick(tickDT)     // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
+	w.fireTick(tickDT)    // §14.6.1: DoT огня (сразу за газом, тот же порядок)
 	w.matchCheck()
 	w.rebalanceTeams()
 	w.deckStatusTick()
@@ -531,6 +535,7 @@ func (w *world) endMatch(winner int, reason string) {
 	w.broadcast(m)
 	w.scores = [2]int{}
 	w.matchActive = false
+	w.matchRestartAt = w.now().Add(matchRestartDelay)
 	for _, p := range w.players {
 		p.frags = 0 // новый матч — таблица с нуля
 	}

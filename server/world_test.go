@@ -257,7 +257,7 @@ func TestDeathRedeliveredOnSessionRestore(t *testing.T) {
 
 // Матч: победа по фрагам → matchend → сброс счёта, следующий матч стартует.
 func TestMatchEndByFrags(t *testing.T) {
-	w, _ := testWorldWithEmbeddedMap(t)
+	w, clock := testWorldWithEmbeddedMap(t)
 	w.fragLimit = 1
 	killer := w.addPlayer(1, "k", "sniper", -1)
 	victim := w.addPlayer(2, "v", "assault", -1)
@@ -288,7 +288,9 @@ func TestMatchEndByFrags(t *testing.T) {
 	if w.scores != [2]int{0, 0} {
 		t.Fatalf("scores must reset after matchend, got %v", w.scores)
 	}
-	// Следующий матч перезапускается на ближайшем тике (игроки остались).
+	// Следующий матч — после 10-с паузы рестарта (§16.6: end-оверлей с
+	// таблицей фрагов поживает; плейтест «непонятно что произошло»)
+	*clock = clock.Add(matchRestartDelay + time.Second)
 	w.simulateTick()
 	if !w.matchActive {
 		t.Fatalf("next match must restart while players remain")

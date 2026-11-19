@@ -945,6 +945,82 @@
       #hudCarry.hidden {
         display: none;
       }
+
+      /* канал «вскрываем сейф» (§16.6, плейтест «нужна анимация с
+         процентами»): полоса с % под прицелом, янтарная — своя команда,
+         красная — враг; прогресс сглаживается CSS transition (job 1 Гц) */
+      #hudChannel {
+        position: absolute;
+        bottom: 172px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 320px;
+        padding: 8px 14px 10px;
+        background: rgba(4, 14, 9, 0.9);
+        border: 1px solid rgba(255, 200, 55, 0.6);
+        border-radius: 6px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 6;
+      }
+      #hudChannel.enemy {
+        border-color: rgba(255, 77, 94, 0.7);
+      }
+      #hudChannelTitle {
+        font-size: 12px;
+        letter-spacing: 3px;
+        color: #ffd770;
+        text-shadow: 0 0 8px rgba(255, 200, 55, 0.5);
+        margin-bottom: 6px;
+      }
+      #hudChannel.enemy #hudChannelTitle {
+        color: #ff6d80;
+        text-shadow: 0 0 8px rgba(255, 77, 94, 0.5);
+      }
+      #hudChannelBar {
+        height: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      #hudChannelFill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #ffc837, #ff8a37);
+        transition: width 1s linear;
+        animation: chPulse 0.8s ease-in-out infinite;
+      }
+      #hudChannel.enemy #hudChannelFill {
+        background: linear-gradient(90deg, #ff4d5e, #ff7a37);
+      }
+      @keyframes chPulse {
+        0%,
+        100% {
+          filter: brightness(1);
+        }
+        50% {
+          filter: brightness(1.4);
+        }
+      }
+      #hudChannelPct {
+        margin-top: 4px;
+        font-size: 14px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        color: #ffd770;
+        text-shadow: 0 0 8px rgba(255, 200, 55, 0.6);
+      }
+      #hudChannel.enemy #hudChannelPct {
+        color: #ff6d80;
+        text-shadow: 0 0 8px rgba(255, 77, 94, 0.6);
+      }
+      body.touch #hudChannel {
+        bottom: calc(268px + env(safe-area-inset-bottom));
+        width: 260px;
+      }
+      #hudChannel.hidden {
+        display: none;
+      }
       #endReason.hidden {
         display: none;
       }
@@ -2908,6 +2984,11 @@
     <div id="hudWarn" class="hidden"></div>
     <div id="hudCode" class="hidden"></div>
     <div id="hudCarry" class="hidden"></div>
+    <div id="hudChannel" class="hidden">
+      <div id="hudChannelTitle"></div>
+      <div id="hudChannelBar"><div id="hudChannelFill"></div></div>
+      <div id="hudChannelPct">0%</div>
+    </div>
     <div id="hudNav"></div>
 
     <div id="hackview" class="hidden"></div>
