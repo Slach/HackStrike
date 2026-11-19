@@ -3220,21 +3220,21 @@ func TestNetSafe(t *testing.T) {
 
 	// --- §16.6 итерация 5.5: экспоненциальный backoff на сетевые попытки ---
 	h.scanned["netsafe"] = true
-	// 1-й сетевой vulnscan — без пени (3 с)
+	// 1-й сетевой vulnscan — база сейфа 8 с (плейтест «слишком быстро»)
 	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
 	if ns.vulnedBy[h.id] != true {
 		t.Fatalf("first network vulnscan must finish")
 	}
-	// плейтест «не ощутил»: пеня за КАЖДЫЙ старт — «подряд» растёт сразу.
-	// trojan сразу после vulnscan — уже ×2 (4 с)
+	// пеня за КАЖДЫЙ старт — «подряд» растёт сразу.
+	// trojan: база 10 с ×2 = 20 с
 	w.takeOut()
 	w.handleMessage(h, message{"t": "run", "prog": "trojan", "dev": "netsafe"})
 	p2 := findProg(h, "trojan")
 	if p2 == nil {
 		t.Fatalf("network trojan must start (slow, not denied)")
 	}
-	if p2.work != 4 {
-		t.Fatalf("network trojan right after vulnscan = %v, want 4 (x2)", p2.work)
+	if p2.work != 20 {
+		t.Fatalf("network trojan right after vulnscan = %v, want 20 (10 x2)", p2.work)
 	}
 	slow := false
 	for _, m := range w.takeOut() {
@@ -3245,27 +3245,29 @@ func TestNetSafe(t *testing.T) {
 	if !slow {
 		t.Fatalf("backed-off start must carry a slow message (x2)")
 	}
-	// и следующая попытка vulnscan — уже ×4 (12 с)
+	// следующая попытка vulnscan — база 8 ×4 = 32 с
 	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
 	p3 := findProg(h, "vulnscan")
-	if p3 == nil || p3.work != 12 {
-		t.Fatalf("next vulnscan must be x4 (12 s), got work=%v", p3.work)
+	if p3 == nil || p3.work != 32 {
+		t.Fatalf("next vulnscan must be x4 (32 s), got work=%v", p3.work)
 	}
-	for i := 0; i < 13*30 && len(h.progs) > 0; i++ {
+	// очередь длинная (trojan 20 + vulnscan 32 при делении) — хвост доедаем
+	for i := 0; i < 90*30 && len(h.progs) > 0; i++ {
 		*clock = clock.Add(time.Second / 30)
 		w.simulateTick()
 	}
-	// дождаться хвоста очереди (vulnscan2 шёл ×0.5 из-за trojan в паре)
-	for i := 0; i < 30*30 && len(h.progs) > 0; i++ {
-		*clock = clock.Add(time.Second / 30)
-		w.simulateTick()
-	}
-	// спад: −1 ступень/мин от последнего нарушения; было 3 → +3 мин = 0
-	*clock = clock.Add(3 * time.Minute)
-	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
-	p4 := findProg(h, "vulnscan")
-	if p4 == nil || p4.work != 3 {
-		t.Fatalf("after decay vulnscan must be back to 3 s, got work=%v", p4.work)
+	// спад: −1 ступень/90 с; было 3 ступени → +5 мин = 0.
+	// Проверяем ВТОРЫМ хакером той же команды — заодно доказываем per-team
+	// (h после trojan — владелец, exempt)
+	h2 := w.addPlayer(3, "h2", "hacker", 0)
+	w.takeOut()
+	jackAt(w, h2, "t1")
+	h2.scanned = map[string]bool{"t1": true, "netsafe": true}
+	*clock = clock.Add(5 * time.Minute)
+	w.handleMessage(h2, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p4 := findProg(h2, "vulnscan")
+	if p4 == nil || p4.work != 8 {
+		t.Fatalf("after decay vulnscan must be back to base 8 s, got work=%v", p4.work)
 	}
 	w.takeOut()
 	// ЛОКАЛЬНЫЙ путь — без пени: джек-ин в сам сейф

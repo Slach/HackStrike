@@ -194,10 +194,11 @@ type device struct {
 
 	// safeLevel — экспоненциальный backoff сейфа (§16.6, итерация 5.5,
 	// плейтест «NETSAFE больно легко вскрывается по сети»): каждая сетевая
-	// vulnscan/trojan ×2 к work следующих попыток ЭТОГО игрока; спад
-	// −1 ступень/60 с. Локальная работа (джек-ин в сам сейф) — без пени.
-	safeLevel int
-	safeAt    time.Time
+	// vulnscan/trojan ×2 к work следующих попыток КОМАНДЫ (per-team — иначе
+	// второй хакер команды начинал бы с нуля); спад −1 ступень/90 с.
+	// Локальная работа (джек-ин в сам сейф) — без пени.
+	safeLevel map[int]int
+	safeAt    map[int]time.Time
 
 	owner       uint64          // владелец trojan (0 = нейтральное)
 	open        bool            // дверь/газ (§14.2): стартует закрытой
@@ -1083,13 +1084,21 @@ func (w *world) shieldRegenTick() {
 	}
 }
 
-// safeBackoffLevel — текущая ступень backoff игрока на сейфе (спад
-// −1 ступень за минуту с последнего нарушения, §16.6).
-func safeBackoffLevel(d *device, now time.Time) int {
-	if d.safeLevel <= 0 {
+// Базы работ взлома СЕЙФА (§16.6, плейтест «слишком быстро»: спавн → 2
+// portscan → vulnscan → trojan ≈ 5 с и владелец — сейф должен держать в
+// деке долго): vulnscan 8 с, trojan 10 с на ЧИСТОМ пути, дальше экспонента.
+const (
+	safeVulnscanWork = 8.0
+	safeTrojanWork   = 10.0
+)
+
+// safeBackoffLevel — текущая ступень backoff КОМАНДЫ на сейфе (спад
+// −1 ступень за 90 с с последнего нарушения, §16.6).
+func safeBackoffLevel(d *device, team int, now time.Time) int {
+	if d.safeLevel == nil || d.safeLevel[team] <= 0 {
 		return 0
 	}
-	lvl := d.safeLevel - int(now.Sub(d.safeAt).Minutes())
+	lvl := d.safeLevel[team] - int(now.Sub(d.safeAt[team]).Minutes()*1.5)
 	if lvl < 0 {
 		lvl = 0
 	}
@@ -1097,10 +1106,14 @@ func safeBackoffLevel(d *device, now time.Time) int {
 }
 
 // safeBackoffInc — нарушение зафиксировано: спад пере-вычислен, +1 ступень.
-func safeBackoffInc(d *device, now time.Time) {
-	lvl := safeBackoffLevel(d, now)
-	d.safeAt = now
-	d.safeLevel = lvl + 1
+func safeBackoffInc(d *device, team int, now time.Time) {
+	if d.safeLevel == nil {
+		d.safeLevel = make(map[int]int)
+		d.safeAt = make(map[int]time.Time)
+	}
+	lvl := safeBackoffLevel(d, team, now)
+	d.safeAt[team] = now
+	d.safeLevel[team] = lvl + 1
 }
 
 // hitShield — щит SRV отбивает попытку (vulnscan/trojan/софт): −1 заряд,
@@ -1373,23 +1386,30 @@ func (w *world) handleRun(pl *player, msg message) {
 		path = w.cyber.widestPath(pl.jackHost.id, devID, blocked)
 	}
 	// §16.6 (итерация 5.5, плейтест «NETSAFE больно легко вскрывается по
-	// сети»): сетевая vulnscan/trojan на сейф — экспоненциальный backoff
-	// ×2^ступень (спад 1 ступень/мин). Локальная работа (джек-ин в сам
-	// сейф) и владелец — без пени. Обязательно ИНФО игроку (slow): «ждать
-	// или идти ногами» должно быть видно из ответа сервера.
+	// сети» + «слишком быстро»): сетевая vulnscan/trojan на сейф — базовые
+	// работы 8/10 с (чистый путь ≈18 с в деке, siege-чувство) и
+	// экспоненциальный backoff КОМАНДЫ ×2^ступень (спад 1 ступень/90 с).
+	// Локальная работа (джек-ин в сам сейф) и владелец — без пени.
+	// Обязательно ИНФО игроку (slow): «ждать или идти ногами».
 	if dev, ok := w.cyber.devices[devID]; ok && dev.kind == "safe" && (prog == "vulnscan" || prog == "trojan") && pl.jackHost.id != devID && dev.owner != pl.id {
-		lvl := safeBackoffLevel(dev, w.now())
+		// база сейфа выше терминальной (плейтест «слишком быстро»)
+		if prog == "vulnscan" {
+			work = safeVulnscanWork
+		} else {
+			work = safeTrojanWork
+		}
+		lvl := safeBackoffLevel(dev, pl.team, w.now())
 		if lvl > 0 {
 			mult := 1 << lvl
 			work *= float64(mult)
 			eta := int(math.Ceil(work))
 			w.sendTo(pl.id, message{"t": "slow", "dev": devID, "prog": prog, "mult": mult, "eta": eta})
-			log.Printf("room: safe backoff x%d on %s for player %d (%s, %d s)", mult, devID, pl.id, prog, eta)
+			log.Printf("room: safe backoff x%d on %s for team %d player %d (%s, %d s)", mult, devID, pl.team, pl.id, prog, eta)
 		}
 		// плейтест «не ощутил»: пеня за КАЖДЫЙ старт (в т.ч. прерванный),
-		// не только за завершение — «подряд» растёт сразу: vulnscan 3с,
-		// trojan ×2, повторный vulnscan ×4…
-		safeBackoffInc(dev, w.now())
+		// не только за завершение — «подряд» растёт сразу: vulnscan 8с,
+		// trojan ×2 (20с), повторный vulnscan ×4 (32с)…
+		safeBackoffInc(dev, pl.team, w.now())
 	}
 	pl.progs = append(pl.progs, &program{id: pl.nextProgID, prog: prog, dev: devID, work: work, path: path})
 	pl.nextProgID++
