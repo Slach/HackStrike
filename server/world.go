@@ -508,13 +508,32 @@ func (w *world) matchCheck() {
 // endMatch — финал матча (§16.9): reason опционален (extract — победа
 // извлечением PHYSAFE, итерация 7).
 func (w *world) endMatch(winner int, reason string) {
-	m := message{"t": "matchend", "scores": w.scores, "winner": winner}
+	// таблица фрагов по игрокам (плейтест: end-оверлей со счётом-раскрытием)
+	type row struct {
+		N string `json:"n"`
+		T int    `json:"t"`
+		F int    `json:"f"`
+	}
+	rows := make([]row, 0, len(w.players))
+	for _, p := range w.players {
+		rows = append(rows, row{N: p.name, T: p.team, F: p.frags})
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].F != rows[j].F {
+			return rows[i].F > rows[j].F
+		}
+		return rows[i].N < rows[j].N
+	})
+	m := message{"t": "matchend", "scores": w.scores, "winner": winner, "players": rows}
 	if reason != "" {
 		m["reason"] = reason
 	}
 	w.broadcast(m)
 	w.scores = [2]int{}
 	w.matchActive = false
+	for _, p := range w.players {
+		p.frags = 0 // новый матч — таблица с нуля
+	}
 }
 
 // timeLeftMs — сколько осталось текущему матчу.

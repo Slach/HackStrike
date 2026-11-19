@@ -71,6 +71,7 @@ type player struct {
 	hp        int
 	alive     bool
 	respawnAt time.Time
+	frags     int // личные фраги для таблицы конца матча (§3.3)
 
 	// posHist — недавние позиции ног (старая→новая), по одной за тик.
 	// Lag compensation выстрелов (ГДД §9.4): клиент видит цель ~100 мс в

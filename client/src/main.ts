@@ -464,7 +464,7 @@ function handleEnd(msg: EndMsg): void {
   else if (msg.reason === 'frags') reason = 'ЛИМИТ ФРАГОВ · МАТЧ-СПЕЦИФИЧНЫЙ ЛУТ (КЛЮЧИ) СТЁРТ'
   hud.showEnd(msg.winner, msg.scores, () => {
     matchOver = false
-  }, reason)
+  }, reason, msg.players)
 }
 
 const sock = new GameSocket({

@@ -171,6 +171,12 @@ export interface Snapshot {
   props: readonly SnapProp[] // M2; empty for pre-M2 servers
 }
 
+export interface MatchPlayer {
+  n: string // ник
+  t: number // команда
+  f: number // фраги
+}
+
 export type ServerMessage =
   | { t: 'welcome'; id: number; team: number; tick: number }
   | { t: 'team'; team: number } // server rebalanced me to the other team
@@ -178,7 +184,7 @@ export type ServerMessage =
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
   | { t: 'death'; by: number; respawnAt: number }
   | { t: 'envkill'; victim: number; owner: number } // M4 (GDD §14.3): broadcast; owner — trojan-владелец ловушки (0 = нейтрали)
-  | { t: 'matchend'; winner: number; scores: [number, number]; reason?: string } // reason=extract — победа извлечением PHYSAFE (§16.6)
+  | { t: 'matchend'; winner: number; scores: [number, number]; reason?: string; players?: MatchPlayer[] } // reason=extract|time|frags; players — таблица фрагов (§3.3)
   | { t: 'pong'; c: number; s: number; tick: number }
   // M2 (GDD §12.5)
   | { t: 'jackin'; host: string; deck: DeckInfo }
@@ -479,6 +485,13 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         winner: num(m.winner, -1),
         scores: scorePair(m.scores) ?? [0, 0],
         reason: str(m.reason) ?? undefined,
+        players: Array.isArray(m.players)
+          ? m.players.filter((r): r is MatchPlayer => {
+              if (typeof r !== 'object' || r === null) return false
+              const q = r as Record<string, unknown>
+              return str(q.n) !== null && typeof q.t === 'number' && typeof q.f === 'number'
+            }).map((r) => ({ n: (r as { n: string }).n, t: (r as { t: number }).t, f: (r as { f: number }).f }))
+          : undefined,
       }
     case 'extract':
       // §16.9 extract (итерация 7): события PHYSAFE.

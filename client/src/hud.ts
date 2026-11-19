@@ -399,6 +399,7 @@ export class Hud {
     endReason: byId('endReason'),
     hudNav: byId('hudNav'),
     hudCarry: byId('hudCarry'),
+    endTable: byId('endTable'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -1048,15 +1049,35 @@ export class Hud {
     this.el.death.classList.add('hidden')
   }
 
-  showEnd(winner: number, scores: readonly [number, number], onDone: () => void, reason?: string | null): void {
+  showEnd(
+    winner: number,
+    scores: readonly [number, number],
+    onDone: () => void,
+    reason?: string | null,
+    players?: readonly { n: string; t: number; f: number }[],
+  ): void {
     this.endActive = true
     this.onEndDone = onDone
     this.endUntilMs = Date.now() + END_RESTART_MS
+    // плейтест: «Результат: Победа <команда> \ ничья» — явно, словом
     this.el.endTitle.textContent =
-      winner === 0 || winner === 1 ? `ПОБЕДА — ${TEAM_END_LABEL[winner]}` : 'НИЧЬЯ'
+      winner === 0 || winner === 1 ? `Результат: ПОБЕДА — ${TEAM_END_LABEL[winner]}` : 'Результат: НИЧЬЯ'
     // ЧТО извлекли (extract) — лорная строка под счётом
     this.el.endReason.textContent = reason ?? ''
     this.el.endReason.classList.toggle('hidden', !reason)
+    // таблица фрагов по игрокам (плейтест: «раскрывается с таблицей»)
+    const rows = (players ?? []).map((p, i) => {
+      const row = document.createElement('div')
+      row.className = `end-row t${p.t}`
+      row.style.animationDelay = `${0.15 + i * 0.08}s`
+      row.append(
+        Object.assign(document.createElement('span'), { textContent: `${i + 1}. ${p.n}` }),
+        Object.assign(document.createElement('span'), { textContent: String(p.f) }),
+      )
+      return row
+    })
+    this.el.endTable.replaceChildren(...rows)
+    this.el.endTable.classList.toggle('hidden', rows.length === 0)
     this.el.endTitle.className =
       winner === 0 || winner === 1 ? `end-title t${winner}` : 'end-title'
     this.el.endScore.innerHTML = `<span class="t0">${scores[0]}</span> : <span class="t1">${scores[1]}</span>`

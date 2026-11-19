@@ -676,6 +676,57 @@
         margin: 12px 0 8px;
         color: var(--ink);
       }
+      /* конец матча — панель РАСКРЫВАЕТСЯ (плейтест: «анимация — UI элемент
+         со счетом раскрывается с таблицей фрагов по игрокам») */
+      #endOverlay .panel {
+        animation: endOpen 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+      }
+      @keyframes endOpen {
+        from {
+          transform: scale(0.7) translateY(24px);
+          opacity: 0;
+        }
+        to {
+          transform: none;
+          opacity: 1;
+        }
+      }
+      #endTable {
+        margin: 4px auto 10px;
+        max-width: 340px;
+        text-align: left;
+        font-size: 13px;
+      }
+      #endTable.hidden {
+        display: none;
+      }
+      .end-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 4px 10px;
+        border-bottom: 1px solid rgba(120, 255, 190, 0.12);
+        animation: endRow 0.35s ease-out both; /* stagger через animationDelay */
+      }
+      @keyframes endRow {
+        from {
+          opacity: 0;
+          transform: translateX(-14px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .end-row.t0 {
+        color: #eafff3;
+      }
+      .end-row.t1 {
+        color: #ffb3dd;
+      }
+      .end-row span:last-child {
+        font-weight: bold;
+      }
       #endScore .t0,
       #endScore .t1 {
         text-shadow: 0 0 12px currentColor;
@@ -2987,6 +3038,7 @@
         <div id="endTitle" class="end-title">МАТЧ ОКОНЧЕН</div>
         <div id="endReason" class="hidden"></div>
         <div id="endScore">0 : 0</div>
+        <div id="endTable" class="hidden"></div>
         <div id="endCount">10</div>
         <div class="dim">АВТО-РЕСТАРТ</div>
       </div>
