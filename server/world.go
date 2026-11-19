@@ -483,12 +483,17 @@ func (w *world) matchCheck() {
 	}
 	now := w.now()
 	winner := -1
+	reason := ""
 	switch {
 	case w.scores[0] >= w.fragLimit:
-		winner = 0
+		winner, reason = 0, "frags"
 	case w.scores[1] >= w.fragLimit:
-		winner = 1
+		winner, reason = 1, "frags"
 	case !now.Before(w.matchEndsAt):
+		// плейтест 2026-11-20: конец матча по таймеру посреди decrypt джобы
+		// выглядел «меня выбросило из коннекта» — end-оверлей обязан сказать
+		// ПОЧЕМУ матч кончился (+ лор: матч-специфичный лут стёрт)
+		reason = "time"
 		if w.scores[0] > w.scores[1] {
 			winner = 0
 		} else if w.scores[1] > w.scores[0] {
@@ -497,7 +502,7 @@ func (w *world) matchCheck() {
 	default:
 		return
 	}
-	w.endMatch(winner, "")
+	w.endMatch(winner, reason)
 }
 
 // endMatch — финал матча (§16.9): reason опционален (extract — победа

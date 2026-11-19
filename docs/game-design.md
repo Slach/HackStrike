@@ -2793,7 +2793,7 @@ S→C:
 {"t":"extract","team":1,"stage":"broken"}          // канал прерван (урон/отход/дроп)
 {"t":"extract","team":1,"stage":"win"}             // → следом matchend reason=extract
 {"t":"slow","dev":"netsafe","prog":"vulnscan","mult":4,"eta":12} // backoff сейфа (§16.6): программа пошла ×mult дольше — жди или джек-ин в сейф
-{"t":"matchend","winner":1,"scores":[24,31],"reason":"frags|time|extract"}
+{"t":"matchend","winner":1,"scores":[24,31],"reason":"frags|time|extract"} // reason всегда: время/фраги/extract (плейтест: конец по таймеру посреди decrypt выглядел «выбросило»)
 ```
 `snap.props[]` += `netsafe` (kind safe, владение как у устройств) и
 `physafe` (kind physafe, pos; когда несут — поле `carriedBy`, pos

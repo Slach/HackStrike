@@ -455,11 +455,16 @@ function handleEnd(msg: EndMsg): void {
   closeCodePad() // end-оверлей ниже пада по z — PIN-панель поверх победы недопустима
   hackviewOff(false)
   hud.setNav([])
-  // reason=extract — победа извлечением; ЛОР: ЧТО мы вынесли из сейфа
-  // (формулировка владельца — протокол вируса по ДНК носителя и его детей)
+  // reason: extract — лор ЧТО извлекли; time/frags — почему матч кончился
+  // (плейтест: конец по таймеру посреди decrypt выглядел «выбросило из
+  // коннекта»; напомнить, что матч-специфичный лут стёрт)
+  let reason: string | null = null
+  if (msg.reason === 'extract') reason = EXTRACT_LORE
+  else if (msg.reason === 'time') reason = 'ВРЕМЯ МАТЧА ВЫШЛО · МАТЧ-СПЕЦИФИЧНЫЙ ЛУТ (КЛЮЧИ) СТЁРТ'
+  else if (msg.reason === 'frags') reason = 'ЛИМИТ ФРАГОВ · МАТЧ-СПЕЦИФИЧНЫЙ ЛУТ (КЛЮЧИ) СТЁРТ'
   hud.showEnd(msg.winner, msg.scores, () => {
     matchOver = false
-  }, msg.reason === 'extract' ? EXTRACT_LORE : null)
+  }, reason)
 }
 
 const sock = new GameSocket({
