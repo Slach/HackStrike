@@ -1386,6 +1386,10 @@ func (w *world) handleRun(pl *player, msg message) {
 			w.sendTo(pl.id, message{"t": "slow", "dev": devID, "prog": prog, "mult": mult, "eta": eta})
 			log.Printf("room: safe backoff x%d on %s for player %d (%s, %d s)", mult, devID, pl.id, prog, eta)
 		}
+		// плейтест «не ощутил»: пеня за КАЖДЫЙ старт (в т.ч. прерванный),
+		// не только за завершение — «подряд» растёт сразу: vulnscan 3с,
+		// trojan ×2, повторный vulnscan ×4…
+		safeBackoffInc(dev, w.now())
 	}
 	pl.progs = append(pl.progs, &program{id: pl.nextProgID, prog: prog, dev: devID, work: work, path: path})
 	pl.nextProgID++
@@ -2093,11 +2097,6 @@ func (w *world) completeProgram(pl *player, p *program) {
 		w.sendScan(pl)
 	case "vulnscan":
 		if dev := w.cyber.devices[p.dev]; dev != nil {
-			// §16.6: успешный СЕТЕВОЙ vulnscan на сейф — +1 ступень backoff
-			// (локальный — без пени; свой сейф — тоже)
-			if dev.kind == "safe" && p.dev != "deck" && pl.jackHost != nil && pl.jackHost.id != p.dev && dev.owner != pl.id {
-				safeBackoffInc(dev, w.now())
-			}
 			dev.vulnedBy[pl.id] = true // M2: навсегда (§12.4)
 			w.sendScan(pl)             // обновить карту: узел помечается «уязвимо»
 		}
@@ -2213,11 +2212,6 @@ func (w *world) completeProgram(pl *player, p *program) {
 			// это «смена владельца» (ev=owner) либо «установка» (ev=install),
 			// если владелец не изменился (повторный trojan на своё).
 			ownerChanged := dev.owner != pl.id
-			// §16.6: успешный СЕТЕВОЙ trojan на сейф — +1 ступень backoff
-			// (до смены владельца, иначе сам себе пеню не начислит)
-			if dev.kind == "safe" && pl.jackHost != nil && pl.jackHost.id != p.dev && ownerChanged {
-				safeBackoffInc(dev, w.now())
-			}
 			dev.owner = pl.id // userland; двери дают владельцу toggle
 			// §13.5: новый trojan выкуривает чужой firewall — обход без
 			// тупика (взломщик получает и владение, и открытый вход).

@@ -3225,15 +3225,16 @@ func TestNetSafe(t *testing.T) {
 	if ns.vulnedBy[h.id] != true {
 		t.Fatalf("first network vulnscan must finish")
 	}
-	// 2-й — ×2 (6 с) + slow-сообщение
+	// плейтест «не ощутил»: пеня за КАЖДЫЙ старт — «подряд» растёт сразу.
+	// trojan сразу после vulnscan — уже ×2 (4 с)
 	w.takeOut()
-	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
-	p2 := findProg(h, "vulnscan")
+	w.handleMessage(h, message{"t": "run", "prog": "trojan", "dev": "netsafe"})
+	p2 := findProg(h, "trojan")
 	if p2 == nil {
-		t.Fatalf("second vulnscan must start (slow, not denied)")
+		t.Fatalf("network trojan must start (slow, not denied)")
 	}
-	if p2.work != 6 {
-		t.Fatalf("second network vulnscan work = %v, want 6 (x2)", p2.work)
+	if p2.work != 4 {
+		t.Fatalf("network trojan right after vulnscan = %v, want 4 (x2)", p2.work)
 	}
 	slow := false
 	for _, m := range w.takeOut() {
@@ -3244,17 +3245,18 @@ func TestNetSafe(t *testing.T) {
 	if !slow {
 		t.Fatalf("backed-off start must carry a slow message (x2)")
 	}
-	for i := 0; i < 7*30 && len(h.progs) > 0; i++ {
-		*clock = clock.Add(time.Second / 30)
-		w.simulateTick()
-	}
-	// 3-й — ×4 (12 с)
+	// и следующая попытка vulnscan — уже ×4 (12 с)
 	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
 	p3 := findProg(h, "vulnscan")
 	if p3 == nil || p3.work != 12 {
-		t.Fatalf("third network vulnscan must be x4 (12 s), got work=%v", p3.work)
+		t.Fatalf("next vulnscan must be x4 (12 s), got work=%v", p3.work)
 	}
 	for i := 0; i < 13*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	// дождаться хвоста очереди (vulnscan2 шёл ×0.5 из-за trojan в паре)
+	for i := 0; i < 30*30 && len(h.progs) > 0; i++ {
 		*clock = clock.Add(time.Second / 30)
 		w.simulateTick()
 	}
@@ -3263,7 +3265,7 @@ func TestNetSafe(t *testing.T) {
 	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
 	p4 := findProg(h, "vulnscan")
 	if p4 == nil || p4.work != 3 {
-		t.Fatalf("after 2 min decay vulnscan must be back to 3 s, got work=%v", p4.work)
+		t.Fatalf("after decay vulnscan must be back to 3 s, got work=%v", p4.work)
 	}
 	w.takeOut()
 	// ЛОКАЛЬНЫЙ путь — без пени: джек-ин в сам сейф
