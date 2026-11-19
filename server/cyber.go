@@ -1630,7 +1630,7 @@ func (w *world) handleDecrypt(pl *player, hostID, dataName string) {
 			return
 		}
 		if !it.Enc {
-			w.dataDenied(pl, "dup", "decrypt", dataName) // уже расшифрован
+			w.dataDenied(pl, "decrypted", "decrypt", dataName) // уже расшифрован
 			return
 		}
 		if len(pl.progs) >= deckRAM {
@@ -1671,12 +1671,12 @@ func (w *world) handleDecrypt(pl *player, hostID, dataName string) {
 		return
 	}
 	if !it.Enc {
-		w.dataDenied(pl, "dup", "decrypt", dataName)
+		w.dataDenied(pl, "decrypted", "decrypt", dataName)
 		return
 	}
 	for _, j := range dev.jobs {
 		if j.data == dataName {
-			w.dataDenied(pl, "dup", "decrypt", dataName) // джоба уже летит
+			w.dataDenied(pl, "in_progress", "decrypt", dataName) // джоба уже летит
 			return
 		}
 	}

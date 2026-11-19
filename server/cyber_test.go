@@ -3158,10 +3158,11 @@ func TestDecryptDeckJob(t *testing.T) {
 	if !hasWire(out, h.id, "codes") {
 		t.Fatalf("deck decrypt must send codes to the team")
 	}
-	// уже расшифрованный item — dup (denied)
+	// уже расшифрованный item — decrypted (denied; owner: не смешивать
+	// «уже скопировано» и «уже расшифровано» в одном reason)
 	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
-	if !hasDenied(w.takeOut(), h.id, "dup") {
-		t.Fatalf("decrypt of a plain (enc:false) item must be denied dup")
+	if !hasDenied(w.takeOut(), h.id, "decrypted") {
+		t.Fatalf("decrypt of a plain (enc:false) item must be denied decrypted")
 	}
 	// джек-аут отменяет дековую джобу (процесс деки, §16.4)
 	h.items[0].Enc = true
