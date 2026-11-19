@@ -2839,6 +2839,13 @@ func (w *world) physafeTick(dt float64) {
 	if !w.physafePresent {
 		return
 	}
+	// сейф едет с носителем (плейтест «сейф не двигается вместе со мной»):
+	// позиция = позиция носителя каждый тик — уезжает в snap.props
+	if w.physafe.carrier != 0 {
+		if c, ok := w.players[w.physafe.carrier]; ok {
+			w.physafe.pos = c.pos
+		}
+	}
 	// доставка на базу: несущий в зоне — канал стартует сам (§16.6)
 	if w.physafe.carrier != 0 && w.physafe.chKind == "" {
 		if c, ok := w.players[w.physafe.carrier]; ok && w.inBaseZone(c) {

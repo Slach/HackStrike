@@ -398,6 +398,7 @@ export class Hud {
     hudCode: byId('hudCode'),
     endReason: byId('endReason'),
     hudNav: byId('hudNav'),
+    hudCarry: byId('hudCarry'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -833,6 +834,14 @@ export class Hud {
     el.classList.remove('hidden')
     if (this.warnTimer !== undefined) clearTimeout(this.warnTimer)
     this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
+  }
+
+  /** Ноша PHYSAFE (§16.6): постоянная янтарная плашка, пока safe=true. */
+  setCarry(on: boolean): void {
+    const el = this.el.hudCarry
+    if (el === null) return
+    el.classList.toggle('hidden', !on)
+    if (on) el.textContent = 'СЕЙФ ПРИ ТЕБЕ — ВЕДИ НА БАЗУ · СКОРОСТЬ ×0.5'
   }
 
   /** Пул edge-индикаторов (§15.14, плейтест «треугольники по краям экрана

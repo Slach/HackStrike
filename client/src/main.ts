@@ -381,6 +381,7 @@ function handleSnap(snap: SnapMsg): void {
     if (me.cls !== myCls) myCls = me.cls // сервер скорректировал класс
     hud.setWeapon(myCls === 'hacker' ? 'ПИСТОЛЕТ' : null)
   }
+  hud.setCarry(me?.safe === true) // §16.6: ноша PHYSAFE — постоянная плашка
   hud.setVitals(me !== undefined ? me.hp : 0, CLASS_BY_KEY[myCls].hp, CLASS_BY_KEY[myCls].label)
   hud.setScores(snap.scores, snap.timeLeft / 1000) // hud expects seconds, wire has ms
   if (snap.keyLeft !== undefined) keyLeftMs = snap.keyLeft

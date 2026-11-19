@@ -192,6 +192,9 @@ export class PropsView {
    *  меши и позиция; обновляется из snap.props каждый тик. */
   private physafeParts: Mesh[] = []
   private physafePos: { x: number; y: number; z: number; carrier: number } | null = null
+  /** Текущая отрисованная позиция меша — lerp к снап-цели (носитель
+   *  движется плавно, снапы 20 Гц — без lerp сейф дёргается). */
+  private physafeCur: { x: number; y: number; z: number } | null = null
   private readonly doors = new Map<string, DoorView>()
   /** §16.7: двери с код-замком и клавиатуры (space у клавиатуры → пад). */
   private readonly lockedDoors = new Set<string>()
@@ -385,6 +388,7 @@ export class PropsView {
     led.isPickable = false
     this.physafeParts = [body, face, led]
     this.physafePos = { x: pos[0], y: pos[1], z: pos[2], carrier: 0 }
+    this.physafeCur = { x: pos[0], y: pos[1], z: pos[2] }
   }
 
   /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space.
@@ -819,9 +823,8 @@ export class PropsView {
             Math.abs(cur.z - p.z) > 0.01 ||
             cur.carrier !== (p.carriedBy ?? 0)
           if (!moved) break
-          for (const m of this.physafeParts) m.position.addInPlaceFromFloats(p.x - (cur?.x ?? p.x), p.y - (cur?.y ?? p.y), p.z - (cur?.z ?? p.z))
           this.physafePos = { x: p.x, y: p.y, z: p.z, carrier: p.carriedBy ?? 0 }
-          dirty = true
+          dirty = true // глиф миникарты сразу; меши догонят лерпом в tick()
           break
         }
       }
@@ -949,6 +952,23 @@ export class PropsView {
   }
 
   tick(dtSec: number): void {
+    // PHYSAFE: меш плавно догоняет снап-цель (носитель ходит, сейф с ним)
+    const pf = this.physafePos
+    const cur = this.physafeCur
+    if (pf !== null && cur !== null && this.physafeParts.length > 0) {
+      const dx = pf.x - cur.x
+      const dy = pf.y - cur.y
+      const dz = pf.z - cur.z
+      const dist = Math.hypot(dx, dy, dz)
+      if (dist > 0.02) {
+        const k = Math.min(1, dist * 10 * dtSec)
+        cur.x += dx * k
+        cur.y += dy * k
+        cur.z += dz * k
+        for (const m of this.physafeParts) m.position.addInPlaceFromFloats(dx * k, dy * k, dz * k)
+        this.rebuildMini() // глиф миникарты движется вместе с сейфом
+      }
+    }
     const step = Math.min(1, dtSec / DOOR_SWING_S)
     for (const d of this.doors.values()) {
       const target = d.open ? 1 : 0

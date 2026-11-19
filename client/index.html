@@ -855,6 +855,45 @@
       body.touch .nav-label {
         font-size: 8px;
       }
+      /* несёшь PHYSAFE (§16.6, плейтест «ничего не отображает что я взял»):
+         янтарная плашка вместо строки кодов — постоянная, пока несёшь */
+      #hudCarry {
+        position: absolute;
+        bottom: 128px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 7px 18px;
+        background: rgba(34, 22, 2, 0.88);
+        border: 1px solid rgba(255, 200, 55, 0.65);
+        border-radius: 6px;
+        color: #ffd770;
+        font-size: 13px;
+        letter-spacing: 2px;
+        text-shadow: 0 0 10px rgba(255, 200, 55, 0.55);
+        box-shadow: 0 0 18px rgba(255, 200, 55, 0.25);
+        pointer-events: none;
+        z-index: 6;
+        white-space: nowrap;
+        animation: carrypulse 1.6s ease-in-out infinite;
+      }
+      @keyframes carrypulse {
+        0%,
+        100% {
+          box-shadow: 0 0 14px rgba(255, 200, 55, 0.2);
+        }
+        50% {
+          box-shadow: 0 0 26px rgba(255, 200, 55, 0.45);
+        }
+      }
+      body.touch #hudCarry {
+        bottom: calc(228px + env(safe-area-inset-bottom));
+        font-size: 11px;
+        padding: 4px 10px;
+        letter-spacing: 1px;
+      }
+      #hudCarry.hidden {
+        display: none;
+      }
       #endReason.hidden {
         display: none;
       }
@@ -2817,6 +2856,7 @@
     <div id="jackinHint" class="hidden"></div>
     <div id="hudWarn" class="hidden"></div>
     <div id="hudCode" class="hidden"></div>
+    <div id="hudCarry" class="hidden"></div>
     <div id="hudNav"></div>
 
     <div id="hackview" class="hidden"></div>
