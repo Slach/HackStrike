@@ -3382,7 +3382,7 @@ func TestPhysafe(t *testing.T) {
 	// — плейтест «бокс не двигается») и позицией носителя
 	w.simulateTick()
 	foundSnap := false
-	for _, p := range w.cyber.snapProps() {
+	for _, p := range w.snapProps() {
 		if pm, ok := p.(message); ok && pm["kind"] == "physafe" && pm["id"] == "physafe" {
 			foundSnap = true
 		}
