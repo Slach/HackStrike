@@ -1242,7 +1242,10 @@ func (w *world) sameTeam(a, b *player) bool {
 // часы и минуты, а не просто 1,2,3,4». Ротация раз в 2 минуты → имена
 // уникальны внутри матча.
 func doorKeyName(t time.Time) string {
-	return fmt.Sprintf("door_key%s_%s", t.Format("1504"), t.Format("2006-01-02"))
+	// плейтест 2026-11-20: дата в имени не влезает в UI-листинги — коротко:
+	// door_key_HH_II (часы_минуты); уникальность поколений внутри матча
+	// сохраняется (ротация 2 мин, матч 10 мин)
+	return fmt.Sprintf("door_key_%02d_%02d", t.Hour(), t.Minute())
 }
 
 // doorKeyGen — ротация ключа на SRV1 (T=120 с по времени мира, детерминизм):
