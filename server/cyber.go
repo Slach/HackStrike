@@ -34,10 +34,12 @@ const (
 	jobReportEvery = tickRate // прогресс SRV-decrypt команде 1 Гц (§16.9 job)
 
 	// PHYSAFE (§16.6, итерация 7): взятие — 1.8 м, зона базы — 6 м от точек
-	// спавна, канал «вскрываем» — 3 с (прерывается уроном/отходом).
-	physafeTakeRadius   = 1.8
-	physafeBaseRadius   = 6.0
-	physafeChannelWork  = 3.0
+	// спавна, канал «вскрываем»: на месте (код) — 3 с, на базе — 6 с
+	// (плейтест: «на базе хотя бы до 6 секунд»; прерывается уроном/отходом).
+	physafeTakeRadius      = 1.8
+	physafeBaseRadius      = 6.0
+	physafeChannelWork     = 3.0
+	physafeBaseChannelWork = 6.0
 	portscanWork  = 2.0 // с работы при полной CPU-доле (§12.4)
 	vulnscanWork  = 3.0
 	trojanWork    = 2.0
@@ -2800,11 +2802,16 @@ func (w *world) physafeTick(dt float64) {
 		return
 	}
 	w.physafe.chProgress += dt
+	// на месте 3 с (сейф под огнём лавы — быстро), на базе 6 с (плейтест)
+	work := physafeChannelWork
+	if w.physafe.chKind == "base" {
+		work = physafeBaseChannelWork
+	}
 	if w.tick%tickRate == 0 {
 		w.broadcast(message{"t": "extract", "team": w.physafe.chTeam, "stage": "channel",
-			"prog": round3(math.Min(1, w.physafe.chProgress/physafeChannelWork))})
+			"prog": round3(math.Min(1, w.physafe.chProgress/work))})
 	}
-	if w.physafe.chProgress >= physafeChannelWork {
+	if w.physafe.chProgress >= work {
 		team := w.physafe.chTeam
 		w.broadcast(message{"t": "extract", "team": team, "stage": "win"})
 		w.endMatch(team, "extract")

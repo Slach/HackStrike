@@ -111,15 +111,25 @@ export class MapWorld {
   readonly bounds: [number, number, number]
   readonly colliders: readonly Collider[]
   readonly wallRects: readonly WallRect[]
+  /** Центры зон сдачи (§16.6): средняя точка спавнов команды — цель
+   *  целеуказателя у несущего PHYSAFE. */
+  readonly bases: readonly { x: number; z: number }[]
 
   private constructor(
     bounds: [number, number, number],
     colliders: readonly Collider[],
     wallRects: readonly WallRect[],
+    bases: readonly { x: number; z: number }[],
   ) {
     this.bounds = bounds
     this.colliders = colliders
     this.wallRects = wallRects
+    this.bases = bases
+  }
+
+  /** Зона сдачи команды (0/1) — центр спавнов; null — спавнов нет. */
+  baseOf(team: number): { x: number; z: number } | null {
+    return this.bases[team] ?? null
   }
 
   static build(scene: Scene, map: GameMap): MapWorld {
@@ -213,7 +223,22 @@ export class MapWorld {
         y0: c.min[1],
       })
     }
-    return new MapWorld(map.bounds, map.colliders, wallRects)
+    const bases: { x: number; z: number }[] = []
+    for (const key of ['0', '1']) {
+      const pts = map.spawns[key] ?? []
+      if (pts.length === 0) {
+        bases.push({ x: 0, z: 0 })
+        continue
+      }
+      let bx = 0
+      let bz = 0
+      for (const p of pts) {
+        bx += p[0]
+        bz += p[2]
+      }
+      bases.push({ x: bx / pts.length, z: bz / pts.length })
+    }
+    return new MapWorld(map.bounds, map.colliders, wallRects, bases)
   }
 
   /** Nearest collider hit along the ray, or null if nothing within maxDist. */

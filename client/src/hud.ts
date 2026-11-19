@@ -7,7 +7,9 @@ import type { Cls, NetStats, SnapPlayer } from './net'
 import { IS_TOUCH } from './mobile'
 import QRCode from 'qrcode'
 
-const TEAM_LABEL = ['ЦИАНОВЫЕ', 'МАДЖЕНТОВЫЕ'] as const
+const TEAM_END_LABEL = ['WHITEHAT', 'BLACKHAT'] as const // team 0 = WhiteHat (белая, §2)
+/** Лор извлечения (итерация 7, формулировка владельца): ЧТО мы вынесли. */
+export const EXTRACT_LORE = 'ИЗВЛЕЧЕНО: ПРОТОКОЛ «ГЕНЕАЛОГИЯ» — КОМПОНЕНТ ВИРУСА, УБИВАЮЩЕГО ПО ДНК НОСИТЕЛЯ И ВСЕХ ЕГО ДЕТЕЙ'
 const KILLFEED_ROWS = 5
 const KILLFEED_FADE_MS = 4000
 const END_RESTART_MS = 10000
@@ -394,6 +396,8 @@ export class Hud {
     jackinHint: byId('jackinHint'),
     hudWarn: byId('hudWarn'),
     hudCode: byId('hudCode'),
+    hudArrow: byId('hudArrow'),
+    endReason: byId('endReason'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -831,6 +835,21 @@ export class Hud {
     this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
   }
 
+  /** Целеуказатель PHYSAFE (§16.6, плейтест «стрелку с целеуказателем»):
+   *  DOM-стрелка по центру, поворот = азимут цели − мой yaw. null — скрыть. */
+  setArrow(deg: number | null, label: string): void {
+    const el = this.el.hudArrow
+    if (el === null) return
+    if (deg === null) {
+      el.classList.add('hidden')
+      return
+    }
+    el.classList.remove('hidden')
+    const tip = el.firstElementChild as HTMLElement | null
+    if (tip !== null) tip.style.transform = `rotate(${deg}deg)`
+    el.lastElementChild!.textContent = label
+  }
+
   /** Коды, узнанные командой (§16.4/§16.6/§16.9 codes → HUD «КОД D3: 4731
    *  · СЕЙФ: 8241»): постоянная строка — команда знает код до конца матча.
    *  Оба null — скрыть (новый матч: коды перегенерированы). */
@@ -1007,7 +1026,10 @@ export class Hud {
     this.onEndDone = onDone
     this.endUntilMs = Date.now() + END_RESTART_MS
     this.el.endTitle.textContent =
-      (winner === 0 || winner === 1 ? `ПОБЕДА — ${TEAM_LABEL[winner]}` : 'НИЧЬЯ') + (reason ? ` · ${reason}` : '')
+      winner === 0 || winner === 1 ? `ПОБЕДА — ${TEAM_END_LABEL[winner]}` : 'НИЧЬЯ'
+    // ЧТО извлекли (extract) — лорная строка под счётом
+    this.el.endReason.textContent = reason ?? ''
+    this.el.endReason.classList.toggle('hidden', !reason)
     this.el.endTitle.className =
       winner === 0 || winner === 1 ? `end-title t${winner}` : 'end-title'
     this.el.endScore.innerHTML = `<span class="t0">${scores[0]}</span> : <span class="t1">${scores[1]}</span>`

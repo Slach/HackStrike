@@ -23,7 +23,7 @@ import {
 } from './players'
 import { Controls } from './controls'
 import { AutoFire, Effects, Scope, type TargetBox } from './combat'
-import { Hud } from './hud'
+import { EXTRACT_LORE, Hud } from './hud'
 import { Minimap } from './minimap'
 import type { MiniCyberDev } from './minimap'
 import { PropsView } from './props'
@@ -425,10 +425,12 @@ function handleDeath(msg: DeathMsg): void {
 function handleEnd(msg: EndMsg): void {
   matchOver = true
   hackviewOff(false)
-  const reason = msg.reason === 'extract' ? `СЕЙФ ИЗВЛЕЧЁН — КОМАНДА ${msg.winner === 0 ? 'ЦИАН' : 'МАДЖЕНТА'}` : null
+  hud.setArrow(null, '')
+  // reason=extract — победа извлечением; ЛОР: ЧТО мы вынесли из сейфа
+  // (формулировка владельца — протокол вируса по ДНК носителя и его детей)
   hud.showEnd(msg.winner, msg.scores, () => {
     matchOver = false
-  }, reason)
+  }, msg.reason === 'extract' ? EXTRACT_LORE : null)
 }
 
 const sock = new GameSocket({
@@ -909,6 +911,35 @@ engine.runRenderLoop(() => {
     hud.propLabel(propsView.propAt({ x: camera.position.x, y: camera.position.y, z: camera.position.z }, { x: fwd.x, y: fwd.y, z: fwd.z }, 24))
   } else {
     hud.propLabel(null)
+  }
+
+  // Целеуказатель PHYSAFE (§16.6): несёшь — на базу; сейф лежит/у врага —
+  // на сейф (перехват). Виден и мёртвому («до респауна показывать куда»).
+  {
+    const pf = propsView?.physafeInfo() ?? null
+    if (playing && propsView !== null && pf !== null) {
+      const carrying = latestMeta.get(myId ?? -1)?.safe === true
+      const target =
+        carrying
+          ? world?.baseOf(myTeam)
+          : { x: pf.x, z: pf.z }
+      if (target !== undefined && target !== null) {
+        const dx = target.x - camera.position.x
+        const dz = target.z - camera.position.z
+        if (dx * dx + dz * dz > 1) {
+          // yaw 0 = +Z, рост по часовой: экранный угол = азимут цели − yaw
+          const deg = ((Math.atan2(dx, dz) - controls.yaw) * 180) / Math.PI
+          const foeCarrying = pf.carrier !== 0 && !carrying
+          hud.setArrow(deg, carrying ? 'БАЗА' : foeCarrying ? `СЕЙФ · У ВРАГА` : 'СЕЙФ')
+        } else {
+          hud.setArrow(null, '')
+        }
+      } else {
+        hud.setArrow(null, '')
+      }
+    } else {
+      hud.setArrow(null, '')
+    }
   }
 
   let hint: string | null = null

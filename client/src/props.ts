@@ -1174,6 +1174,12 @@ export class PropsView {
     return best
   }
 
+  /** §16.6: позиция PHYSAFE + носитель (целеуказатель main.ts). */
+  physafeInfo(): { x: number; z: number; carrier: number } | null {
+    const pf = this.physafePos
+    return pf !== null ? { x: pf.x, z: pf.z, carrier: pf.carrier } : null
+  }
+
   /** §16.6: PHYSAFE рядом и на земле? Возвращает дистанцию (для пада
    *  ввода кода — интерцептор space в main.ts; несущему пад не нужен). */
   physafeTarget(x: number, z: number, y: number): number | null {
