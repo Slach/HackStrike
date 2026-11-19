@@ -881,11 +881,13 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
           openCodePad(kp.door, kp.id)
           return true
         }
-        // §16.6: у PHYSAFE пад ввода кода сейфа — ТОЛЬКО когда команда
-        // знает код (HUD «СЕЙФ: …»); без кода space честно берёт сейф
-        // (сервер interactTick), и несущему пад не нужен
+        // §16.6 (плейтест «конфликт space с netsafe/physafe/s3»): пад — по
+        // ПРИЦЕЛУ, как серверный выбор цели: ray из глаз; рядом могут стоять
+        // s3 и netsafe — пад открываем только если луч ловит PHYSAFE
         const me = latestMeta.get(myId ?? -1)
-        if (teamSafeCode !== null && me?.safe !== true && pv.physafeTarget(camera.position.x, camera.position.z, feetY) !== null) {
+        const fwd = camera.getDirection(Vector3.Forward())
+        const hit = pv.propAt({ x: camera.position.x, y: camera.position.y, z: camera.position.z }, { x: fwd.x, y: fwd.y, z: fwd.z }, 3)
+        if (teamSafeCode !== null && me?.safe !== true && hit !== null && hit.startsWith('PHYSAFE')) {
           openCodePad('physafe', 'physafe')
           return true
         }

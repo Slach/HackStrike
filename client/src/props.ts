@@ -1211,16 +1211,6 @@ export class PropsView {
     return out
   }
 
-  /** §16.6: PHYSAFE рядом и на земле? Возвращает дистанцию (для пада
-   *  ввода кода — интерцептор space в main.ts; несущему пад не нужен). */
-  physafeTarget(x: number, z: number, y: number): number | null {
-    const pf = this.physafePos
-    if (pf === null || pf.carrier !== 0) return null
-    const d = Math.hypot(pf.x - x, pf.z - z)
-    if (Math.abs(pf.y - y) > 3) return null
-    return d <= 2 ? d : null
-  }
-
   hostKind(id: string): CyberKind | null {
     if (this.terminals.has(id)) return 'terminal'
     if (this.safes.has(id)) return 'safe'

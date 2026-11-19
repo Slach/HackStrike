@@ -612,6 +612,16 @@ func (cs *cyberState) widestPath(from, to string, blocked func(string) bool) []s
 // СМОТРИМ — конус ~25° вокруг взгляда (плейтест 2026-11-17: «стоял у D1,
 // а джекнулся в CAM3 над проёмом»); вне конуса — ближайшая.
 func (w *world) jackTarget(pl *player) *device {
+	dev, _ := w.jackTargetScored(pl)
+	return dev
+}
+
+// jackTargetScored — джек-цель + «сила прицела»: score = dot с взглядом
+// (конус ~25°) либо -дистанция для ближайшего вне конуса. Отрицательный
+// score НИКОГДА не бьёт положительный — прицелённый physafe честно
+// побеждает свитч за спиной (плейтест: «конфликт по space с netsafe и
+// physafe и s3» — у центра комнаты они в 1 м друг от друга).
+func (w *world) jackTargetScored(pl *player) (*device, float64) {
 	eye := pl.pos.add(vec3{0, eyeHeight, 0})
 	var best *device  // ближайший в радиусе
 	var aimed *device // лучший в конусе взгляда
@@ -654,9 +664,36 @@ func (w *world) jackTarget(pl *player) *device {
 		}
 	}
 	if aimed != nil {
-		return aimed
+		return aimed, bestDot
 	}
-	return best
+	if best != nil {
+		return best, -bestD
+	}
+	return nil, math.Inf(-1)
+}
+
+// physafeScore — «сила прицела» на PHYSAFE (§16.6): как у джек-цели —
+// dot в конусе либо -дистанция; сейф должен быть на земле (не у носителя).
+func (w *world) physafeScore(pl *player) float64 {
+	if !w.physafePresent || w.physafe.carrier != 0 {
+		return math.Inf(-1)
+	}
+	dp := w.physafe.pos.sub(pl.pos)
+	dp[1] = 0
+	dist := dp.length()
+	if dist > physafeTakeRadius {
+		return math.Inf(-1)
+	}
+	eye := pl.pos.add(vec3{0, eyeHeight, 0})
+	to := w.physafe.pos.add(vec3{0, 0.5, 0}).sub(eye)
+	if to.length() < 0.001 {
+		return math.Inf(-1)
+	}
+	dot := to.dot(aimDir(pl.yaw, pl.pitch)) / to.length()
+	if dot >= math.Cos(25*math.Pi/180) {
+		return dot
+	}
+	return -dist
 }
 
 // jackEntry — точка входа (мгновенный джек-ин, contested enemy_team):
@@ -739,26 +776,20 @@ func (w *world) interactTick(pl *player) {
 	if !pressed || !pl.alive || pl.jacked {
 		return // мёртвые и джекнутые ничего не берут
 	}
-	// §16.6 (итерация 7): PHYSAFE — ЛЮБОЙ класс берёт сейф space'ом.
-	// Несущий не джекается и повторно не берёт (ввод кода у сейфа — через
-	// кодовый пад клиента, см. enterPhysafe).
-	if w.physafePresent {
-		if pl.carry {
-			return
-		}
-		if w.physafe.carrier == 0 {
-			dp := w.physafe.pos.sub(pl.pos)
-			dp[1] = 0
-			if dp.length() <= physafeTakeRadius {
-				w.takeSafe(pl)
-				return
-			}
-		}
+	// §16.6 (итерация 7) + плейтест «конфликт по space с netsafe и physafe
+	// и s3»: у центра комнаты сейф, switch и NETSAFE в 1 м друг от друга —
+	// цель space выбирается ЕДИНЫМ сравнением «сила прицела» (dot в конусе
+	// 25°, вне конуса — ближайшая по дистанции с отрицательным score, который
+	// никогда не бьёт прицеленную). Взял сейф — takeSafe; иначе джек-флоу.
+	pfScore := w.physafeScore(pl)
+	dev, devScore := w.jackTargetScored(pl)
+	if pfScore > devScore {
+		w.takeSafe(pl)
+		return
 	}
 	if pl.cls != "hacker" {
 		return // дека только у хакера
 	}
-	dev := w.jackTarget(pl)
 	if dev == nil || jackEntry(dev) {
 		if dev != nil {
 			w.jackin(pl, dev)
