@@ -1768,6 +1768,16 @@
       .codepad-key:active {
         background: rgba(55, 255, 155, 0.3);
       }
+      /* ВЗЯТЬ в паде PHYSAFE (§16.6): во всю ширину, как ОТКРЫТЬ,
+         янтарный акцент — цвет сейфа */
+      .codepad-key.wide {
+        grid-column: span 3;
+        justify-self: stretch;
+        width: auto;
+        color: #ffd770;
+        border-color: rgba(255, 200, 55, 0.65);
+        background: rgba(255, 200, 55, 0.14);
+      }
       .codepad-key.clr {
         color: #ffb3dd;
         border-color: rgba(255, 77, 94, 0.45);

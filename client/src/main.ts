@@ -231,7 +231,7 @@ function openCodePad(dev: string, kp: string): void {
     // §16.6: у сейфа обе стратегии в одном паде — ввод кода (вскрытие на
     // месте) или забрать и нести на базу
     const take = document.createElement('button')
-    take.className = 'codepad-key clr'
+    take.className = 'codepad-key wide'
     take.textContent = 'ВЗЯТЬ'
     take.addEventListener('click', () => press('ВЗЯТЬ'))
     grid.append(take)
