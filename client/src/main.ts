@@ -84,6 +84,13 @@ let jackErrorUntil = 0
 let prevInteractUi = 0
 // §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
 let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; timer: HTMLElement; showResult: (ok: boolean, match?: number, open?: boolean) => void } | null = null
+// закрытие пада извне (джек-ин/смерть/конец матча): локальная close()
+// внутри openCodePad регистрируется сюда — конфликт клавиатуры (§16.7:
+// пад держит window-capture keydown и глотает цифры/Enter/Esc деки)
+let codePadClose: (() => void) | null = null
+function closeCodePad(): void {
+  codePadClose?.()
+}
 let keyLeftMs = -1 // §16.5: последний keyLeft из снапшота
 let teamDoorCode: string | null = null // §16.4: код d3, узнанный командой (codes)
 let teamSafeCode: string | null = null // §16.6: код сейфа, узнанный командой (codes)
@@ -143,6 +150,7 @@ function openCodePad(dev: string, kp: string): void {
     window.removeEventListener('keydown', onKey, true)
     wrap.remove()
     codePad = null
+    codePadClose = null
     // вернуть пиксельный захват мыши — пад был модальным окном над игрой
     canvas.requestPointerLock?.()
   }
@@ -235,6 +243,7 @@ function openCodePad(dev: string, kp: string): void {
   document.body.append(wrap)
   draw()
   window.addEventListener('keydown', onKey, true)
+  codePadClose = close
   codePad = {
     dev,
     kp,
@@ -289,6 +298,7 @@ let lastMyHp = -1
 const envKillAt = new Map<number, number>()
 
 function resetSession(): void {
+  closeCodePad() // обрыв сокета (не F5-перезагрузка): пад не должен выжить
   playing = false
   myId = null
   envKillAt.clear()
@@ -434,12 +444,14 @@ function handleDeath(msg: DeathMsg): void {
     hud.showDeath(killer, msg.respawnAt, myCls)
   }
   autofire.reset()
+  closeCodePad() // мёртвый код не вводит
   hackviewOff(false) // сервер джек-аутит сам; оверлей гасим сразу (ГДД §12.1)
   touch?.reset() // мёртвое тело не должно «бежать» через удержанную крестину (§15.1)
 }
 
 function handleEnd(msg: EndMsg): void {
   matchOver = true
+  closeCodePad() // end-оверлей ниже пада по z — PIN-панель поверх победы недопустима
   hackviewOff(false)
   hud.setNav([])
   // reason=extract — победа извлечением; ЛОР: ЧТО мы вынесли из сейфа
@@ -653,6 +665,9 @@ const hackview = new HackView({
 })
 
 function hackviewOn(msg: JackinMsg): void {
+  // §16.7 (плейтест: конфликт PIN-пада и деки): пад держит window-capture
+  // keydown и глотает цифры/Enter/Esc деки — при джек-ине закрываем его.
+  closeCodePad()
   hackview.activate(msg, propsView?.hostKind(msg.host) ?? null)
   document.body.classList.add('hackmode') // прячет FPS-HUD (CSS)
   controls.frozen = true // взгляд и клавиши не меняют состояние тела
