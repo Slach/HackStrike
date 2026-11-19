@@ -572,7 +572,10 @@ type snapPlayer struct {
 func (w *world) snapProps() []any {
 	props := w.cyber.snapProps()
 	if w.physafePresent {
+		// id обязателен: клиентский parseProp дропает пропсы без id
+		// (плейтест «бокс не двигается» — снап physafe откладывался целиком)
 		m := message{
+			"id":   "physafe",
 			"kind": "physafe",
 			"x":    round3(w.physafe.pos[0]),
 			"y":    round3(w.physafe.pos[1]),

@@ -3378,6 +3378,18 @@ func TestPhysafe(t *testing.T) {
 	if !h.carry {
 		t.Fatalf("carrier flag must be set on the player")
 	}
+	// снап: physafe приезжает с id (без него клиентский парсер дропает проп
+	// — плейтест «бокс не двигается») и позицией носителя
+	w.simulateTick()
+	foundSnap := false
+	for _, p := range w.cyber.snapProps() {
+		if pm, ok := p.(message); ok && pm["kind"] == "physafe" && pm["id"] == "physafe" {
+			foundSnap = true
+		}
+	}
+	if !foundSnap {
+		t.Fatalf("snap.props must carry the physafe entry WITH id")
+	}
 	// несущий: ввод кода у сейфа невозможен (сейф уже у него)
 	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": w.safeCode})
 	if !hasDenied(w.takeOut(), h.id, "bad_target") {
