@@ -2655,7 +2655,10 @@
       /* §13.7 живой вид камер в meatview: рамка-подпись поверх сцены */
       .camhud {
         position: fixed;
-        top: calc(14px + env(safe-area-inset-top));
+        /* под topbar (12+46px): рамка вида камеры не должна ложиться на счёт
+           (плейтест 2026-11-20: «один элемент на другой накладывается, счёт
+           на то какая камера активная») */
+        top: calc(70px + env(safe-area-inset-top));
         left: 50%;
         transform: translateX(-50%);
         z-index: 9;
@@ -2689,6 +2692,8 @@
         cursor: pointer;
       }
       .camhud.hint { cursor: default; border-color: rgba(255, 159, 67, 0.6); color: #ffcf9f; }
+      /* touch: topbar компактнее (≈8+36) и с safe-area — своя база ниже него */
+      body.touch .camhud { top: calc(58px + env(safe-area-inset-top)); }
       .camhud.hint .camhud-label { color: #ff9f43; }
       /* в виде камеры прицел не про картинку камеры */
       body.camview-on #crosshair { display: none; }
