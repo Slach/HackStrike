@@ -526,9 +526,9 @@ function handleEnd(msg: EndMsg): void {
     matchOver = false
     hud.hideCrawl()
   }, reason, msg.players)
-  // extract-победа: полёт-титры «что мы вынесли» поверх end-панели — даём
-  // панели раскрыться (таблица фрагов со stagger), потом затемнение
-  if (msg.reason === 'extract') window.setTimeout(() => hud.showCrawl(), 2600)
+  // extract-победа: печать протокола «что мы вынесли» поверх end-панели —
+  // даём панели раскрыться (таблица фрагов со stagger), потом телетайп
+  if (msg.reason === 'extract') window.setTimeout(() => hud.showCrawl(), 1800)
 }
 
 const sock = new GameSocket({

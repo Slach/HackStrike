@@ -752,9 +752,9 @@
         color: rgba(55, 255, 155, 0.85);
         margin-bottom: 4px;
       }
-      /* Полёт-титры extract-победы: чёрный экран, текст уходит вверх «в
-         даль» (perspective + rotateX), 26 с, скип любой клавишей. Текст —
-         терминальный жёлто-зелёный, в духе заставки, а не кино. */
+      /* Печать протокола extract-победы (ревизия 2, плейтест «проще — печать
+         протокола»): чёрный экран, «лист» прижат к низу, строки печатются
+         телетайпом одна за другой, старые уходят вверх. Без перспектив. */
       #crawl {
         position: fixed;
         inset: 0;
@@ -763,39 +763,52 @@
         overflow: hidden;
         cursor: pointer;
       }
-      .crawl-persp {
+      .crawl-sheet {
         position: absolute;
         left: 50%;
-        top: 100%;
-        width: min(72vw, 860px);
-        transform: translateX(-50%) perspective(340px) rotateX(22deg);
-        transform-origin: 50% 100%;
+        bottom: 8vh;
+        transform: translateX(-50%);
+        width: min(86vw, 760px);
+        height: 78vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-end; /* новая строка выезжает снизу, стек растёт вверх */
       }
-      .crawl-text {
+      #crawlText {
         color: #ffd75e;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        text-align: justify;
-        font-size: 17px;
-        line-height: 1.8;
-        /* старт −50%: текст УЖЕ нижней третью в кадре (плейтест «вместо
-           финала — чёрный экран»: от 0% он въезжал только к 14-й секунде);
-           финиш −300%: уходит за верх целиком в пределах 26 с */
-        animation: crawlUp 26s linear forwards;
+        text-align: left;
+        font-size: 16px;
+        line-height: 1.75;
+        white-space: pre-wrap;
       }
-      .crawl-text h3 {
-        text-align: center;
-        font-size: 26px;
-        letter-spacing: 6px;
-        margin: 0 0 26px;
+      #crawlText .cl-head {
+        color: #37ff9b;
+        letter-spacing: 2px;
+      }
+      #crawlText .cl-title {
+        display: block;
         color: #ffe9a0;
-        text-shadow: 0 0 18px rgba(255, 215, 94, 0.45);
+        font-size: 22px;
+        letter-spacing: 5px;
+        margin: 14px 0 10px;
+        text-shadow: 0 0 14px rgba(255, 215, 94, 0.4);
       }
-      @keyframes crawlUp {
-        from {
-          transform: translateY(-50%);
-        }
-        to {
-          transform: translateY(-300%);
+      #crawlText .cl-dim {
+        color: rgba(255, 215, 94, 0.55);
+      }
+      #crawlText .cl-cursor {
+        display: inline-block;
+        width: 9px;
+        height: 15px;
+        background: #ffd75e;
+        vertical-align: text-bottom;
+        animation: crawlBlink 0.7s steps(1) infinite;
+      }
+      @keyframes crawlBlink {
+        50% {
+          opacity: 0;
         }
       }
       .crawl-skip {
@@ -3453,12 +3466,12 @@
       </div>
     </div>
 
-    <!-- Полёт-титры extract-победы (плейтест M5: «скролить как в звёздных
-         войнах =)»): чёрный экран, текст уходит в перспективу. Любая
-         клавиша/клик — скип. -->
+    <!-- Печать протокола extract-победы (ревизия 2, плейтест «проще — печать
+         протокола»): строки печатются телетайпом снизу. Любая клавиша/клик —
+         скип. -->
     <div id="crawl" class="hidden">
-      <div class="crawl-persp">
-        <div id="crawlText" class="crawl-text"></div>
+      <div class="crawl-sheet">
+        <div id="crawlText"></div>
       </div>
       <div class="crawl-skip">ЛЮБАЯ КЛАВИША — ПРОПУСТИТЬ</div>
     </div>

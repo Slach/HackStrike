@@ -11,16 +11,32 @@ const TEAM_END_LABEL = ['WHITEHAT', 'BLACKHAT'] as const // team 0 = WhiteHat (�
 /** Лор извлечения (итерация 7, формулировка владельца): ЧТО мы вынесли. */
 export const EXTRACT_LORE = 'ИЗВЛЕЧЕНО: ПРОТОКОЛ «ГЕНЕАЛОГИЯ» — КОМПОНЕНТ ВИРУСА, УБИВАЮЩЕГО ПО ДНК НОСИТЕЛЯ И ВСЕХ ЕГО ДЕТЕЙ'
 
-/** Полёт-титры extract-победы (плейтест M5 «как в звёздных войнах =)»):
- *  тот же лор «ГЕНЕАЛОГИИ», развёрнутый до заставки. HTML статичен. */
-const CRAWL_HTML = `
-<h3>ПРОТОКОЛ «ГЕНЕАЛОГИЯ»</h3>
-<p>Крышка PHYSAFE ещё дымится. Внутри — не золото и не код. Внутри — протокол.</p>
-<p>«ГЕНЕАЛОГИЯ» — компонент вируса, убивающего по ДНК носителя. И всех его детей. И детей его детей. Корпорация называла это «санитарией родословных»: цель исчезает не одна — исчезает линия крови.</p>
-<p>Заказчик платил за то, чтобы список целей никогда не всплыл. Теперь он у вас. Распечатка на термо-бумаге, сорок тысяч строк, каждая строка — человек.</p>
-<p>Протокол нельзя запустить. Пока нельзя. Но тот, кто знает ЧТО искать, соберёт остальное. Где-то в сети есть второй контейнер…</p>
-<p>КОНЕЦ ПЕРВОЙ ОПЕРАЦИИ.</p>
-`
+/** Печать протокола extract-победы (ревизия 2, плейтест «проще — печать
+ *  протокола»): строки телетайпом, слева, без перспектив. Лор прежний. */
+const CRAWL_LINES: readonly { text: string; cls?: string }[] = [
+  { text: 'HACKSTRIKE // ОПЕРАЦИЯ № 001', cls: 'cl-head' },
+  { text: 'КОНТЕЙНЕР: PHYSAFE-01 ..... СТАТУС: ВСКРЫТ', cls: 'cl-head' },
+  { text: '========================================', cls: 'cl-dim' },
+  { text: 'ПРОТОКОЛ «ГЕНЕАЛОГИЯ»', cls: 'cl-title' },
+  { text: 'внутри — не золото и не код. внутри — протокол.' },
+  { text: '' },
+  { text: '«ГЕНЕАЛОГИЯ» — компонент вируса, убивающего' },
+  { text: 'по ДНК носителя. и всех его детей.' },
+  { text: 'и детей его детей.' },
+  { text: '' },
+  { text: 'корпорация называла это «санитарией родословных»:' },
+  { text: 'цель исчезает не одна — исчезает линия крови.' },
+  { text: '' },
+  { text: 'заказчик платил за то, чтобы список целей' },
+  { text: 'никогда не всплыл. теперь он у вас:' },
+  { text: 'термо-бумага, сорок тысяч строк,' },
+  { text: 'каждая строка — человек.', cls: 'cl-dim' },
+  { text: '' },
+  { text: 'протокол нельзя запустить. пока нельзя.' },
+  { text: 'где-то в сети есть второй контейнер…' },
+  { text: '' },
+  { text: '== КОНЕЦ ПЕРВОЙ ОПЕРАЦИИ ==', cls: 'cl-head' },
+]
 const KILLFEED_ROWS = 5
 const KILLFEED_FADE_MS = 4000
 const END_RESTART_MS = 30000
@@ -1144,22 +1160,36 @@ export class Hud {
     done?.()
   }
 
-  /** Полёт-титры extract-победы: чёрный экран поверх end-панели, текст
-   *  уходит в перспективу 26 с; скип — любая клавиша/клик (или рестарт). */
+  /** Печать протокола extract-победы: строки телетайпом (интервал ~0.8 с),
+   *  лист прижат к низу — новые строки выезжают снизу, старые уходят вверх.
+   *  Скип — любая клавиша/клик (или рестарт). */
   showCrawl(): void {
     if (!this.el.crawl.classList.contains('hidden')) return
-    this.el.crawlText.innerHTML = CRAWL_HTML
+    this.el.crawlText.replaceChildren()
     this.el.crawl.classList.remove('hidden')
-    // рестарт анимации при повторном показе: пересоздаём узел стиля не нужно —
-    // форсируем reflow снятием/установкой класса анимации
-    this.el.crawlText.style.animation = 'none'
-    void this.el.crawlText.offsetWidth
-    this.el.crawlText.style.animation = ''
-    window.clearTimeout(this.crawlTimer)
-    this.crawlTimer = window.setTimeout(() => this.hideCrawl(), 26500)
+    const cursor = document.createElement('span')
+    cursor.className = 'cl-cursor'
+    this.el.crawlText.append(cursor)
+    let i = 0
+    const step = (): void => {
+      if (i >= CRAWL_LINES.length) return
+      const l = CRAWL_LINES[i++]
+      const row = document.createElement('span')
+      if (l.cls !== undefined) row.className = l.cls
+      row.textContent = l.text === '' ? ' ' : l.text
+      this.el.crawlText.insertBefore(row, cursor)
+      cursor.remove()
+      this.el.crawlText.append(cursor) // курсор всегда за последней строкой
+    }
+    step() // первая строка — сразу, экран не пустой
+    window.clearInterval(this.crawlTimer)
+    this.crawlTimer = window.setInterval(step, 800)
+    // допечатка ~17 с + прочитать хвост; рестарт гасит принудительно
+    window.setTimeout(() => window.clearInterval(this.crawlTimer), CRAWL_LINES.length * 800 + 400)
   }
 
   hideCrawl(): void {
+    window.clearInterval(this.crawlTimer)
     window.clearTimeout(this.crawlTimer)
     this.el.crawl.classList.add('hidden')
   }
