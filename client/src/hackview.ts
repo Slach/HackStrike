@@ -465,6 +465,13 @@ export class HackView {
     this.closePalette()
     this.netmapZoom = HackView.NETMAP_ZOOM0 // зум/пан карты не переживает сессию деки
     this.netmapCenter = { x: HackView.NETMAP_W / 2, y: HackView.NETMAP_H / 2 }
+    // §15.26: jack-out посреди жеста — залипшие указатели/холд въелись бы в
+    // следующий render() деки (гейт §15.26 увидел бы «жест идёт» вечно).
+    this.netmapPointers.clear()
+    this.pinchDist = 0
+    this.netmapPanLast = null
+    this.netmapDragged = false
+    this.netmapRenderHeld = false
     this.pendingJobs = []
     if (this.raf !== null) {
       window.cancelAnimationFrame(this.raf)
@@ -499,8 +506,10 @@ export class HackView {
     this.deckMemCap = msg.mem ?? this.deckMemCap
     this.updateCpToasts()
     this.schedule(() => this.updateDeckData())
-    // подсветка каналов активных операций (path в progs) — 2 Гц с deck-тиком
-    this.schedule(() => this.updateNetmaps())
+    // подсветка каналов активных операций (path в progs) — 2 Гц с deck-тиком.
+    // §15.26: только hi-слой, без rebuild каркаса — карта не вырывает палец
+    // посреди пана/пинча.
+    this.schedule(() => this.refreshNetmapHi())
   }
 
   onScan(msg: ScanMsg): void {
@@ -2434,9 +2443,16 @@ export class HackView {
     // табом/стрелками, плейтест M4) восстанавливаем по data-link чипу.
     const refocusLink =
       document.activeElement instanceof HTMLElement ? document.activeElement.dataset.link : undefined
+    // §15.26: structural render во время пана/пинча карты откладывается до
+    // конца жеста — карта под пальцем не пересобирается (скан, табы, цели).
+    if ((this.netmapPointers.size > 0 || this.pinchDist > 0) && !this.netmapRenderHeld) {
+      this.netmapRenderHeld = true
+      return
+    }
     this.sparkRefs = []
     this.progLists = []
     this.netmapBoxes = []
+    this.netmapHi.clear()
     this.doorRefs = []
     this.camRefs = []
     this.radarRefs = []
@@ -2595,7 +2611,15 @@ export class HackView {
     const netmapBox = el('div', 'hv-netmap')
     this.netmapBoxes.push(netmapBox)
     right.append(netmapBox)
-    right.append(txt('div', 'netmap-hint', IS_TOUCH ? 'ТАП ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА' : 'КЛИК ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА'))
+    // §15.26: на тапе подсказка называет все три жеста — пан и щипок раньше
+    // были невидимы для пользователя, «карту смотреть невозможно».
+    right.append(
+      txt(
+        'div',
+        'netmap-hint',
+        IS_TOUCH ? 'ПАН ПАЛЬЦЕМ · ЩИПОК — ЗУМ · ТАП ПО УЗЛУ — ЦЕЛЬ' : 'КЛИК ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА',
+      ),
+    )
 
     cols.append(left, right)
   }
@@ -3116,11 +3140,63 @@ export class HackView {
     }
   }
 
+  /** Полный rebuild карт — только из render() (скан/табы/цели). */
   private updateNetmaps(): void {
     for (const box of this.netmapBoxes) {
       box.replaceChildren()
       box.append(this.buildNetmapSvg())
     }
+  }
+
+  /** Перерисовать содержимое hi-групп без затрагивания svg-каркаса:
+   *  viewBox, listeners и pointer capture жестов остаются нетронутыми. */
+  private refreshNetmapHi(): void {
+    for (const box of this.netmapBoxes) {
+      const svg = box.firstElementChild
+      if (!(svg instanceof SVGElement)) continue
+      const layer = this.netmapHi.get(svg)
+      if (layer === undefined || !svg.isConnected) continue
+      this.drawNetmapHi(layer.g, layer.pos)
+    }
+  }
+
+  /** Слой каналов активных операций (плейтест M5): маршрут widest-path из
+   *  deck-сообщения 2 Гц поверх обычных связей. Отдельная <g> — чтобы тик
+   *  перекладывал только её (§15.26). */
+  private drawNetmapHi(gEl: SVGElement, pos: Map<string, { x: number; y: number }>): void {
+    gEl.replaceChildren()
+    const hiSeen = new Set<string>()
+    for (const pr of this.progs) {
+      if (pr.path === undefined) continue
+      for (let i = 0; i + 1 < pr.path.length; i++) {
+        const a = this.devices.get(pr.path[i])
+        const b = this.devices.get(pr.path[i + 1])
+        if (a === undefined || b === undefined) continue
+        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
+        if (hiSeen.has(key)) continue
+        hiSeen.add(key)
+        const pa = pos.get(a.id)
+        const pb = pos.get(b.id)
+        if (pa === undefined || pb === undefined) continue
+        const l = svgEl('line')
+        l.setAttribute('x1', String(pa.x))
+        l.setAttribute('y1', String(pa.y))
+        l.setAttribute('x2', String(pb.x))
+        l.setAttribute('y2', String(pb.y))
+        l.setAttribute('class', 'svg-link svg-link-hi')
+        l.style.strokeWidth = String(Math.round(this.netmapBwWidth(this.netmapMbps(a, b)) * 1.7 * 100) / 100)
+        gEl.append(l)
+      }
+    }
+  }
+
+  private netmapMbps(a: ScanDevice, b: ScanDevice): number {
+    const e = a.net?.find((n) => n.id === b.id) ?? b.net?.find((n) => n.id === a.id)
+    return e !== undefined && e.mbps > 0 ? e.mbps : 20
+  }
+
+  private netmapBwWidth(mbps: number): number {
+    return (1 + mbps / 10) * HackView.NETMAP_S
   }
 
   /** SVG-карта сети: узлы = discovered устройства, цвет = владелец, клик = цель.
@@ -3132,11 +3208,25 @@ export class HackView {
     y: HackView.NETMAP_H / 2,
   }
   private pinchDist = 0
+  /** §15.26: hi-слой каждой живой карты (svg → группа + позиции узлов) —
+   *  deck-тик обновляет только её, не трогая каркас. */
+  private netmapHi = new Map<SVGElement, { g: SVGElement; pos: Map<string, { x: number; y: number }> }>()
+  /** §15.26: structural render отложен на время активного пана/пинча. */
+  private netmapRenderHeld = false
   // Пан (плейтест M3): активные указатели + порог drag→click.
   private netmapPointers = new Set<number>()
   private netmapPanLast: { x: number; y: number } | null = null
   private netmapDragged = false
   private netmapSuppressClick = false
+
+  /** §15.26: жест на карте закончен (все указатели отпущены) — досрочиваем
+   *  отложенный structural render, если он копился под пальцем. */
+  private netmapGestureEnd(): void {
+    if (this.netmapRenderHeld && this.netmapPointers.size === 0 && this.pinchDist === 0) {
+      this.netmapRenderHeld = false
+      this.schedule(() => this.render())
+    }
+  }
 
   private applyNetmapZoom(svg: SVGElement): void {
     const vw = HackView.NETMAP_W / this.netmapZoom
@@ -3222,6 +3312,7 @@ export class HackView {
       }
       this.netmapDragged = false
       this.netmapPanLast = null
+      this.netmapGestureEnd()
     }
     const detach = (): void => {
       window.removeEventListener('pointermove', onMoveGuarded)
@@ -3232,6 +3323,8 @@ export class HackView {
       this.netmapPointers.clear()
       this.netmapPanLast = null
       this.netmapDragged = false
+      this.pinchDist = 0 // §15.26: и пинч — иначе гейт render'а залип бы намертво
+      this.netmapGestureEnd()
     }
     const onMoveGuarded = (e: PointerEvent): void => {
       if (!svg.isConnected) {
@@ -3269,8 +3362,22 @@ export class HackView {
         this.pinchDist = dist
       }
     }, { passive: false })
-    svg.addEventListener('touchend', () => {
+    svg.addEventListener('touchend', (e) => {
       this.pinchDist = 0
+      this.netmapGestureEnd()
+      // §15.26: с двумя пальцами пан вставал на паузу; вернулся к одному —
+      // возобновляем от точки оставшегося, без «мертвого» перемещения.
+      if (e.touches.length === 1 && this.netmapPointers.size === 1) {
+        const t = e.touches[0]
+        this.netmapPanLast = { x: t.clientX, y: t.clientY }
+        this.netmapDragged = false
+      }
+    })
+    // §15.26: system-отмена тача (входящий вызов, palm rejection) — pointerup
+    // не придёт; без сброса пинч залип бы навсегда заблокировал render.
+    svg.addEventListener('touchcancel', () => {
+      this.pinchDist = 0
+      this.netmapGestureEnd()
     })
     this.applyNetmapZoom(svg)
   }
@@ -3541,22 +3648,13 @@ export class HackView {
     // сервер, зафиксирован на старте §16.3). Рисуем ПОВЕРХ обычных связей —
     // тот же цвет, ярче и толще; несколько операций — каждая свой слой.
     // Маршрут начинается с точки входа (deck→host не рисуем — это не канал).
-    const hiSeen = new Set<string>()
-    for (const pr of this.progs) {
-      if (pr.path === undefined) continue
-      for (let i = 0; i + 1 < pr.path.length; i++) {
-        const a = this.devices.get(pr.path[i])
-        const b = this.devices.get(pr.path[i + 1])
-        if (a === undefined || b === undefined) continue
-        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
-        if (hiSeen.has(key)) continue
-        hiSeen.add(key)
-        const pa = pos.get(a.id)
-        const pb = pos.get(b.id)
-        if (pa === undefined || pb === undefined) continue
-        line(pa.x, pa.y, pb.x, pb.y, 'svg-link svg-link-hi', bwWidth(linkMbps(a, b)) * 1.7)
-      }
-    }
+    // §15.26: слой живёт отдельно (drawNetmapHi) — deck-тик не rebuild-ит
+    // каркас карты и не рвёт жест пальца. Группа на месте прежнего блока —
+    // z-порядок прежний: поверх связей, под дека-линком и узлами.
+    const hiLayer = svgEl('g')
+    svg.append(hiLayer)
+    this.drawNetmapHi(hiLayer, pos)
+    this.netmapHi.set(svg, { g: hiLayer, pos })
 
     // Дека — узел РЯДОМ с точкой джек-ина (плейтест M4: в углу она «вне
     // этажей», а смысл — «откуда сижу»): позиция прошла общую раздвижку
