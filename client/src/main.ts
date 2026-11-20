@@ -524,7 +524,11 @@ function handleEnd(msg: EndMsg): void {
   else if (msg.reason === 'frags') reason = 'ЛИМИТ ФРАГОВ · МАТЧ-СПЕЦИФИЧНЫЙ ЛУТ (КЛЮЧИ) СТЁРТ'
   hud.showEnd(msg.winner, msg.scores, () => {
     matchOver = false
+    hud.hideCrawl()
   }, reason, msg.players)
+  // extract-победа: полёт-титры «что мы вынесли» поверх end-панели — даём
+  // панели раскрыться (таблица фрагов со stagger), потом затемнение
+  if (msg.reason === 'extract') window.setTimeout(() => hud.showCrawl(), 2600)
 }
 
 const sock = new GameSocket({

@@ -43,6 +43,10 @@ const (
 	physafeTakeRadius      = 2.5
 
 	matchRestartDelay = 30 * time.Second // §16.6: end-оверлей поживает 30 с (плейтест «отсчет рестарта 30 секунд =)»)
+	// safeKeyRegenDelay (§16.2, решение владельца 2026-11-20): rm safe_key —
+	// задержка, не перманентный отказ extract-победы: ключ регенерируется на
+	// NETSAFE, если его нет ВЕЗДЕ (хосты/деки/трансферы) 150 с подряд.
+	safeKeyRegenDelay = 150 * time.Second
 
 	// Лифты (§16.12, итерация 8.5): спуск 2F→1F один раз за матч (кнопка
 	// только на 2F — наверх никак; использованный лифт остаётся внизу).
@@ -803,6 +807,10 @@ type program struct {
 	data string
 	mb   int
 	mbps float64
+	// enc — снапшот Enc источника на старте: POSIX-семантика rm (как у
+	// decrypt): item могли удалить mid-flight — трансфер доносит снапшот,
+	// «открытый дескриптор» (плейтест M5: финиш молча глотал результат).
+	enc bool
 }
 
 func progWork(name string) float64 {
@@ -1136,6 +1144,39 @@ func deckHasItem(pl *player, name string) bool {
 	return false
 }
 
+// hostItemIndex/deckItemIndex — индекс item'а по имени (−1 = нет): финиш
+// cp/mv берёт источник по индексу (mv вырезает), чтобы не тащить мутабельную
+// ссылку по циклу.
+func hostItemIndex(dev *device, name string) int {
+	for i, it := range dev.items {
+		if it.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func deckItemIndex(pl *player, name string) int {
+	for i, it := range pl.items {
+		if it.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// cpSnapshot — POSIX-«открытый дескриптор» (§16.2, как у decrypt): источник
+// могли rm-нуть mid-flight — трансфер всё равно доносит снапшот старта.
+// Код расшифрованного item'а — текущего поколения (кто расшифровал до старта
+// трансфера, тот код уже знает через codes).
+func (w *world) cpSnapshot(p *program) dataItem {
+	d := dataItem{Name: p.data, MB: p.mb, Enc: p.enc}
+	if !p.enc {
+		d.Code = w.decryptCodeOf(p.data)
+	}
+	return d
+}
+
 // cpNominal — номинальная бутылочка маршрута (МБ/с): min по bw кабелей
 // пути и backplane транзитных свитчей (§16.2; входной хоп дека↔хост не
 // считается — как в bw-модели §16.3).
@@ -1334,6 +1375,7 @@ func (w *world) resetDoorKey() {
 	}
 	// §16.6: safe_key — не ротируется, но матч-специфичен (код сейфа от
 	// старта матча — не повторяется между матчами, как и код d3).
+	w.safeKeyRegenAt = time.Time{} // новый матч: сид на месте, таймер не нужен
 	if w.safeKeyHost == "" {
 		w.safeKeyHost = "netsafe"
 	}
@@ -1352,6 +1394,58 @@ func (w *world) resetDoorKey() {
 		pl.items = kept
 	}
 	log.Printf("room: door_key reset for new match -> %s, safe_key reseeded (code %s)", w.doorKeyName, w.safeCode)
+}
+
+// safeKeyTick — регенерация safe_key (§16.2, решение владельца 2026-11-20):
+// rm не должен убивать extract-победу навсегда. Таймер 150 с идёт только
+// когда ключа нет ВЕЗДЕ (хосты, деки, cp/mv в полёте — снапшот доедет).
+func (w *world) safeKeyTick() {
+	if w.safeKeyHost == "" {
+		return
+	}
+	if w.safeKeyPresent() {
+		w.safeKeyRegenAt = time.Time{}
+		return
+	}
+	now := w.now()
+	if w.safeKeyRegenAt.IsZero() {
+		w.safeKeyRegenAt = now.Add(safeKeyRegenDelay)
+		log.Printf("room: safe_key absent — regen timer %v started", safeKeyRegenDelay)
+		return
+	}
+	if now.Before(w.safeKeyRegenAt) {
+		return
+	}
+	ns := w.cyber.devices[w.safeKeyHost]
+	if ns == nil {
+		w.safeKeyRegenAt = time.Time{}
+		return
+	}
+	ns.items = append(ns.items, dataItem{Name: "safe_key", MB: 120, Enc: true})
+	w.safeKeyRegenAt = time.Time{}
+	w.resendScanFor(ns.id)
+	log.Printf("room: safe_key regenerated on %s", ns.id)
+}
+
+// safeKeyPresent — safe_key есть хотя бы в одном месте: хост, дека, или он
+// летит cp/mv (POSIX-снапшот доедет и займёт место).
+func (w *world) safeKeyPresent() bool {
+	for _, d := range w.cyber.devices {
+		if hostHasItem(d, "safe_key") {
+			return true
+		}
+	}
+	for _, pl := range w.players {
+		if deckHasItem(pl, "safe_key") {
+			return true
+		}
+		for _, p := range pl.progs {
+			if (p.prog == "cp" || p.prog == "mv") && p.data == "safe_key" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // doorKeyLeftMs — сколько осталось до следующей ротации поколения (§16.5):
@@ -1689,6 +1783,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 		dev: srcID, dst: dstID, data: it.Name, mb: it.MB,
 		work: float64(it.MB) / mbps, // прогресс в секундах чистой полосы
 		path: path, mbps: mbps,
+		enc: it.Enc, // POSIX-снапшот источника (rm mid-flight, как у decrypt)
 	}
 	pl.progs = append(pl.progs, p)
 	pl.nextProgID++
@@ -2295,38 +2390,44 @@ func (w *world) completeProgram(pl *player, p *program) {
 		}
 		if p.dst == "deck" {
 			if src := w.cyber.devices[p.dev]; src != nil {
-				for i, it := range src.items {
-					if it.Name == p.data {
-						pl.items = append(pl.items, it)
-						if p.prog == "mv" {
-							src.items = append(src.items[:i], src.items[i+1:]...)
-						}
-						break
+				i := hostItemIndex(src, p.data)
+				var d dataItem
+				if i >= 0 {
+					d = src.items[i]
+					if p.prog == "mv" {
+						src.items = append(src.items[:i], src.items[i+1:]...)
 					}
+				} else {
+					d = w.cpSnapshot(p)
 				}
+				pl.items = append(pl.items, d)
 			}
 		} else if dst := w.cyber.devices[p.dst]; dst != nil {
 			// deck→host (chaff) и host→host.
 			if p.dev == "deck" {
-				for i, it := range pl.items {
-					if it.Name == p.data {
-						dst.items = append(dst.items, it)
-						if p.prog == "mv" {
-							pl.items = append(pl.items[:i], pl.items[i+1:]...)
-						}
-						break
+				i := deckItemIndex(pl, p.data)
+				var d dataItem
+				if i >= 0 {
+					d = pl.items[i]
+					if p.prog == "mv" {
+						pl.items = append(pl.items[:i], pl.items[i+1:]...)
 					}
+				} else {
+					d = w.cpSnapshot(p)
 				}
+				dst.items = append(dst.items, d)
 			} else if src := w.cyber.devices[p.dev]; src != nil {
-				for i, it := range src.items {
-					if it.Name == p.data {
-						dst.items = append(dst.items, it)
-						if p.prog == "mv" {
-							src.items = append(src.items[:i], src.items[i+1:]...)
-						}
-						break
+				i := hostItemIndex(src, p.data)
+				var d dataItem
+				if i >= 0 {
+					d = src.items[i]
+					if p.prog == "mv" {
+						src.items = append(src.items[:i], src.items[i+1:]...)
 					}
+				} else {
+					d = w.cpSnapshot(p)
 				}
+				dst.items = append(dst.items, d)
 			}
 		}
 		w.sendScan(pl) // листинг/память приёмника-источника обновить

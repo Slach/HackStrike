@@ -62,6 +62,10 @@ type world struct {
 	safeKeyHost string
 	safeCode    string
 	safeCodes   map[int]string
+	// §16.2 (решение владельца 2026-11-20): safe_key отсутствует ВЕЗДЕ дольше
+	// safeKeyRegenDelay — регенерация на NETSAFE (rm = задержка, не убийство
+	// extract-победы). Zero = ключ на месте / таймер не идёт.
+	safeKeyRegenAt time.Time
 
 	// §16.6 PHYSAFE (итерация 7): физический сейф — офлайн, вне графа.
 	// Взятие space (любой класс), ×0.5, дроп при смерти/F5; канал «вскрываем
@@ -483,6 +487,7 @@ func (w *world) simulateTick() {
 	w.liftTick()          // §16.12: платформы лифтов (до движения игроков — райдеры едут)
 	w.shieldRegenTick()   // §16.5: щит SRV +1/30 с (общий таймер от последнего отбоя)
 	w.doorKeyTick()       // §16.5: ротация door_key на SRV1 (T=120 с)
+	w.safeKeyTick()       // §16.2: регенерация safe_key после rm (150 с отсутствия)
 	w.devJobTick()        // §16.4: SRV-decrypt джобы (живут на хосте, job 1 Гц)
 	w.physafeTick(tickDT) // §16.6: канал «вскрываем 3 с» (код у сейфа / база)
 	w.gasTick(tickDT)     // §14.2: DoT газовых ловушек (после кибер-слоя, до снапа)
