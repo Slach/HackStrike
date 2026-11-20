@@ -421,6 +421,38 @@ export class PropsView {
     cap.position.set(pos[0], 8 - h / 2, pos[2])
     cap.material = this.mats.body
     cap.isVisible = false
+    // окаймляющие грани проёма + направляющие шахты (плейтест «потолок
+    // вообще бездонный =)… надо потолок визуализировать»): янтарная рама
+    // по периметру дыры на НИЖНЕЙ грани плиты 2F (y=7) + 4 стойки-рельса
+    // до пола 1F — шахта читается и сверху, и при спуске
+    const rimY = 7 - 0.05
+    const rimL = w / 2 + 0.12
+    const rimD = d / 2 + 0.12
+    const rimMat = this.mats.cable
+    const rims: [number, number, number, number, number, number][] = [
+      // вдоль X (север/юг грани)
+      [pos[0], rimY, pos[2] - rimD, w + 0.24, 0.1, 0.12],
+      [pos[0], rimY, pos[2] + rimD, w + 0.24, 0.1, 0.12],
+      // вдоль Z (запад/восток грани)
+      [pos[0] - rimD, rimY, pos[2], 0.12, 0.1, d + 0.24],
+      [pos[0] + rimD, rimY, pos[2], 0.12, 0.1, d + 0.24],
+    ]
+    for (let i = 0; i < rims.length; i++) {
+      const [rx, ry, rz, rw, rh, rd] = rims[i]
+      const rim = MeshBuilder.CreateBox(`prop.${id}.rim${i}`, { width: rw, height: rh, depth: rd }, this.scene)
+      rim.position.set(rx, ry, rz)
+      rim.material = rimMat
+      rim.isPickable = false
+    }
+    // рельсы по углам: от пола 1F до плиты 2F
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const rail = MeshBuilder.CreateBox(`prop.${id}.rail${sx}${sz}`, { width: 0.08, height: 7, depth: 0.08 }, this.scene)
+        rail.position.set(pos[0] + sx * rimD, 4.5, pos[2] + sz * rimD)
+        rail.material = rimMat
+        rail.isPickable = false
+      }
+    }
     this.lifts.set(id, {
       parts: [plat, edge],
       x: pos[0],
