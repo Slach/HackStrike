@@ -832,6 +832,7 @@ let camHintUntil = 0
  *  случается сразу (at=0), новый таб камеры — чистый кадр ≤500 мс. */
 let camPumpAt = 0
 function camToggle(): void {
+  if (menuOpen) return // пауза — не территория камеры
   if (!camView.hasCameras()) {
     // камер союзников нет — короткая подсказка вместо тихого no-op
     camHintUntil = performance.now() + 1500
@@ -1124,6 +1125,13 @@ engine.runRenderLoop(() => {
   camView.apply()
   scene.activeCamera = camView.visible ? camView.camera : camera
   syncCamOverlay()
+  // §13.7 (плейтест 2026-11-20 «в режиме V вертишь mlook, дезориентация на
+  // выходе»): под видом камеры look тела заморожен — мышь крутит не тело
+  // (его yaw сохраняется, выход в ту же сторону), а WASD ходит по-прежнему
+  // (GDD «монитор охраны»). frozen иерархичен: hackview/menu держат свой
+  // флаг сами, камерный снимается только когда они не активны.
+  if (camView.active) controls.frozen = true
+  else if (!hackview.active && !menuOpen) controls.frozen = false
 
   views.sync(states, myId)
 
