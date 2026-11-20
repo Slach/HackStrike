@@ -509,6 +509,7 @@ export class HackView {
     this.netmapPanLast = null
     this.netmapDragged = false
     this.netmapRenderHeld = false
+    this.watchSecOpen.clear() // §15.32: аккордеоны — defaults на следующий джек-ин
     this.pendingJobs = []
     if (this.raf !== null) {
       window.cancelAnimationFrame(this.raf)
@@ -3016,15 +3017,55 @@ export class HackView {
    *  watcher'а) и журнал событий. На watched-устройстве добавляется к любому
    *  контенту таба — устройство остаётся устройством (дверь управляется,
    *  лента камеры идёт). */
+  /** §15.32: открытость watch-секций (dev:key → open) переживает render()
+   *  (scan-тик 2 Гц перестраивает таба; открытое держим открытым). */
+  private watchSecOpen = new Map<string, boolean>()
+
+  /** §15.32 (ревебр owner: «старое должно помещаться — журналы раскрывать
+   *  тапом»): секция СОФТ/СЕТЬ/ЛОГ на тапе — <details>-аккордеон, строка
+   *  заголовка тапается; desktop — прежний div. head НЕ вешается на sec
+   *  здесь — вызывающий делает sec.append(head, list), summary обязан быть
+   *  первым ребёнком details (маркер ▸ только тогда). */
+  private watchSection(
+    cls: 'watch-radar' | 'watch-log',
+    title: string,
+    extra: HTMLElement | null,
+    key: string,
+    dflt: boolean,
+  ): { sec: HTMLElement; head: HTMLElement } {
+    if (!IS_TOUCH) {
+      return {
+        sec: el('div', cls),
+        head: el('div', cls === 'watch-log' ? 'watch-log-title' : 'watch-radar-head'),
+      }
+    }
+    const det = el('details', `${cls} watch-sec`)
+    det.open = this.watchSecOpen.get(key) ?? dflt
+    det.addEventListener('toggle', () => {
+      this.watchSecOpen.set(key, det.open)
+    })
+    const head = el('summary', cls === 'watch-log' ? 'watch-log-title' : 'watch-radar-head')
+    head.append(txt('span', 'watch-sec-txt', title))
+    if (extra !== null) head.append(extra)
+    return { sec: det, head }
+  }
+
   private appendWatchPanel(body: HTMLElement, dev: string, d: ScanDevice): void {
     if (d.watched !== true) return
     const wrap = el('div', 'watch-ui')
     const watchOwn = el('div', 'watch-owner')
     watchOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner), ' · WATCHER АКТИВЕН')
     wrap.append(watchOwn)
-    const soft = el('div', 'watch-radar')
-    const shead = el('div', 'watch-radar-head')
-    shead.append(txt('span', 'watch-radar-title', 'СОФТ'))
+    // §15.32 (ревебр owner: «надо чтобы старое помещалось на экран — журналы
+    // через тап раскрывать»): на тапе секции-«пожиратели» — аккордеоны
+    // <details>; состояние пережитий render в watchSecOpen (scan-тик зовёт
+    // render, open-атрибут из разметки всё бы раскрыл заново). Desktop —
+    // прежние div'ы.
+    const mkTitleSpan = (t: string): HTMLElement => txt('span', 'watch-radar-title', t)
+    const softW = this.watchSection('watch-radar', 'СОФТ', null, `${dev}:soft`, true)
+    const soft = softW.sec
+    const shead = softW.head
+    if (!IS_TOUCH) shead.append(mkTitleSpan('СОФТ'))
     const slist = el('div', 'watch-radar-list')
     if (d.soft !== undefined && d.soft.length > 0) {
       for (const s of d.soft) {
@@ -3040,11 +3081,14 @@ export class HackView {
     }
     soft.append(shead, slist)
     wrap.append(soft)
-    const radar = el('div', 'watch-radar')
-    const rhead = el('div', 'watch-radar-head')
-    rhead.append(txt('span', 'watch-radar-title', 'СЕТЬ'))
     const rcount = txt('span', 'watch-radar-count', 'В СЕТИ: 0')
-    rhead.append(rcount)
+    const radarW = this.watchSection('watch-radar', 'СЕТЬ', rcount, `${dev}:net`, false)
+    const radar = radarW.sec
+    const rhead = radarW.head
+    if (!IS_TOUCH) {
+      rhead.append(mkTitleSpan('СЕТЬ'))
+      rhead.append(rcount)
+    }
     const rlist = el('div', 'watch-radar-list')
     radar.append(rhead, rlist)
     wrap.append(radar)
@@ -3281,10 +3325,21 @@ export class HackView {
   /** Блок «ЛОГ СОБЫТИЙ» (§13.1 №1): последние сверху; данные — из
    *  scan.devices[].log, обновляются вместе с перестройкой таба на scan. */
   private logPanel(d: ScanDevice): HTMLElement {
-    const box = el('div', 'watch-log')
-    box.append(txt('div', 'watch-log-title', 'ЛОГ СОБЫТИЙ'))
-    const list = el('div', 'watch-log-list')
+    // §15.32: на тапе — аккордеон «ЛОГ СОБЫТИЙ» (свёрнут: журнал это «старое»,
+    // на экран должен влезать док+инфо). Счётчик событий — прямо в summary,
+    // чтобы по числу было видно есть ли что читать. Desktop — байтово прежний.
     const entries: readonly LogEntry[] = d.log ?? []
+    let box: HTMLElement
+    if (IS_TOUCH) {
+      const cnt = txt('span', 'watch-log-count', String(entries.length))
+      const secW = this.watchSection('watch-log', 'ЛОГ СОБЫТИЙ', cnt, `${d.id}:log`, false)
+      box = secW.sec
+      box.append(secW.head)
+    } else {
+      box = el('div', 'watch-log')
+      box.append(txt('div', 'watch-log-title', 'ЛОГ СОБЫТИЙ'))
+    }
+    const list = el('div', 'watch-log-list')
     if (entries.length === 0) {
       list.append(txt('div', 'watch-empty', 'СОБЫТИЙ НЕТ'))
     }

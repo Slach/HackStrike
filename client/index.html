@@ -1692,6 +1692,42 @@
         max-height: 190px;
         overflow-y: auto;
       }
+      /* §15.32 (ревебр owner: «старое должно помещаться на экран — журналы
+         раскрывать тапом»): на тапе секции СОФТ/СЕТЬ/ЛОГ — <details>.
+         Summary = вся полоска заголовка (не только ▸): 40px тап-таргет,
+         маркер свой, count/счётчик прижаты вправо. */
+      body.touch details.watch-sec { margin: 0; }
+      body.touch details.watch-sec > summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 40px;
+        cursor: pointer;
+        list-style: none;
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+      }
+      body.touch details.watch-sec > summary::-webkit-details-marker { display: none; }
+      body.touch details.watch-sec > summary::before {
+        content: '▸';
+        color: #37ff9b;
+        font-size: 12px;
+        flex: none;
+      }
+      body.touch details.watch-sec[open] > summary::before { content: '▾'; }
+      body.touch details.watch-sec > summary .watch-sec-txt { flex: none; }
+      body.touch details.watch-radar > summary .watch-sec-txt {
+        font-size: 15px;
+        font-weight: 700;
+        color: #37ff9b;
+        text-shadow: 0 0 12px rgba(55, 255, 155, 0.5);
+        letter-spacing: 3px;
+      }
+      body.touch .watch-log-count {
+        margin-left: auto;
+        font-size: 11px;
+        color: #ffd237;
+      }
       .watch-log-row {
         display: grid;
         grid-template-columns: 4.5em 1fr auto;
