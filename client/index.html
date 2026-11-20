@@ -2669,14 +2669,39 @@
       }
       /* чипы СВЯЗЕЙ на тапе — ≥40px тап-таргет (§15.7) */
       body.touch .dev-link { min-height: 40px; padding: 9px 12px; font-size: 13px; border-radius: 5px; }
+      /* §15.34 (ревебр owner: «кнопка закрыть гигантская… справа вверху её
+         оставь, крестик мелкий»): единственный потребитель — touch-дерево
+         (§15.30 убрало футер «× ЗАКРЫТЬ», desktop-строка креста не имеет).
+         Визуально мелкий (× 18px, без рамки) в верхнем углу bubble, тап-зона
+         добрана ::after до ~42px; padding-top дерева ниже — чтобы первый
+         кандидат не_starts под крестиком. */
       .hv-pal-x {
+        position: absolute;
+        top: 4px;
+        right: 6px;
         background: none;
-        border: 1px solid rgba(55, 255, 155, 0.4);
-        color: #baffdd;
+        border: none;
+        color: rgba(170, 255, 210, 0.8);
         font: inherit;
-        min-width: 40px; min-height: 40px;
-        border-radius: 6px;
+        font-size: 18px;
+        width: 26px;
+        height: 26px;
+        line-height: 26px;
+        padding: 0;
         cursor: pointer;
+      }
+      .hv-pal-x::after {
+        content: '';
+        position: absolute;
+        inset: -8px;
+      }
+      .hv-pal-x:active {
+        color: #eafff3;
+        background: rgba(55, 255, 155, 0.2);
+        border-radius: 4px;
+      }
+      body.touch .hv-palette:not(:has(.hv-pal-input)) {
+        padding-top: 28px; /* место под угольный крестик */
       }
       body.touch .hv-chip { padding: 9px 12px; min-height: 44px; } /* табы пальцем (§15.27 — 44px-таргет) */
       body.touch .hv-btn { padding: 11px 12px; }

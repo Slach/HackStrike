@@ -1529,14 +1529,14 @@ export class HackView {
       // не может, а она съедала до 90% экрана — поэтому на тапе поля ввода
       // нет вовсе: дерево кнопок «устройство → программа». Клавиатура не
       // вызывается, потому что фокусить нечему.
-      const hint = el('div', 'hv-pal-hint')
-      hint.textContent = '× ЗАКРЫТЬ'
+      // §15.34 (ревебр owner: «кнопка закрыть гигантская… справа вверху её
+      // оставь… крестик мелкий»): крестик — маленький в верхнем углу bubble
+      // (тап-зона добрана ::after), строка-футер «× ЗАКРЫТЬ» убрана вовсе.
       const x = el('button', 'hv-pal-x')
       x.textContent = '×'
       x.setAttribute('aria-label', 'закрыть')
       x.addEventListener('click', () => this.closePalette())
-      hint.append(x)
-      wrap.append(list, hint)
+      wrap.append(x, list)
       this.root.append(wrap)
       this.palette = { wrap, input: null, list }
       this.updatePalette()
@@ -1587,14 +1587,21 @@ export class HackView {
   private paletteTreeDevs(pal: NonNullable<HackView['palette']>): void {
     const { list } = pal
     const all = [...this.devices.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
-    if (this.paletteMode === 'run') {
+    // §15.34 (ревебр owner: «portscan если я уже выбрал конкретный объект не
+    // надо всегда вверх пихать»): цель выбрана — глобальная разведка не
+    // первое, что нужно: кнопка уезжает в конец списка.
+    const portAtEnd = this.target !== null
+    const mkPortscan = (): HTMLElement => {
       const b = el('button', 'hv-pal-cand hv-pal-dev')
       b.append(
         txt('span', 'hv-pal-name', 'PORTSCAN — ВСЯ СЕТЬ'),
         txt('span', 'hv-pal-hintc', 'РАЗВЕДКА'),
       )
       b.addEventListener('click', () => this.paletteTreeRun('portscan', null))
-      list.append(b)
+      return b
+    }
+    if (this.paletteMode === 'run' && !portAtEnd) list.append(mkPortscan())
+    if (this.paletteMode === 'run') {
       // §16.2: данные деки — уровень items прямо из корня
       if (this.deckData.length > 0) {
         const d = el('button', 'hv-pal-cand hv-pal-dev')
@@ -1610,7 +1617,8 @@ export class HackView {
       }
     }
     if (all.length === 0) {
-      list.append(txt('div', 'hv-dim', 'СЕТЬ ПУСТА — НАЖМИ PORTSCAN ВЫШЕ'))
+      list.append(txt('div', 'hv-dim', 'СЕТЬ ПУСТА — НАЖМИ PORTSCAN'))
+      if (this.paletteMode === 'run' && portAtEnd) list.append(mkPortscan())
       return
     }
     // §15.25: карта групп → чипы. Порядок чипов = алфавит по префиксу.
@@ -1635,6 +1643,7 @@ export class HackView {
       }
       list.append(row)
       list.append(txt('div', 'hv-pal-more', 'ГРУППА — ЧИПОМ ВЫШЕ'))
+      if (this.paletteMode === 'run' && portAtEnd) list.append(mkPortscan())
       return
     }
     if (keys.length >= 2 && this.paletteGroup !== null && groups.has(this.paletteGroup)) {
@@ -1673,6 +1682,7 @@ export class HackView {
       })
       list.append(b)
     }
+    if (this.paletteMode === 'run' && portAtEnd) list.append(mkPortscan()) // §15.34
   }
 
   /** Уровень программ палитры-дерева (touch, §15.7): назад + шесть программ
