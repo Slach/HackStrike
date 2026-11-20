@@ -45,14 +45,22 @@ export class Controls {
     window.removeEventListener('blur', this.resetKeys)
   }
 
+  /** Перехват дельты взгляда (ГДД §13.7 V-режим): возвращает true, если
+   *  съедено. Мышь и touch-круг идут через одну точку, чтобы камера в V
+   *  крутилась тем же mlook, но медленно. */
+  lookOverride: ((dxPx: number, dyPx: number) => boolean) | null = null
+
   private readonly onMouseMove = (e: MouseEvent): void => {
-    if (!this.locked || this.frozen) return
+    if (!this.locked) return
+    if (this.lookOverride?.(e.movementX, e.movementY) === true) return
+    if (this.frozen) return
     this.look(e.movementX, e.movementY)
   }
 
   /** Сдвиг взгляда на дельту в «мышинных» пикселях. Общий путь для мыши
    *  (movementX/Y) и touch-круга прицела (mobile.ts, ГДД §15.1). */
   look(dxPx: number, dyPx: number): void {
+    if (this.lookOverride?.(dxPx, dyPx) === true) return
     if (this.frozen) return
     const sens = SENS_RAD_PER_PX * this.sensScale
     this.yaw += dxPx * sens

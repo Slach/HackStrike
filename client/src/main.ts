@@ -877,7 +877,9 @@ function syncCamOverlay(): void {
     label.className = 'camhud-label'
     const hint = document.createElement('div')
     hint.className = 'camhud-hint'
-    hint.textContent = IS_TOUCH ? 'ТАП — СЛЕДУЮЩАЯ · × — ВЫЙТИ' : 'V — СЛЕДУЮЩАЯ · ESC — ВЫЙТИ'
+    hint.textContent = IS_TOUCH
+      ? 'МЫШЬ/КРУГ — ПОВОРОТ · × — ВЫЙТИ'
+      : 'МЫШЬ — ПОВОРОТ · ←→ — КАМЕРА · ESC — ВЫЙТИ'
     const x = document.createElement('button')
     x.className = 'camhud-x'
     x.textContent = '×'
@@ -886,6 +888,7 @@ function syncCamOverlay(): void {
       camView.close()
     })
     box.append(x, label, hint)
+    // тап по рамке (кроме ×) — следующая камера; поворот — движением мыши
     box.addEventListener('click', () => camView.next())
     document.body.append(box)
     camHud = { box, label }
@@ -895,6 +898,26 @@ function syncCamOverlay(): void {
     : 'НЕТ КАМЕР СОЮЗНИКОВ'
   camHud.box.classList.toggle('hint', !camView.active)
 }
+
+// §13.7 (плейтест 2026-11-20 «угол камер — ничего не видно, давай вращение
+// по mlook но медленно»): под V мышь/тач-круг крутят САМУ КАМЕРУ (camview
+// rotate с 15% чувствительности — можно направь и в стену), тело не вертится;
+// ←/→ — цикл по камерам. Без V — false, look обычным путём.
+controls.lookOverride = (dx, dy) => {
+  if (!camView.active) return false
+  camView.rotate(dx, dy)
+  return true
+}
+window.addEventListener('keydown', (e) => {
+  if (!camView.active || e.repeat) return
+  if (e.code === 'ArrowRight') {
+    e.preventDefault()
+    camView.next()
+  } else if (e.code === 'ArrowLeft') {
+    e.preventDefault()
+    camView.prev()
+  }
+})
 
 hud.onSensScale = (k) => {
   controls.sensScale = Math.max(0.3, Math.min(4, k))
@@ -1151,7 +1174,12 @@ engine.runRenderLoop(() => {
   // Ховер-метка пропса под прицелом (switch/терминал/радио/дверь).
   if (playing && alive && !hackview.active && propsView !== null) {
     const fwd = camera.getDirection(Vector3.Forward())
-    hud.propLabel(propsView.propAt({ x: camera.position.x, y: camera.position.y, z: camera.position.z }, { x: fwd.x, y: fwd.y, z: fwd.z }, 24))
+    hud.propLabel(
+      // §13.7: в V-режиме — «вид камеры», тултип тела не показываем (1/2)
+      camView.active
+        ? null
+        : propsView.propAt({ x: camera.position.x, y: camera.position.y, z: camera.position.z }, { x: fwd.x, y: fwd.y, z: fwd.z }, 24),
+    )
   } else {
     hud.propLabel(null)
   }
@@ -1220,7 +1248,7 @@ engine.runRenderLoop(() => {
 
   let hint: string | null = null
   let hintError = false
-  if (playing && alive && !matchOver && !hackview.active && propsView !== null && me !== undefined) {
+  if (playing && alive && !matchOver && !hackview.active && !camView.active && propsView !== null && me !== undefined) {
     // Цель подсказки — с учётом взгляда (§15.12): вне радиуса подсказываем ту
     // точку, в которую смотрим, а не ту, что осталась за спиной.
     const hf = camera.getDirection(Vector3.Forward())

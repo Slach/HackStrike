@@ -24,6 +24,10 @@ export interface CamInfo {
  *  за габарит корпуса (0.42 м) с запасом; +0.12 вверх — над корпусом. */
 const CAM_OFFSET = 0.9
 const CAM_LIFT = 0.12
+/** Ручной поворот в V-режиме: 15% чувствительности тела (плейтест 2026-11-20
+ *  «вращение по mlook, но достаточно медленное — хоть в стену направь»). */
+const CAM_LOOK_SENS = 0.00033
+const CAM_PITCH_LIMIT = 1.3
 
 export class CamView {
   readonly camera: FreeCamera
@@ -32,6 +36,9 @@ export class CamView {
   /** Индекс текущей камеры в списке союзных (цикл V/тап). */
   private idx = 0
   private list: CamInfo[] = []
+  /** Ручной доворот в V-режиме по id камеры (mlook, §13.7): сверх базовых
+   *  yaw/pitch карты; живёт, пока открыта дека/вид, сброс — close(). */
+  private pans = new Map<string, { yaw: number; pitch: number }>()
   /** Панели живого кадра в табах камер hackview (сплит H/V: несколько одновременно).
    *  Рендер — в этой же камере (одна сцена), main блитит canvas за canvas;
    *  2 Гц — совпадает с «КАДР 2 Гц» ленты и дешевле per-frame. */
@@ -97,6 +104,13 @@ export class CamView {
     this.onChange?.()
   }
 
+  prev(): void {
+    if (this.list.length === 0) return
+    this.idx = (this.idx - 1 + this.list.length) % this.list.length
+    this.apply()
+    this.onChange?.()
+  }
+
   /** Открыть вид в панели hackview (таб камеры) — без подмены основной картинки.
    *  Сплит: у каждого таба своя панель, attach по id камеры. */
   attachPanel(canvas: HTMLCanvasElement, camId?: string): void {
@@ -132,10 +146,11 @@ export class CamView {
   applyFor(camId: string): boolean {
     const c = this.list.find((k) => k.id === camId)
     if (c === undefined) return false
-    const fx = Math.sin(c.yaw)
-    const fz = Math.cos(c.yaw)
+    const yaw = this.yawOf(c)
+    const fx = Math.sin(yaw)
+    const fz = Math.cos(yaw)
     this.camera.position.set(c.x + fx * CAM_OFFSET, c.y + CAM_LIFT, c.z + fz * CAM_OFFSET)
-    this.camera.rotation.set(-c.pitch, c.yaw, 0)
+    this.camera.rotation.set(-this.pitchOf(c), yaw, 0)
     return true
   }
 
@@ -148,7 +163,26 @@ export class CamView {
     if (!this.active && this.panels.size === 0) return
     this.active = false
     this.panels.clear()
+    this.pans.clear() // ручной доворот не переживает закрытие вьюхи (как зум карты §12.6)
     this.onChange?.()
+  }
+
+  private yawOf(c: CamInfo): number {
+    return this.pans.get(c.id)?.yaw ?? c.yaw
+  }
+
+  private pitchOf(c: CamInfo): number {
+    return this.pans.get(c.id)?.pitch ?? c.pitch
+  }
+
+  /** Мдленнный поворот ТЕКУЩЕЙ камеры мышью/тач-кругом в V-режиме (d — px). */
+  rotate(dxPx: number, dyPx: number): void {
+    const c = this.current()
+    if (c === null) return
+    const cur = this.pans.get(c.id) ?? { yaw: c.yaw, pitch: c.pitch }
+    cur.yaw += dxPx * CAM_LOOK_SENS
+    cur.pitch = Math.max(-CAM_PITCH_LIMIT, Math.min(CAM_PITCH_LIMIT, cur.pitch - dyPx * CAM_LOOK_SENS))
+    this.pans.set(c.id, cur)
   }
 
   /** Обновить позицию/ориентацию камеры из текущего выбора (каждый кадр/смена). */
@@ -157,11 +191,12 @@ export class CamView {
     if (c === null) return
     // Вынос точки рендера вдоль взгляда (см. CAM_OFFSET): из самого крепления
     // кадр — стена/корпус, плейтест 2026-11-20.
-    const fx = Math.sin(c.yaw)
-    const fz = Math.cos(c.yaw)
+    const yaw = this.yawOf(c)
+    const fx = Math.sin(yaw)
+    const fz = Math.cos(yaw)
     this.camera.position.set(c.x + fx * CAM_OFFSET, c.y + CAM_LIFT, c.z + fz * CAM_OFFSET)
     // Babylon rotation.x — вниз-положительный; pitch карты — вверх-положительный.
-    this.camera.rotation.set(-c.pitch, c.yaw, 0)
+    this.camera.rotation.set(-this.pitchOf(c), yaw, 0)
   }
 
   /** Поза точки рендера КАЖДОЙ камеры — hackview проектирует теги целей по
@@ -170,15 +205,16 @@ export class CamView {
     const c = this.list.find((k) => k.id === camId)
     // (см. applyFor — та же формула)
     if (c === undefined) return null
-    const fx = Math.sin(c.yaw)
-    const fz = Math.cos(c.yaw)
+    const yaw = this.yawOf(c)
+    const fx = Math.sin(yaw)
+    const fz = Math.cos(yaw)
     return {
       id: c.id,
       x: c.x + fx * CAM_OFFSET,
       y: c.y + CAM_LIFT,
       z: c.z + fz * CAM_OFFSET,
-      yaw: c.yaw,
-      pitch: c.pitch,
+      yaw,
+      pitch: this.pitchOf(c),
       fov: this.camera.fov,
     }
   }
