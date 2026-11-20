@@ -2764,9 +2764,14 @@ export class HackView {
     const tab = this.tabs.find((t) => t.key === pane.tabKey) ?? this.tabs[0]
     const box = el('div', 'hv-pane' + (index === this.activePane ? ' active' : ''))
     box.addEventListener('mousedown', () => this.activatePane(index))
-    const head = el('div', 'pane-head')
+    // §13.7 (плейтест 2026-11-20 «CAM2 слишком много раз, достаточно одного
+    // в табе»): id камеры не дублируется в шапке панели и на полосе кадра —
+    // ярлык таба единственный; на сплите остаётся полоса только с × закрытия
+    const camTab = tab.dev !== null && this.devices.get(tab.dev)?.kind === 'camera'
+    const head = el('div', 'pane-head' + (camTab ? ' cam-only' : ''))
     head.append(txt('span', 'pane-title', this.tabTitle(tab)))
     if (this.panes.length > 1) {
+      if (camTab) head.classList.add('has-x')
       const x = el('button', 'pane-x')
       x.textContent = '×'
       x.addEventListener('click', (e) => {
@@ -2942,10 +2947,7 @@ export class HackView {
         wrap.append(stage)
         let time: HTMLElement
         let count: HTMLElement
-        bar.append(
-          txt('span', 'cam-report-id', dev.toUpperCase()),
-          txt('span', 'cam-report-status', 'ЗАХВАЧЕНА'),
-        )
+        bar.append(txt('span', 'cam-report-status', 'ЗАХВАЧЕНА'))
         const owner = el('span', 'cam-owner-chip')
         owner.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner))
         bar.append(owner)

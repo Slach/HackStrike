@@ -1525,6 +1525,14 @@
         background: linear-gradient(rgba(2, 10, 5, 0.85), rgba(2, 10, 5, 0));
         pointer-events: none;
       }
+      /* §13.7 дедуп id: у таба камеры шапка панели не показывает id — он
+         и так на кнопке таба; на сплите строка остаётся ради × закрытия */
+      .pane-head.cam-only .pane-title {
+        display: none;
+      }
+      .pane-head.cam-only:not(.has-x) {
+        display: none;
+      }
       .cam-tags {
         position: absolute;
         inset: 0;
