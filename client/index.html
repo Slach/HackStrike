@@ -2567,11 +2567,23 @@
          (она съедала до 90% экрана) — два уровня кнопок. Кандидаты — button:
          сбрасываем браузерную рамку/фон, держим тап-таргет ≥40px. */
       body.touch .hv-pal-list { gap: 6px; max-height: 56vh; }
-      /* §15.29 (ревебр owner: bubble действий «накладывается» на док): дерево
-         поднято ПОВЕРХ дока — ландшафт: 2 ряда плиток (~92px) + паддинги,
-         портрет: 4 ряда (~194px) + паддинги. Список скроллится,顶部 не за
-         экран: 56vh от новой нижней базы. */
-      body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 212px); }
+      /* §15.29/§15.30 (ревебр owner: bubble «накладывается» на док, а баблы
+         тостов — на bubble): дерево на тапе — модалка между верхом экрана и
+         верхом дока (landscape 108px = 2 ряда плиток, portrait 212px = 4
+         ряда): top+bottom, список растянут flex'ом и скроллится внутри.
+         Job-тосты (pointer-events:none, z ниже) уходят в верхний угол и
+         покрыты открытой палитрой — прогресс виден в строке статуса. */
+      body.touch .hv-palette:not(:has(.hv-pal-input)) {
+        top: calc(env(safe-area-inset-top, 0px) + 116px); /* под tab-чипами */
+        bottom: calc(env(safe-area-inset-bottom) + 212px);
+        padding: 8px 10px; /* §15.30: «отступы на 15% меньше» */
+        gap: 5px;
+      }
+      body.touch .hv-palette:not(:has(.hv-pal-input)) .hv-pal-list {
+        max-height: none;
+        flex: 1;
+        min-height: 0;
+      }
       @media (orientation: landscape) and (min-width: 600px) {
         body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 108px); }
       }
@@ -2744,6 +2756,30 @@
         position: absolute; top: 4px; right: 6px; z-index: 3;
         min-width: 36px; min-height: 30px;
       }
+      /* §15.30 (ревебр owner: «баблы справа загораживают палитру команд»):
+         job-карточки на тапе уходят из нижнего угла (там док и bubble
+         палитры) в верхний правый угол ПЕЙНА — над картой (pointer-events
+         none, пан карты работает сквозь них), под tab-чипами; компактные
+         (JS cap 3 + grid в две строки: заголовок · статус, тонкий бар). */
+      body.touch .hv-toasts {
+        top: calc(env(safe-area-inset-top, 0px) + 116px);
+        right: 8px;
+        bottom: auto;
+        gap: 4px;
+      }
+      body.touch .hv-toast {
+        box-sizing: border-box;
+        padding: 5px 9px;
+        font-size: 10px;
+        width: 190px;
+        overflow: hidden;
+      }
+      body.touch .hv-cptoast { min-width: 0; }
+      body.touch .hv-cptoast .cprow { display: grid; grid-template-columns: 1fr auto; gap: 0 6px }
+      body.touch .hv-cptoast .cpstatus { margin-top: 2px; font-size: 9px; }
+      body.touch .hv-cptoast .cpbar { height: 4px; margin-top: 3px; }
+      body.touch .hv-cptoast .decmeta { font-size: 9px; }
+      body.touch .hv-cptoast .decpct { font-size: 12px; }
       /* Join/death-оверлеи на телефоне: скроллятся пальцем до ДЕПЛОЯ (§15.3) */
       body.touch .overlay {
         touch-action: pan-y;

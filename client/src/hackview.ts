@@ -957,6 +957,7 @@ export class HackView {
     wrap.append(row, bar, status)
     this.toasts.append(wrap)
     this.scanCards.push({ prog, dev, wrap, fill, status, missed: 0, seen: false })
+    this.capToasts() // §15.30
   }
 
   /** 2 Гц: прогресс скан-карточек из deck-сообщения; два тика без процесса —
@@ -1222,6 +1223,7 @@ export class HackView {
     wrap.append(row, bar, status)
     this.toasts.append(wrap)
     this.cpToasts.push({ key: `${prog}:${src}>${dst}/${key}`, prog, dev: src, dst, data: key, mb, wrap, fill, status, missed: 0, seen: false })
+    this.capToasts() // §15.30
   }
 
   /** 2 Гц: прогресс активных cp/mv-тостов из deck-сообщения. Два тика без
@@ -1330,6 +1332,7 @@ export class HackView {
       rec.scr.textContent = s
     }, 70)
     this.jobCards.push(rec)
+    this.capToasts() // §15.30
     return rec
   }
 
@@ -1394,6 +1397,15 @@ export class HackView {
     }
     this.histIdx = 0
     this.closePalette()
+  }
+
+  /** §15.30 (ревебр owner: «баблы справа загораживают палитру команд»):
+   *  на тапе не более трёх job-карточек одновременно — старшая гаснет
+   *  (display:none, логика доживает в фоне до финиша), освободив угол. */
+  private capToasts(): void {
+    if (!IS_TOUCH) return
+    const vis = [...this.toasts.children].filter((c) => (c as HTMLElement).style.display !== 'none')
+    for (let i = 0; i < vis.length - 3; i++) (vis[i] as HTMLElement).style.display = 'none'
   }
 
   private toast(text: string): void {
