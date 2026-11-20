@@ -1529,7 +1529,7 @@ export class HackView {
     hint.textContent =
       mode === 'tab'
         ? 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ENTER ОТКРЫТЬ ТАБ · ESC ЗАКРЫТЬ'
-        : 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ЗАПУСК · ESC ЗАКРЫТЬ'
+        : 'TAB ДОПОЛНИТЬ · ↑↓ ВЫБОР · ↑ ИСТОРИЯ · ENTER ВСТАВИТЬ/ЗАПУСК · ESC ЗАКРЫТЬ'
     wrap.append(input, list, hint)
     this.root.append(wrap)
     this.palette = { wrap, input, list }
@@ -2289,12 +2289,20 @@ export class HackView {
     }
     const t0 = (tokens[0] ?? '').toLowerCase()
     const t1 = (tokens[1] ?? '').toLowerCase()
-    // Выделенный кандидат дописывает дополняемый токен (Enter по подсвеченному
-    // префиксу — как Tab, но сразу с запуском).
-    const finalTokens =
-      sel !== undefined && ['dev', 'item', 'sub', 'datacmd'].includes(sel.kind) && !/\s$/.test(pal.input.value)
-        ? tokens.slice(0, -1).concat([sel.text])
-        : tokens
+    // Enter по подсвеченному кандидату — ВСТАВИТЬ токен в строку (как Tab),
+    // не запускать (плейтест M5: «Enter на ключе — а оно сразу „укажи
+    // приёмник“»; вторая реплика: «нажал Enter на 06_19 — не подставилось» —
+    // хвостовой пробел в строке ошибочно считался «дописывать нечего»).
+    // Вставка работает и с пробелом: ключ — это СЛЕДУЮЩИЙ токен.
+    if (sel !== undefined && ['dev', 'item', 'sub', 'datacmd'].includes(sel.kind)) {
+      const parts = tokens.slice(0, Math.min(this.paletteTok, tokens.length))
+      parts.push(sel.text)
+      pal.input.value = `${parts.join(' ')} `
+      this.paletteSel = -1
+      this.updatePalette()
+      return
+    }
+    const finalTokens = tokens
     // Команда данных (§16.2): 'data …' / '[host] data …'
     if (t0 === DATA_CMD) {
       this.runDataCmd(finalTokens.slice(1), null)
