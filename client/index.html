@@ -3425,9 +3425,10 @@
         grid-area: media;
         align-self: center;
       }
-      body:not(.touch) #joinInvite .inviteSlogan,
-      body:not(.touch) #joinInvite .inviteRules,
-      body:not(.touch) #joinInvite .inviteUrl {
+      /* Ячейку text держит ОДНА обёртка .inviteTextCol. Раньше grid-area: text
+         доставался slogan, rules и url всем троем — грид складывал их в одну
+         ячейку, и текст налезал друг на друга (плейтест invite 2026-11-20). */
+      body:not(.touch) #joinInvite .inviteTextCol {
         grid-area: text;
         align-self: center;
       }
@@ -3484,6 +3485,14 @@
         align-self: center;
         /* Глиф эмодзи висит ниже центра строки — оптически поднимаем */
         transform: translateY(-0.1em);
+      }
+      /* Обёртка текстовой колонки invite: держит ячейку грида на десктопе и
+         сохраняет вертикальную стопку с теми же отступами на мобиле. */
+      .inviteTextCol {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        min-width: 0;
       }
       /* Лозунги приглашения: агрессивный акцент, как лого на join */
       .inviteSlogan {
@@ -3721,6 +3730,7 @@
             </div>
           </div>
           <img id="inviteSplashText" class="inviteSplash hidden" alt="HACKSTRIKE — приглашение">
+          <div class="inviteTextCol">
           <div class="inviteSlogan">«ХАКНИ ИЛИ УМРИ»<br />«УБЕЙ ХАКЕРА ИЛИ УМРИ»<br />«ЖИЗНЬ В ЭТОЙ ИГРЕ СЛИШКОМ КОРОТКА, НО ИНТЕРЕСНА»</div>
           <div class="inviteRules">
             Командный кибер-FPS в браузере: BLACKHAT VS WHITEHAT. Хакер
@@ -3733,6 +3743,7 @@
             устанавливать не нужно.
           </div>
           <div id="inviteUrl" class="inviteUrl"></div>
+          </div>
           <div class="btnRow invBtns">
             <button id="inviteShare" class="btn small hidden" type="button">↗ ПОДЕЛИТЬСЯ</button>
             <button id="inviteCopy" class="btn small" type="button">КОПИРОВАТЬ ТЕКСТ</button>
