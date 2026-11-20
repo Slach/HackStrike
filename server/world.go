@@ -608,6 +608,19 @@ func (w *world) snapProps() []any {
 		}
 		props = append(props, m)
 	}
+	// §16.12: платформы лифтов — текущий top (плейтест «опустилась, а
+	// осталась на F2»: без снапа клиентский меш навсегда стоял на позиции
+	// из /api/map, а коллайдер уезжал вниз — ходьба по невидимому полу)
+	for i := range w.lifts {
+		l := &w.lifts[i]
+		props = append(props, message{
+			"id":   l.id,
+			"kind": "lift",
+			"x":    round3(l.x),
+			"y":    round3(l.top),
+			"z":    round3(l.z),
+		})
+	}
 	return props
 }
 

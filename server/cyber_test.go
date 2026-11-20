@@ -3548,6 +3548,19 @@ func TestLift(t *testing.T) {
 	if h.pos[1] != liftFloor1Y {
 		t.Fatalf("rider must be carried to floor 1, y=%v", h.pos[1])
 	}
+	// снап: лифт на F1 (плейтест «опустилась, а осталась на F2» — лифтов
+	// вообще не было в snap.props, клиентский меш стоял наверху)
+	snapLiftY := -1.0
+	for _, p := range w.snapProps() {
+		if pm, ok := p.(message); ok && pm["id"] == liftID && pm["kind"] == "lift" {
+			if y, ok := pm["y"].(float64); ok {
+				snapLiftY = y
+			}
+		}
+	}
+	if snapLiftY != liftFloor1Y {
+		t.Fatalf("snap.props must carry the lift at F1, y=%v", snapLiftY)
+	}
 	// повторный вызов — used (один спуск за матч)
 	w.takeOut()
 	h.keys.interact = true
