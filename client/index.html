@@ -2498,6 +2498,36 @@
       }
       body.touch button.hv-pal-cand:active { background: rgba(55, 255, 155, 0.25); }
       body.touch .hv-pal-back { opacity: 0.75; }
+      /* §15.25: чипы префиксов групп (CAM/SRV/S/…) — верхний уровень дерева
+         вместо плоского 25+ скролла. Компактнее кнопок, тап-таргет ≥40px. */
+      .hv-pal-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .hv-pal-chip {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        font: inherit;
+        text-align: left;
+        color: #eafff3;
+        background: rgba(55, 255, 155, 0.1);
+        border: 1px solid rgba(55, 255, 155, 0.5);
+        border-radius: 14px;
+        min-height: 40px;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      .hv-pal-chip:active { background: rgba(55, 255, 155, 0.3); }
+      .hv-pal-chipn {
+        font-size: 14px;
+        letter-spacing: 2px;
+      }
+      .hv-pal-chipc {
+        font-size: 10px;
+        opacity: 0.7;
+      }
       /* чипы СВЯЗЕЙ на тапе — ≥40px тап-таргет (§15.7) */
       body.touch .dev-link { min-height: 40px; padding: 9px 12px; font-size: 13px; border-radius: 5px; }
       .hv-pal-x {

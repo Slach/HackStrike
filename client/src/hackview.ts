@@ -364,6 +364,10 @@ export class HackView {
    *  данные показаны в списке кандидатов; null — обычные кандидаты.
    *  Сбрасывается ручным вводом (input-событие) и закрытием палитры. */
   private paletteLs: string | null = null
+  /** §15.25: активный префикс-чип touch-палитры (CAM/SRV/S/…), null — сетка
+   *  чипов. Только когда групп много: плоский список из 25+ устройств на
+   *  телефоне — «пипец здоровый, искать неудобно скролом» (ревебр owner). */
+  private paletteGroup: string | null = null
   /** Touch-дерево §16.2: уровень items хоста ('deck'|devId) / уровень
    *  приёмника cp (выбранный item). null — обычные уровни дерева. */
   private paletteDataHost: string | null = null
@@ -568,6 +572,9 @@ export class HackView {
     // Открытая палитра-дерево (touch) — список устройств устарел со сканом.
     if (this.palette !== null && this.palette.input === null) {
       if (this.paletteDev !== null && !next.has(this.paletteDev)) this.paletteDev = null
+      // §15.25: группа пропала со сканом (устройства рас-сканированы) — на чипы
+      if (this.paletteGroup !== null && ![...next.keys()].some((id) => this.devGroup(id) === this.paletteGroup))
+        this.paletteGroup = null
       this.updatePalette()
     }
     this.schedule(() => this.render())
@@ -1498,8 +1505,18 @@ export class HackView {
     input.focus()
   }
 
+  /** Префикс-группа id для чипов touch-палитры (§15.25): ведущая буквенная
+   *  часть id в верхнем регистре — cam1→CAM, srv2→SRV, s1→S, t3→T, d4→D,
+   *  k3o→K. Цифросодержащие id без букв (не бывает в этой карте) — «ПРОЧИЕ». */
+  private devGroup(id: string): string {
+    const m = /^([a-z]+)/i.exec(id)
+    return m !== null ? m[1].toUpperCase() : 'ПРОЧИЕ'
+  }
+
   /** Уровень устройств палитры-дерева (touch, §15.7): PORTSCAN по всей сети
-   *  + устройство → следующий уровень (или сразу таб в режиме 'tab'). */
+   *  + устройство → следующий уровень (или сразу таб в режиме 'tab').
+   *  §15.25: когда групп ≥2, верхний уровень — чипы префиксов (CAM/SRV/S/…),
+   *  а не плоский список из 25+ кнопок. */
   private paletteTreeDevs(pal: NonNullable<HackView['palette']>): void {
     const { list } = pal
     const all = [...this.devices.values()].sort((a, b) => (a.id < b.id ? -1 : 1))
@@ -1529,7 +1546,44 @@ export class HackView {
       list.append(txt('div', 'hv-dim', 'СЕТЬ ПУСТА — НАЖМИ PORTSCAN ВЫШЕ'))
       return
     }
+    // §15.25: карта групп → чипы. Порядок чипов = алфавит по префиксу.
+    const groups = new Map<string, ScanDevice[]>()
     for (const d of all) {
+      const g = this.devGroup(d.id)
+      const arr = groups.get(g)
+      if (arr === undefined) groups.set(g, [d])
+      else arr.push(d)
+    }
+    const keys = [...groups.keys()].sort()
+    if (keys.length >= 2 && this.paletteGroup === null) {
+      const row = el('div', 'hv-pal-chips')
+      for (const g of keys) {
+        const c = el('button', 'hv-pal-chip')
+        c.append(txt('span', 'hv-pal-chipn', g), txt('span', 'hv-pal-chipc', String(groups.get(g)!.length)))
+        c.addEventListener('click', () => {
+          this.paletteGroup = g
+          this.updatePalette()
+        })
+        row.append(c)
+      }
+      list.append(row)
+      list.append(txt('div', 'hv-pal-more', 'ГРУППА — ЧИПОМ ВЫШЕ'))
+      return
+    }
+    if (keys.length >= 2 && this.paletteGroup !== null && groups.has(this.paletteGroup)) {
+      const back = el('button', 'hv-pal-cand hv-pal-back')
+      back.append(txt('span', 'hv-pal-name', '← ВСЕ ГРУППЫ'), txt('span', 'hv-pal-hintc', `${all.length} устр.`))
+      back.addEventListener('click', () => {
+        this.paletteGroup = null
+        this.updatePalette()
+      })
+      list.append(back)
+    }
+    const shown =
+      keys.length >= 2 && this.paletteGroup !== null && groups.has(this.paletteGroup)
+        ? groups.get(this.paletteGroup)!
+        : all
+    for (const d of shown) {
       const b = el('button', 'hv-pal-cand hv-pal-dev')
       const name = txt('span', 'hv-pal-name', `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`)
       b.append(name)
@@ -1718,6 +1772,7 @@ export class HackView {
     this.paletteCands = []
     this.paletteSel = -1
     this.paletteLs = null
+    this.paletteGroup = null
     this.paletteDataHost = null
     this.paletteDataItem = null
   }
