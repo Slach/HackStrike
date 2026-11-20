@@ -2182,18 +2182,12 @@ export class HackView {
       // Фильтр — по КЛЮЧУ (второй токен), не по подкоманде: «rm» сам по себе
       // не префикс имён, и список был пуст (плейтест M5 «почему для rm нет
       // кандидатов»).
+      // Плейтест 2026-11-20 («decrypt — а там только srv1, хотя door_key уже
+      // скопирован на деку»): ключи — со ВСЕХ своих источников, как их
+      // резолвит resolveDataSrc; раньше список шёл по активному хосту.
       const qk = tokens.length < 2 ? '' : trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
-      for (const it of this.dataHostItems(activeHost)) {
-        const text = this.itemText(it.n, activeHost)
-        if (qk !== '' && !text.toLowerCase().startsWith(qk) && !it.n.toLowerCase().startsWith(qk)) continue
-        cands.push({
-          kind: 'item',
-          text,
-          dev: activeHost,
-          data: it.n,
-          label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
-          hint: `${dq.toUpperCase()} · ${activeHost === 'deck' ? 'ДЕКА' : activeHost.toUpperCase()}`,
-        })
+      for (const c of this.dataKeyCands(qk, null)) {
+        cands.push({ ...c, hint: `${dq.toUpperCase()} · ${c.hint}` })
       }
     } else if (progFirst) {
       // Второй токен (порядок «prog dev»): список целей с владельцем.
