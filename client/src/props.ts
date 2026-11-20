@@ -426,7 +426,6 @@ export class PropsView {
     // по периметру дыры на НИЖНЕЙ грани плиты 2F (y=7) + 4 стойки-рельса
     // до пола 1F — шахта читается и сверху, и при спуске
     const rimY = 7 - 0.05
-    const rimL = w / 2 + 0.12
     const rimD = d / 2 + 0.12
     const rimMat = this.mats.cable
     const rims: [number, number, number, number, number, number][] = [
