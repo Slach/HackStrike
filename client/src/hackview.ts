@@ -495,6 +495,8 @@ export class HackView {
     this.deckMemCap = msg.mem ?? this.deckMemCap
     this.updateCpToasts()
     this.schedule(() => this.updateDeckData())
+    // подсветка каналов активных операций (path в progs) — 2 Гц с deck-тиком
+    this.schedule(() => this.updateNetmaps())
   }
 
   onScan(msg: ScanMsg): void {
@@ -3476,6 +3478,28 @@ export class HackView {
       for (const l of d.links) {
         const o = this.devices.get(l)
         if (o !== undefined) drawLink(d, o)
+      }
+    }
+
+    // Каналы активных операций (плейтест M5: «подсветить путь, по которому
+    // идёт операция»): маршрут widest-path из deck-сообщения 2 Гц (прислал
+    // сервер, зафиксирован на старте §16.3). Рисуем ПОВЕРХ обычных связей —
+    // тот же цвет, ярче и толще; несколько операций — каждая свой слой.
+    // Маршрут начинается с точки входа (deck→host не рисуем — это не канал).
+    const hiSeen = new Set<string>()
+    for (const pr of this.progs) {
+      if (pr.path === undefined) continue
+      for (let i = 0; i + 1 < pr.path.length; i++) {
+        const a = this.devices.get(pr.path[i])
+        const b = this.devices.get(pr.path[i + 1])
+        if (a === undefined || b === undefined) continue
+        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
+        if (hiSeen.has(key)) continue
+        hiSeen.add(key)
+        const pa = pos.get(a.id)
+        const pb = pos.get(b.id)
+        if (pa === undefined || pb === undefined) continue
+        line(pa.x, pa.y, pb.x, pb.y, 'svg-link svg-link-hi', bwWidth(linkMbps(a, b)) * 1.7)
       }
     }
 

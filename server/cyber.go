@@ -2628,6 +2628,9 @@ type deckProg struct {
 	// др.) не имеют МБ-прогресса, но их карточка в деке живёт на этой
 	// доле (плейтест M5: «бабл ушёл, а portscan идёт»).
 	Pct float64 `json:"pct"`
+	// Path — маршрут widest-path, зафиксированный на старте (§16.3): клиент
+	// подсвечивает каналы активной операции на хак-карте (плейтест M5).
+	Path []string `json:"path,omitempty"`
 	// cp (§16.9): приёмник, остаток данных и текущая скорость (МБ/с с
 	// учётом доли канала) — прогресс-бар трансфера в деке.
 	Dst    string  `json:"dst,omitempty"`
@@ -2660,7 +2663,7 @@ func (w *world) deckStatusTick() {
 			if remain < 0 {
 				remain = 0
 			}
-			dp := deckProg{ID: pr.id, Prog: pr.prog, Dev: pr.dev, EtaMs: int64(remain * 1000), Pct: round3(pr.progress / pr.work)}
+			dp := deckProg{ID: pr.id, Prog: pr.prog, Dev: pr.dev, EtaMs: int64(remain * 1000), Pct: round3(pr.progress / pr.work), Path: pr.path}
 			if pr.prog == "cp" || pr.prog == "mv" {
 				// §16.9: остаток МБ и текущая скорость (доля канала × номинал)
 				dp.Dst = pr.dst

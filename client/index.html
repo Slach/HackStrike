@@ -1755,6 +1755,17 @@
         stroke: rgba(95, 215, 255, 0.55);
         stroke-width: 1.4;
       }
+      /* Канал активной операции (плейтест M5): тот же зелёный, но ярче и
+         с лёгким свечением; пульс «дыхания» — трафик идёт. */
+      .svg-link-hi {
+        stroke: rgba(120, 255, 190, 0.95);
+        filter: drop-shadow(0 0 3px rgba(90, 255, 170, 0.8));
+        animation: netmapPathPulse 1.2s ease-in-out infinite;
+      }
+      @keyframes netmapPathPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.55; }
+      }
       .svg-owned {
         opacity: 0.9;
       }

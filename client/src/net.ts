@@ -122,6 +122,7 @@ export interface DeckProg {
   dev: string | null
   etaMs: number
   pct: number // доля выполнения 0..1 любой программы (сканы без МБ-прогресса)
+  path?: string[] // маршрут widest-path (§16.3): подсветка каналов операции на карте
   dst?: string // cp/mv: приёмник ("deck" | hostId)
   data?: string // cp/mv/rm/decrypt: имя item
   mbLeft?: number // cp/mv/decrypt: остаток МБ
@@ -412,6 +413,14 @@ function parseDeckProg(v: unknown): DeckProg | null {
     dev: str(p.dev),
     etaMs: Math.max(0, num(p.etaMs, 0)),
     pct: Math.min(1, Math.max(0, num(p.pct, 0))),
+  }
+  if (Array.isArray(p.path)) {
+    const ids: string[] = []
+    for (const v of p.path) {
+      const s = str(v)
+      if (s !== null) ids.push(s)
+    }
+    if (ids.length > 1) d.path = ids
   }
   const dst = str(p.dst)
   if (dst !== null) d.dst = dst
