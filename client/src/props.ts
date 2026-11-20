@@ -146,6 +146,8 @@ interface CameraView {
   pitch: number
   /** patrol — автопатруль включён (§13.7 M6): для LED-мигания/миникарты. */
   patrol: boolean
+  /** rec — «камеру смотрят» (§13.7 REC, сервер): LED пульсирует у ВСЕХ. */
+  rec: boolean
   lens: Mesh
 }
 
@@ -657,7 +659,7 @@ export class PropsView {
     body.layerMask = CAM_PROP_LAYER
     lens.layerMask = CAM_PROP_LAYER
     ledMesh.layerMask = CAM_PROP_LAYER
-    const cam: CameraView = { id, x: pos[0], z: pos[2], fy: pos[1], led, owner: null, yaw, pitch, patrol: false, lens }
+    const cam: CameraView = { id, x: pos[0], z: pos[2], fy: pos[1], led, owner: null, yaw, pitch, patrol: false, rec: false, lens }
     this.cameras.set(id, cam)
     this.tintCamera(cam)
   }
@@ -680,7 +682,9 @@ export class PropsView {
    *  видно с земли, что в неё сейчас смотрят (V или таб hackview). */
   private applyLed(cam: CameraView): void {
     const base = this.baseLed(cam)
-    if (this.camViewing.has(cam.id) && this.recPhase) {
+    // §13.7 REC: пульс по серверному флагу (все клиенты) ИЛИ локальному
+    // viewing (мгновенная реакция своего V до прихода снапа).
+    if ((this.camViewing.has(cam.id) || cam.rec) && this.recPhase) {
       base.scaleInPlace(0.18)
     }
     cam.led.emissiveColor = base
@@ -937,6 +941,11 @@ export class PropsView {
             }
             if (p.pitch !== undefined) known.pitch = p.pitch
             known.patrol = p.patrol === true
+            // §13.7 REC: серверный флаг «смотрят» — перекрашиваем LED сразу
+            if (known.rec !== (p.rec === true)) {
+              known.rec = p.rec === true
+              this.applyLed(known)
+            }
           }
           break
         }
@@ -1123,7 +1132,7 @@ export class PropsView {
     if (phase !== this.recPhase) {
       this.recPhase = phase
       for (const c of this.cameras.values())
-        if (this.camViewing.has(c.id)) this.applyLed(c)
+        if (this.camViewing.has(c.id) || c.rec) this.applyLed(c)
     }
     // §16.12: платформы лифтов — плавный спуск к target-Y; крышка проёма
     // закрывается, как только платформа ушла на 1F (targetY ≈ 1)

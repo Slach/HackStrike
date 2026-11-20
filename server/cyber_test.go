@@ -3894,3 +3894,76 @@ func TestCamCone(t *testing.T) {
 		t.Fatalf("match reset must restore camera pose, yaw=%v patrol=%v", cam.yaw, cam.patrol)
 	}
 }
+
+// TestCamRec — §13.7 REC: heartbeat смотрящего ставит rec в snap.props для
+// ВСЕХ (на земле видно, что камеру смотрят), тишина 2 с гасит зрителя,
+// смерть смотрящего гасит сразу, новый матч чистит.
+func TestCamRec(t *testing.T) {
+	w, clock := cameraTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)
+	ground := w.addPlayer(7, "g", "assault", -1)
+	w.takeOut()
+	cam := w.cyber.devices["cam1"]
+	cam.owner = h.id
+
+	// beat смотрящего → rec в snap.props у любого игрока
+	w.handleMessage(h, message{"t": "camview", "dev": "cam1", "on": true})
+	w.broadcastSnap()
+	rec := false
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "snap" {
+			continue
+		}
+		for _, p := range om.msg["props"].([]any) {
+			if pm := p.(message); pm["id"] == "cam1" && pm["rec"] == true {
+				rec = true
+			}
+		}
+	}
+	if !rec {
+		t.Fatalf("snap.props must carry rec=true while a viewer beats")
+	}
+
+	// явный off — rec погас
+	w.handleMessage(h, message{"t": "camview", "dev": "cam1", "on": false})
+	w.broadcastSnap()
+	rec = false
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "snap" {
+			continue
+		}
+		for _, p := range om.msg["props"].([]any) {
+			if pm := p.(message); pm["id"] == "cam1" && pm["rec"] == true {
+				rec = true
+			}
+		}
+	}
+	if rec {
+		t.Fatalf("explicit off must clear rec")
+	}
+
+	// beat без off: смерть/молчание 2 с — зритель протух
+	w.handleMessage(h, message{"t": "camview", "dev": "cam1", "on": true})
+	*clock = clock.Add(3 * time.Second)
+	if camRecActive(cam, w.now()) {
+		t.Fatalf("stale beat (>2 s) must expire")
+	}
+
+	// смерть смотрящего: старый beat протухает по таймауту, мёртвый биться
+	// не может — rec не возрождается
+	w.handleMessage(h, message{"t": "camview", "dev": "cam1", "on": true})
+	h.alive = false
+	*clock = clock.Add(3 * time.Second) // старый beat протух
+	w.handleMessage(h, message{"t": "camview", "dev": "cam1", "on": true})
+	if camRecActive(cam, w.now()) {
+		t.Fatalf("dead viewer must not beat")
+	}
+
+	// новый матч: реестр зрителей пуст
+	cam.recBy[h.id] = w.now()
+	w.resetCyberMatchState()
+	if len(cam.recBy) != 0 {
+		t.Fatalf("match reset must clear cam viewers")
+	}
+	_ = ground
+}

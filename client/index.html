@@ -1510,6 +1510,7 @@
         border-radius: 4px;
         background: #020a05;
         overflow: hidden;
+        touch-action: none; /* §13.7 M6: drag по кадру = доворот, не скролл */
       }
       .cam-hud {
         position: absolute;
@@ -1553,6 +1554,7 @@
       .cam-scanline {
         position: absolute;
         inset: 0;
+        pointer-events: none; /* §13.7 M6: не ест drag по кадру под собой */
         display: flex;
         align-items: center;
         justify-content: center;
@@ -1674,6 +1676,53 @@
         letter-spacing: 1px;
         color: rgba(170, 255, 210, 0.5);
         white-space: nowrap;
+      }
+      .cam-zoom {
+        font: inherit;
+        font-size: 13px;
+        width: 26px;
+        height: 26px;
+        color: #baffdd;
+        background: rgba(4, 18, 11, 0.7);
+        border: 1px solid rgba(55, 255, 155, 0.4);
+        border-radius: 3px;
+        cursor: pointer;
+        line-height: 1;
+      }
+      .cam-zoom:active { background: rgba(55, 255, 155, 0.2); }
+      /* §13.7 M6: ● REC — «камера пишется» (смотящий видит on-air) */
+      .cam-rec {
+        color: #ff6078;
+        letter-spacing: 2px;
+        margin-left: auto;
+        animation: camrec 1s steps(2, start) infinite;
+      }
+      .camhud-rec {
+        color: #ff6078;
+        font-size: 10px;
+        letter-spacing: 2px;
+        position: absolute;
+        top: 6px;
+        left: 12px;
+        animation: camrec 1s steps(2, start) infinite;
+      }
+      .camhud-zoom {
+        position: absolute;
+        top: 26px;
+        width: 22px;
+        height: 22px;
+        border: 1px solid rgba(120, 230, 255, 0.5);
+        background: rgba(2, 12, 16, 0.8);
+        color: #bdefff;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .camhud-zoom:nth-of-type(1) { right: 8px; }
+      .camhud-zoom:nth-of-type(2) { right: 34px; }
+      @keyframes camrec {
+        50% { opacity: 0.25; }
       }
       .cam-stage.tap { cursor: pointer; }
       .cam-owner-chip { color: rgba(170, 255, 210, 0.75); }

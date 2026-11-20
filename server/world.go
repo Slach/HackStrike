@@ -428,6 +428,8 @@ func (w *world) handleMessage(pl *player, msg message) {
 		w.handleCamrot(pl, msg)
 	case "campatrol": // автопатруль камеры (§13.7 M6)
 		w.handleCampatrol(pl, msg)
+	case "camview": // heartbeat смотрящего камеры (§13.7 REC)
+		w.handleCamview(pl, msg)
 	case "enter": // ввод кода на клавиатуре d3 (§16.7)
 		w.handleEnter(pl, msg)
 	}
@@ -601,7 +603,7 @@ type snapPlayer struct {
 // snapProps — снап пропсов (§12.5) + PHYSAFE (§16.6): позиция дублирует
 // носителя, carriedBy — кто несёт (клиент двигает меш и глиф миникарты).
 func (w *world) snapProps() []any {
-	props := w.cyber.snapProps()
+	props := w.cyber.snapProps(w.now())
 	if w.physafePresent {
 		// id обязателен: клиентский parseProp дропает пропсы без id
 		// (плейтест «бокс не двигается» — снап physafe откладывался целиком)

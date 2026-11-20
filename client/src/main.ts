@@ -795,6 +795,9 @@ const hackview = new HackView({
     },
     rotate: (camId, dx, dy) => camView.rotateDev(camId, dx, dy),
     patrol: (camId, on) => sock.sendCampatrol(camId, on),
+    zoom: (camId, mult) => camView.zoomBy(camId, mult),
+    zoomSet: (camId, z) => camView.zoomSet(camId, z),
+    zoomOf: (camId) => camView.zoomOf(camId),
   },
 })
 // §13.7 M6: довороты камеры уходят на сервер (local-echo в camview).
@@ -859,6 +862,7 @@ let camHintUntil = 0
 /** 2 Гц pump живых панелей (§13.7): время последнего блита. Первый pump
  *  случается сразу (at=0), новый таб камеры — чистый кадр ≤500 мс. */
 let camPumpAt = 0
+const camPumpYaw = new Map<string, number>() // yaw последнего блита (детект движения)
 function camToggle(): void {
   if (menuOpen) return // пауза — не территория камеры
   if (!camView.hasCameras()) {
@@ -885,6 +889,42 @@ window.addEventListener('keydown', (e) => {
 document.addEventListener('pointerlockchange', () => {
   if (camView.active && document.pointerLockElement === null && !IS_TOUCH) camView.close()
 })
+
+// §13.7 M6: зум в V-виде — колесо мыши и тачпад-жесты (pinch тачпада тоже
+// wheel, часто с ctrlKey). Кламп 1..3 внутри camview.
+window.addEventListener('wheel', (e) => {
+  if (!camView.active) return
+  e.preventDefault()
+  camView.zoomBy((camView.currentId ?? ''), e.deltaY < 0 ? 1.15 : 1 / 1.15)
+}, { passive: false })
+
+// §13.7 REC: какие камеры Я сейчас смотрю (V-fullscreen + панели деки) —
+// heartbeat на сервер (LED пульсирует у всех клиентов через snap.props rec).
+const camWatching = new Set<string>()
+let camBeatAt = 0
+function camSyncWatching(): void {
+  const now = performance.now()
+  const ids = new Set<string>()
+  if (camView.active && camView.currentId !== null) ids.add(camView.currentId)
+  for (const id of camView.visiblePanels.keys()) ids.add(id)
+  for (const id of ids) {
+    if (!camWatching.has(id)) {
+      camWatching.add(id)
+      sock.sendCamview(id, true)
+    }
+  }
+  for (const id of [...camWatching]) {
+    if (!ids.has(id)) {
+      camWatching.delete(id)
+      sock.sendCamview(id, false)
+    }
+  }
+  // beat 1 Гц: сервер гасит зрителя через 2 с без пинга (смерть/выход)
+  if (ids.size > 0 && now - camBeatAt >= 1000) {
+    camBeatAt = now
+    for (const id of ids) sock.sendCamview(id, true)
+  }
+}
 
 // Рамка вида камеры в meatview: подпись CAMx · цикл · выход. DOM, не Babylon
 // GUI (инвариант 7). Тап по рамке — следующая камера, × — закрыть.
@@ -915,15 +955,30 @@ function syncCamOverlay(): void {
       e.stopPropagation()
       camView.close()
     })
-    box.append(x, label, hint)
+    // §13.7 M6: ● REC — «камера пишется» (смотрящий видит on-air; мигание
+    // LED на корпусе — для остальных, из своего вида корпус вырезан)
+    const rec = document.createElement('span')
+    rec.className = 'camhud-rec'
+    rec.textContent = '● REC'
+    const zin = document.createElement('button')
+    zin.className = 'camhud-zoom'
+    zin.textContent = '+'
+    zin.addEventListener('click', (e) => { e.stopPropagation(); camView.zoomBy((camView.currentId ?? ''), 1.3) })
+    const zout = document.createElement('button')
+    zout.className = 'camhud-zoom'
+    zout.textContent = '−'
+    zout.addEventListener('click', (e) => { e.stopPropagation(); camView.zoomBy((camView.currentId ?? ''), 1 / 1.3) })
+    box.append(x, rec, label, zin, zout, hint)
     // тап по рамке (кроме ×) — следующая камера; поворот — движением мыши
     box.addEventListener('click', () => camView.next())
     document.body.append(box)
     camHud = { box, label }
   }
-  camHud.label.textContent = camView.active
+  // textContent каждый кадр = грязный layout; пишем только по факту смены
+  const want = camView.active
     ? `КАМЕРА ${(camView.currentId ?? '').toUpperCase()}`
     : 'НЕТ КАМЕР СОЮЗНИКОВ'
+  if (camHud.label.textContent !== want) camHud.label.textContent = want
   camHud.box.classList.toggle('hint', !camView.active)
 }
 
@@ -1182,6 +1237,7 @@ engine.runRenderLoop(() => {
   camView.apply()
   scene.activeCamera = camView.visible ? camView.camera : camera
   syncCamOverlay()
+  camSyncWatching()
   // §13.7 REC-мигание: модель «пишущей» камеры (в которую смотрят — fullscreen
   // V или панели деки) пульсирует LED 1 Гц — видно с земли, что её наблюдают.
   propsView?.setViewing(camView.active && camView.currentId ? [camView.currentId] : camView.visiblePanels.keys())
@@ -1440,10 +1496,21 @@ engine.runRenderLoop(() => {
   // восстановится вверху цикла (fullscreen-V приоритетнее панелей).
   if (camView.visiblePanels.size > 0 && !camView.active) {
     const t = performance.now()
-    if (t - camPumpAt >= 500) {
+    // §13.7 M6 (плейтест «автопатруль — медленно и рывками»): статичная
+    // камера живёт на 2 Гц («КАДР 2 Гц»), но если yaw движется (патруль
+    // сервера / доворот союзника) — 15 Гц, иначе кадр прыгает по полосе.
+    let moving = false
+    for (const id of camView.visiblePanels.keys()) {
+      const pose = camView.poseOf(id)
+      const prev = camPumpYaw.get(id)
+      if (pose !== null && prev !== undefined && Math.abs(pose.yaw - prev) > 0.01) moving = true
+    }
+    if (t - camPumpAt >= (moving ? 66 : 500)) {
       camPumpAt = t
       for (const [id, cvs] of camView.visiblePanels) {
         if (!camView.applyFor(id)) continue
+        const pose = camView.poseOf(id)
+        if (pose !== null) camPumpYaw.set(id, pose.yaw)
         scene.render()
         for (const cv of cvs) {
           const ictx = cv.getContext('2d')

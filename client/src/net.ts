@@ -30,6 +30,7 @@ export type ClientMessage =
   | { t: 'ctrl'; dev: string; action: 'toggle' }
   | { t: 'camrot'; dev: string; yaw: number; pitch: number } // §13.7 M6: доворот камеры союзником владельца
   | { t: 'campatrol'; dev: string; on: boolean } // §13.7 M6: автопатруль камеры
+  | { t: 'camview'; dev: string; on: boolean } // §13.7 REC: heartbeat смотрящего (on=true 1/с)
 
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
@@ -56,6 +57,7 @@ export interface SnapProp {
   yaw?: number // camera (§13.7 M6): ориентация объектива, рад
   pitch?: number // camera (§13.7 M6)
   patrol?: boolean // camera (§13.7 M6): автопатруль включён
+  rec?: boolean // camera (§13.7 REC): «камеру смотрят» (кто-то в V/деке)
 }
 
 /** Link bandwidth of a scanned device (M5 §16.9, iter 1.5). */
@@ -320,6 +322,7 @@ function parseProp(v: unknown): SnapProp | null {
   const pitch = num(p.pitch, Number.NaN)
   if (Number.isFinite(pitch)) prop.pitch = pitch
   if (p.patrol === true) prop.patrol = true
+  if (p.rec === true) prop.rec = true
   return prop
 }
 
@@ -818,6 +821,11 @@ export class GameSocket {
 
   sendCampatrol(dev: string, on: boolean): void {
     this.send({ t: 'campatrol', dev, on })
+  }
+
+  // §13.7 REC: heartbeat «смотрю в эту камеру» (сервер гасит по таймауту 2 с).
+  sendCamview(dev: string, on: boolean): void {
+    this.send({ t: 'camview', dev, on })
   }
 
   private trackStats(msg: ServerMessage): void {

@@ -265,6 +265,13 @@ type device struct {
 	baseYaw   float64
 	basePitch float64
 	patrol    bool
+
+	// recBy — §13.7 REC: кто сейчас СМОТРИТ в камеру (V-fullscreen или таб
+	// деки) — heartbeat {"t":"camview"} каждые 1 с; тише 2 с = ушёл.
+	// Сервер раздаёт rec в snap.props ВСЕМ: LED на корпусе пульсирует у
+	// каждого клиента (раньше пульс рисовал только клиент смотрящего, который
+	// собственный корпус не видит — сигнал на земле никто не видел).
+	recBy map[uint64]time.Time
 }
 
 // logEntry — запись журнала событий watcher'а (§13.1 №1, §13.2): тик + что
@@ -434,6 +441,7 @@ func buildCyber(m *gameMap) *cyberState {
 			}
 			d.pitch = p.Pitch
 			d.baseYaw, d.basePitch = d.yaw, d.pitch
+			d.recBy = make(map[uint64]time.Time)
 			cs.cameras = append(cs.cameras, d)
 		}
 		cs.devices[d.id] = d
@@ -1537,10 +1545,12 @@ func (w *world) resetCyberMatchState() {
 		d.antivirused = 0
 		d.jobs = nil
 		d.log = nil
-		// §13.7 M6: ориентация камер — к стартовой из карты, патруль гаснет.
+		// §13.7 M6: ориентация камер — к стартовой из карты, патруль гаснет,
+		// зрители REC обнуляются (новый матч — никто не смотрит).
 		if d.kind == "camera" {
 			d.yaw, d.pitch = d.baseYaw, d.basePitch
 			d.patrol = false
+			d.recBy = make(map[uint64]time.Time)
 		}
 	}
 	for _, pl := range w.players {
@@ -2083,6 +2093,37 @@ func (w *world) sendCodes(team int) {
 // у газа (вентиль). Только владелец trojan, лично и из hacker view
 // (джекнутый), и пока устройство достижимо от точки входа — перерубленный
 // кабель отрезает и управление (контр-хакинг §6).
+// handleCamview — {"t":"camview","dev","on"} (§13.7 REC): heartbeat
+// смотрящего. on=true каждые 1 с, on=false при закрытии; тише 2 с = ушёл
+// (смерть/дисконнект без явного off). Доступ не проверяем строже жизни:
+// rec — косметика «камеру смотрят», данных не несёт.
+func (w *world) handleCamview(pl *player, msg message) {
+	cam := w.cyber.devices[str(msg, "dev")]
+	if cam == nil || cam.kind != "camera" || cam.recBy == nil {
+		return
+	}
+	if msg["on"] == true {
+		if !pl.alive {
+			return
+		}
+		cam.recBy[pl.id] = w.now()
+	} else {
+		delete(cam.recBy, pl.id)
+	}
+}
+
+// camRecActive — есть ли живой зритель (beat не старше 2 с).
+func camRecActive(cam *device, now time.Time) bool {
+	for id, at := range cam.recBy {
+		if now.Sub(at) > 2*time.Second {
+			delete(cam.recBy, id)
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 // handleCamrot — {"t":"camrot","dev","yaw","pitch"} (§13.7 M6-конус):
 // доворот камеры живым союзником владельца (V-mlook или drag по кадру в
 // деке). Ориентация — состояние сервера: переживает закрытие вида, видна
@@ -3097,7 +3138,7 @@ func (w *world) fireTick(dt float64) {
 }
 
 // snapProps — динамическое состояние пропсов для снапа (§12.5), всем.
-func (cs *cyberState) snapProps() []any {
+func (cs *cyberState) snapProps(now time.Time) []any {
 	props := make([]any, 0, len(cs.order)+len(cs.cables))
 	for _, id := range cs.order {
 		d := cs.devices[id]
@@ -3121,6 +3162,10 @@ func (cs *cyberState) snapProps() []any {
 			m["pitch"] = math.Round(d.pitch*100) / 100
 			if d.patrol {
 				m["patrol"] = true
+			}
+			// §13.7 REC: «камеру смотрят» — все клиенты пульсируют LED.
+			if camRecActive(d, now) {
+				m["rec"] = true
 			}
 		}
 		props = append(props, m)

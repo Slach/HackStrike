@@ -54,6 +54,10 @@ export interface HackViewDeps {
     rotate: (camId: string, dxPx: number, dyPx: number) => void
     /** M6: тогл автопатруля. */
     patrol: (camId: string, on: boolean) => void
+    /** M6: оптический зум монитора (колесо/пинч/кнопки). */
+    zoom: (camId: string, mult: number) => void
+    zoomSet: (camId: string, z: number) => void
+    zoomOf: (camId: string) => number
   }
 }
 
@@ -779,7 +783,26 @@ export class HackView {
       }
     }
     if (changed) this.schedule(() => this.updateDoorStates())
-    if (camChanged) this.schedule(() => this.updateCamFeeds())
+    // Поза камеры (патруль/чужой доворот) меняется КАЖДЫЙ снапшот — полный
+    // rebuild ленты на этой частоте ронял FPS (плейтест: «автопатруль —
+    // низкий фреймрейт»). Компас/кнопка — точечное обновление одного CSS-свойства;
+    // сама лента живёт своим темпом 2 Гц (onCam).
+    if (camChanged) this.schedule(() => this.updateCamPose())
+  }
+
+  /** §13.7 M6: только компас и кнопка патруля — без пересборки ленты. */
+  private updateCamPose(): void {
+    for (const ref of this.camRefs) {
+      const pose = this.camPose.get(ref.dev)
+      if (pose === undefined) continue
+      const deg = ((pose.yaw * 180) / Math.PI + 360) % 360
+      ref.compass.style.setProperty('--cam-dir', `${Math.round((deg / 360) * 100)}%`)
+      const on = pose.patrol
+      if (ref.patrolBtn.classList.contains('on') !== on) {
+        ref.patrolBtn.classList.toggle('on', on)
+        ref.patrolBtn.textContent = on ? 'АВТОПАТРУЛЬ ●' : 'АВТОПАТРУЛЬ ○'
+      }
+    }
   }
 
   // ── раскладка WM ────────────────────────────────────────────────────────
@@ -2987,6 +3010,8 @@ export class HackView {
         live.width = 640
         live.height = 360
         const bar = el('div', 'cam-hud')
+        const rec = txt('span', 'cam-rec', '● REC')
+        bar.append(rec)
         const tags = el('div', 'cam-tags')
         const empty = txt('div', 'cam-scanline', 'СЕКТОР ЧИСТ')
         stage.append(live, bar, tags, empty)
@@ -3026,23 +3051,34 @@ export class HackView {
         })
         const compass = el('div', 'cam-compass')
         compass.append(txt('span', 'cam-compass-mark', '▾'))
-        const hint = txt('span', 'cam-ctl-hint', IS_TOUCH ? 'ВЕДИ ПАЛЬЦЕМ ПО КАДРУ — ПОВОРОТ' : 'DRAG ПО КАДРУ — ПОВОРОТ')
-        ctl.append(patrolBtn, compass, hint)
+        const hint = txt('span', 'cam-ctl-hint', IS_TOUCH ? 'ВЕДИ ПАЛЬЦЕМ — ПОВОРОТ · ПИНЧ — ЗУМ' : 'DRAG — ПОВОРОТ · КОЛЕСО — ЗУМ')
+        const zout = el('button', 'cam-zoom')
+        zout.type = 'button'
+        zout.textContent = '−'
+        zout.addEventListener('click', () => this.deps.camLive?.zoom(dev, 1 / 1.3))
+        const zin = el('button', 'cam-zoom')
+        zin.type = 'button'
+        zin.textContent = '+'
+        zin.addEventListener('click', () => this.deps.camLive?.zoom(dev, 1.3))
+        ctl.append(patrolBtn, compass, zout, zin, hint)
         wrap.append(ctl)
-        // drag по живому кадру = доворот камеры (мышью и пальцем)
+        // drag по живому кадру = доворот камеры (мышью и пальцем). Слушатели
+        // на STAGE, не на canvas: оверлеи кадра (hud-полоса, теги, «СЕКТОР
+        // ЧИСТ») лежат поверх — плейтест «drag по CAM2 не работает».
         let dragId: number | null = null
         let dragX = 0
         let dragY = 0
         let dragged = false
-        live.addEventListener('pointerdown', (e) => {
+        let pinchUsed = false
+        stage.addEventListener('pointerdown', (e) => {
           dragId = e.pointerId
           dragX = e.clientX
           dragY = e.clientY
           dragged = false
-          live.setPointerCapture(dragId)
+          stage.setPointerCapture(dragId)
           e.preventDefault()
         })
-        live.addEventListener('pointermove', (e) => {
+        stage.addEventListener('pointermove', (e) => {
           if (dragId !== e.pointerId) return
           const dx = e.clientX - dragX
           const dy = e.clientY - dragY
@@ -3057,15 +3093,52 @@ export class HackView {
         const dragEnd = (e: PointerEvent): void => {
           if (dragId !== e.pointerId) return
           dragId = null
+          pts.delete(e.pointerId)
         }
-        live.addEventListener('pointerup', dragEnd)
-        live.addEventListener('pointercancel', dragEnd)
+        stage.addEventListener('pointerup', dragEnd)
+        stage.addEventListener('pointercancel', dragEnd)
+        // §13.7 M6: зум — колесо/тачпад-скролл/пинч двумя пальцами (кламп 1..3)
+        stage.addEventListener('wheel', (e) => {
+          e.preventDefault()
+          this.deps.camLive?.zoom(dev, e.deltaY < 0 ? 1.15 : 1 / 1.15)
+        }, { passive: false })
+        const pts = new Map<number, { x: number; y: number }>()
+        let pinchDist = 0
+        let pinchZoom = 1
+        const pinchDistOf = (): number => {
+          const p = [...pts.values()]
+          return p.length === 2 ? Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y) : 0
+        }
+        stage.addEventListener('pointerdown', (e) => {
+          pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+          if (pts.size === 2) {
+            pinchDist = pinchDistOf()
+            pinchZoom = this.deps.camLive?.zoomOf?.(dev) ?? 1
+          }
+        })
+        stage.addEventListener('pointermove', (e) => {
+          const pt = pts.get(e.pointerId)
+          if (pt !== undefined) {
+            pt.x = e.clientX
+            pt.y = e.clientY
+          }
+          if (pts.size === 2 && pinchDist > 0) {
+            const d = pinchDistOf()
+            if (d > 0) {
+              pinchUsed = true
+              dragged = true // пинч не тап и не доворот
+              const z = Math.max(1, Math.min(3, pinchZoom * (d / pinchDist)))
+              this.deps.camLive?.zoomSet?.(dev, z)
+            }
+          }
+        }, { passive: true })
         // тап по кадру на touch = fullscreen (§13.7), но ПОСЛЕ drag'а это
         // уже не тап — не выпрыгиваем из деки на ровном месте
-        live.addEventListener('click', (e) => {
-          if (dragged) {
+        stage.addEventListener('click', (e) => {
+          if (dragged || pinchUsed) {
             e.stopPropagation()
             dragged = false
+            pinchUsed = false
           }
         }, true)
         const report = el('div', 'cam-report')
@@ -3453,18 +3526,6 @@ export class HackView {
         ref.time.textContent = `T+${String(Math.floor(sec / 60)).padStart(2, '0')}:${String(sec % 60).padStart(2, '0')}`
       }
       ref.count.textContent = `ЦЕЛЕЙ: ${seen?.length ?? 0}`
-      // §13.7 M6: компас — метка направления конуса (yaw → позиция на полосе),
-      // кнопка патруля отражает серверное состояние (camrot мог погасить).
-      const pose = this.camPose.get(ref.dev)
-      if (pose !== undefined) {
-        const deg = ((pose.yaw * 180) / Math.PI + 360) % 360
-        ref.compass.style.setProperty('--cam-dir', `${Math.round((deg / 360) * 100)}%`)
-        const on = pose.patrol
-        if (ref.patrolBtn.classList.contains('on') !== on) {
-          ref.patrolBtn.classList.toggle('on', on)
-          ref.patrolBtn.textContent = on ? 'АВТОПАТРУЛЬ ●' : 'АВТОПАТРУЛЬ ○'
-        }
-      }
       ref.list.replaceChildren()
       ref.tags.replaceChildren()
       // «СЕКТОР ЧИСТ» — ОДИН стейт поверх кадра (плейтест 2026-11-20: был

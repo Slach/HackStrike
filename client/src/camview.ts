@@ -27,8 +27,15 @@ const CAM_OFFSET = 0.9
 const CAM_LIFT = 0.12
 /** Ручной поворот в V-режиме: 15% чувствительности тела (плейтест 2026-11-20
  *  «вращение по mlook, но достаточно медленное — хоть в стену направь»). */
-const CAM_LOOK_SENS = 0.00033
+/** Поворот камеры — прямой джойстик для ОБЕИХ путей (владелец 2026-11-20:
+ *  «drag был кривой, v-mlook тоже можно быстрый»): 1000 px ≈ 286°. */
+const CAM_LOOK_SENS = 0.005
+const CAM_DRAG_SENS = CAM_LOOK_SENS
 const CAM_PITCH_LIMIT = 1.3
+/** Базовый fov объектива; зум — делитель (1× = база, 3× = телевик). */
+const CAM_BASE_FOV = 1.0
+const CAM_ZOOM_MIN = 1
+const CAM_ZOOM_MAX = 3
 
 export class CamView {
   readonly camera: FreeCamera
@@ -54,6 +61,9 @@ export class CamView {
   private lastRotAt = new Map<string, number>()
   private lastSentAt = 0
   private pendingSend: ReturnType<typeof setTimeout> | null = null
+  /** Оптический зум по камере (1..3) — клиентская оптика монитора: серверный
+   *  конус сенсора не меняется (картинка всегда Ų конуса, не шире). */
+  private zooms = new Map<string, number>()
   onChange: (() => void) | null = null
 
   constructor(scene: Scene) {
@@ -161,6 +171,7 @@ export class CamView {
     const fz = Math.cos(yaw)
     this.camera.position.set(c.x + fx * CAM_OFFSET, c.y + CAM_LIFT, c.z + fz * CAM_OFFSET)
     this.camera.rotation.set(-this.pitchOf(c), yaw, 0)
+    this.camera.fov = this.fovOf(camId)
     return true
   }
 
@@ -174,6 +185,7 @@ export class CamView {
     this.active = false
     this.panels.clear()
     this.pans.clear() // ручной доворот не переживает закрытие вьюхи (как зум карты §12.6)
+    this.zooms.clear()
     this.onChange?.()
   }
 
@@ -196,20 +208,21 @@ export class CamView {
     }
   }
 
-  /** Мдленненный поворот ТЕКУЩЕЙ камеры мышью/тач-кругом в V-режиме (d — px). */
+  /** Медленный поворот ТЕКУЩЕЙ камеры мышью/тач-кругом в V-режиме (d — px). */
   rotate(dxPx: number, dyPx: number): void {
     const c = this.current()
     if (c === null) return
-    this.rotateDev(c.id, dxPx, dyPx)
+    this.rotateDev(c.id, dxPx, dyPx, CAM_LOOK_SENS)
   }
 
-  /** Поворот КОНКРЕТНОЙ камеры (V — текущей, drag по кадру в деке — своей). */
-  rotateDev(camId: string, dxPx: number, dyPx: number): void {
+  /** Поворот КОНКРЕТНОЙ камеры (V — текущей, drag по кадру в деке — своей).
+   *  sens: V-mlook — 15% от телесной, drag — прямой джойстик (в 15× резче). */
+  rotateDev(camId: string, dxPx: number, dyPx: number, sens = CAM_DRAG_SENS): void {
     const c = this.list.find((k) => k.id === camId)
     if (c === undefined) return
     const cur = this.pans.get(camId) ?? { yaw: c.yaw, pitch: c.pitch }
-    cur.yaw += dxPx * CAM_LOOK_SENS
-    cur.pitch = Math.max(-CAM_PITCH_LIMIT, Math.min(CAM_PITCH_LIMIT, cur.pitch - dyPx * CAM_LOOK_SENS))
+    cur.yaw += dxPx * sens
+    cur.pitch = Math.max(-CAM_PITCH_LIMIT, Math.min(CAM_PITCH_LIMIT, cur.pitch - dyPx * sens))
     if (cur.yaw > Math.PI) cur.yaw -= 2 * Math.PI
     else if (cur.yaw < -Math.PI) cur.yaw += 2 * Math.PI
     this.pans.set(camId, cur)
@@ -241,6 +254,34 @@ export class CamView {
     }
   }
 
+  /** Зум конкретной камеры (для пинча: стартовое значение). */
+  zoomOf(camId: string): number {
+    return this.zooms.get(camId) ?? 1
+  }
+
+  /** Множитель зума (колесо/пинч/кнопки); кламп 1..3. Возвращает итог. */
+  zoomBy(camId: string, mult: number): number {
+    const c = this.list.find((k) => k.id === camId)
+    if (c === undefined) return this.zoomOf(camId)
+    const z = Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, this.zoomOf(camId) * mult))
+    this.zooms.set(camId, z)
+    this.apply()
+    this.onChange?.()
+    return z
+  }
+
+  private fovOf(camId: string): number {
+    return CAM_BASE_FOV / this.zoomOf(camId)
+  }
+
+  /** Задать зум напрямую (пинч: абсолютное значение). */
+  zoomSet(camId: string, z: number): void {
+    const c = this.list.find((k) => k.id === camId)
+    if (c === undefined) return
+    this.zooms.set(camId, Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, z)))
+    this.apply()
+  }
+
   /** Обновить позицию/ориентацию камеры из текущего выбора (каждый кадр/смена). */
   apply(): void {
     const c = this.current()
@@ -253,6 +294,7 @@ export class CamView {
     this.camera.position.set(c.x + fx * CAM_OFFSET, c.y + CAM_LIFT, c.z + fz * CAM_OFFSET)
     // Babylon rotation.x — вниз-положительный; pitch карты — вверх-положительный.
     this.camera.rotation.set(-this.pitchOf(c), yaw, 0)
+    this.camera.fov = this.fovOf(c.id)
   }
 
   /** Поза точки рендера КАЖДОЙ камеры — hackview проектирует теги целей по
@@ -271,7 +313,7 @@ export class CamView {
       z: c.z + fz * CAM_OFFSET,
       yaw,
       pitch: this.pitchOf(c),
-      fov: this.camera.fov,
+      fov: this.fovOf(c.id),
     }
   }
 
