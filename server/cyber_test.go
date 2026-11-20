@@ -3124,6 +3124,39 @@ func TestDecryptSrvJob(t *testing.T) {
 	}
 }
 
+// TestDecryptRmMidJob — POSIX-семантика rm (плейтест M5: «rm при летящем
+// decrypt — данные не появились»): джоба держит «открытый дескриптор» —
+// unlink не прерывает процесс, КОД доносится команде, хоть item'а уже нет.
+func TestDecryptRmMidJob(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	srv := w.cyber.devices["srv1"]
+	name := srv.items[0].Name
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": name})
+	if len(srv.jobs) != 1 {
+		t.Fatalf("srv job not started")
+	}
+	w.takeOut()
+	// rm прямо во время джобы: имя исчезает, процесс продолжает работать
+	srv.items = nil
+	for i := 0; i < 12*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(srv.jobs) != 0 {
+		t.Fatalf("job must finish (rm does not cancel it)")
+	}
+	out := w.takeOut()
+	foundCode := false
+	for _, m := range out {
+		if m.msg["t"] == "codes" && m.msg["door"] == w.doorKeyCodeNow(name) {
+			foundCode = true
+		}
+	}
+	if !foundCode {
+		t.Fatalf("POSIX: team must still learn the code after mid-job rm")
+	}
+}
+
 // TestDecryptNpuDenied — §16.4: decrypt только на NPU-хостах (дека/SRV);
 // терминал — denied npu («НУЖЕН NPU»).
 func TestDecryptNpuDenied(t *testing.T) {

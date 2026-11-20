@@ -1835,18 +1835,21 @@ func (w *world) devJobTick() {
 
 // finishDecrypt — «либо прошло, либо нет» (§16.4): item на хосте →
 // enc:false + код; код команда знает навсегда (codes → HUD «КОД D3»).
-// Если item к финишу rm-нут — джоба потеряна зря (прогресс не персистит).
+// POSIX-семантика rm (плейтест M5): джоба держит «открытый дескриптор» —
+// item могли rm-нуть mid-job, имя исчезло, но КОД всё равно доносится
+// команде (unlink не прерывает работающий процесс).
 func (w *world) finishDecrypt(dev *device, j *devJob) {
+	code := w.decryptCodeOf(j.data)
 	for i := range dev.items {
 		if dev.items[i].Name != j.data {
 			continue
 		}
 		dev.items[i].Enc = false
-		dev.items[i].Code = w.decryptCodeOf(j.data)
-		w.noteTeamCode(j.team, j.data, dev.items[i].Code)
-		w.sendCodes(j.team)
+		dev.items[i].Code = code
 		break
 	}
+	w.noteTeamCode(j.team, j.data, code)
+	w.sendCodes(j.team)
 	w.resendScanFor(dev.id)
 	// Финиш тоже watcher-событие (§16.4); запустивший мог умереть/выйти —
 	// кто жив, тот и получит alert (who=nil допустим).
@@ -2325,16 +2328,19 @@ func (w *world) completeProgram(pl *player, p *program) {
 		// §16.4: джоба на деке — результат в MEM деки: item → enc:false +
 		// код; код команда знает навсегда (codes → HUD «КОД D3»).
 		// Отмена джек-аутом/смертью случилась бы раньше (jackout: progs=nil).
+		// POSIX-семантика rm: item могли удалить mid-job — код всё равно
+		// доносится команде («открытый дескриптор», как на SRV).
+		code := w.decryptCodeOf(p.data)
 		for i := range pl.items {
 			if pl.items[i].Name != p.data {
 				continue
 			}
 			pl.items[i].Enc = false
-			pl.items[i].Code = w.decryptCodeOf(p.data)
-			w.noteTeamCode(pl.team, p.data, pl.items[i].Code)
-			w.sendCodes(pl.team)
+			pl.items[i].Code = code
 			break
 		}
+		w.noteTeamCode(pl.team, p.data, code)
+		w.sendCodes(pl.team)
 		log.Printf("room: decrypt %s on deck finished (team %d)", p.data, pl.team)
 	case "rm":
 		// §16.2: item удаляется (chaff: слить → rm → слить снова).
