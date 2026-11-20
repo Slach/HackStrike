@@ -2072,9 +2072,9 @@ export class HackView {
       (PALETTE_PROGS.some((p) => p.startsWith(dq)) || DATA_CMD.startsWith(dq)) &&
       ![...this.devices.values()].some((d) => this.devMatch(d, dq))
     // Подкоманда данных первым токеном («/cp», «/decrypt» на объекте):
-    // кандидаты — ключи активного хоста; вставка переписывает строку в
-    // каноническую reverse-форму `<key> cp` (палитра не находила
-    // кандидатов, хотя ключи в деке есть — плейтест M5).
+    // forward-форма `cp <ключ> [приёмник]` — грамматика как у хвоста
+    // `data …` (владелец 2026-11-20 «cp это команда же»: выбор ключа больше
+    // НЕ переписывает строку в reverse-форму, команда остаётся первой).
     const subFirst =
       !isTabMode && dq !== '' && !progFirst &&
       (DATA_SUBS as readonly string[]).some((s) => s.startsWith(dq)) &&
@@ -2181,17 +2181,25 @@ export class HackView {
         }
       }
     } else if (subFirst) {
-      // «/cp⏎» на объекте: ключи активного хоста; выбор перепишет строку в
-      // каноническую reverse-форму `<key> cp` (см. paletteRun).
-      // Фильтр — по КЛЮЧУ (второй токен), не по подкоманде: «rm» сам по себе
-      // не префикс имён, и список был пуст (плейтест M5 «почему для rm нет
-      // кандидатов»).
-      // Плейтест 2026-11-20 («decrypt — а там только srv1, хотя door_key уже
-      // скопирован на деку»): ключи — со ВСЕХ своих источников, как их
-      // резолвит resolveDataSrc; раньше список шёл по активному хосту.
-      const qk = tokens.length < 2 ? '' : trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
-      for (const c of this.dataKeyCands(qk, null)) {
-        cands.push({ ...c, hint: `${dq.toUpperCase()} · ${c.hint}` })
+      // Forward-форма `cp <ключ> [приёмник]` (владелец 2026-11-20 «cp это
+      // команда же»): команда остаётся первой, выбор ключа НЕ переписывает
+      // строку в reverse. Грамматика и кандидаты — как хвост `data …`
+      // (dataCands: ключ → приёмник → готово). Плейтест M5 («rm сам по себе
+      // не префикс имён») и плейтест 2026-11-20 («decrypt — только srv1,
+      // хотя door_key уже на деке»): ключи — со всех своих источников.
+      const subExact = (DATA_SUBS as readonly string[]).includes(dq)
+      if (!subExact) {
+        cands.push(...this.dataSubCands(dq)) // «c» → CP: точим саму команду
+      } else if (this.paletteTok === 0 && dq !== 'ls') {
+        // Точная подкоманда без хвостового пробела: сразу ключи — Enter
+        // допишет их ПОСЛЕ команды (paletteRun subFirstMode)
+        for (const c of this.dataKeyCands('', null)) {
+          cands.push({ ...c, hint: `${dq.toUpperCase()} · ${c.hint}` })
+        }
+      } else {
+        const prev = tokens.slice(0, tokens.length - (trailing ? 0 : 1)).map((t) => t.toLowerCase())
+        const qk = trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
+        cands.push(...this.dataCands(prev, qk, null))
       }
     } else if (progFirst) {
       // Второй токен (порядок «prog dev»): список целей с владельцем.
@@ -2368,8 +2376,9 @@ export class HackView {
     // хвостовой пробел в строке ошибочно считался «дописывать нечего»).
     // Вставка работает и с пробелом: ключ — это СЛЕДУЮЩИЙ токен.
     if (sel !== undefined && ['dev', 'item', 'sub', 'datacmd'].includes(sel.kind)) {
-      // Подкоманда первым токеном («/cp» + ключ): канонизируем в reverse-
-      // форму `<key> cp ` — дальше штатный разбор reverse-формы.
+      // Подкоманда первым токеном («/cp» + ключ): forward-форма `cp <ключ> `
+      // — ключ дописывается ПОСЛЕ команды (владелец 2026-11-20 «cp это
+      // команда же»: канонизация в reverse `<key> cp` убрана).
       const t0s = (tokens[0] ?? '').toLowerCase()
       const subFirstMode =
         sel.kind === 'item' &&
@@ -2377,7 +2386,7 @@ export class HackView {
         !PALETTE_PROGS.some((p) => p === t0s) &&
         ![...this.devices.values()].some((d) => this.devMatch(d, t0s))
       if (subFirstMode) {
-        pal.input.value = `${sel.text} ${t0s} `
+        pal.input.value = `${t0s} ${sel.text} `
         this.paletteSel = -1
         this.updatePalette()
         return
@@ -2416,6 +2425,14 @@ export class HackView {
         this.sendDecrypt(src.host, src.key)
         this.pushHistoryClose(raw)
       }
+      return
+    }
+    // Forward-форма подкоманды (§16.2, владелец 2026-11-20 «cp это команда
+    // же»): `ls|cp|mv|rm <ключ> [приёмник]` — грамматика хвоста `data …`,
+    // разбор тот же runDataCmd. Гвард — токен ТОЧНО подкоманда (не «d…»,
+    // чтобы `deck cp` не съел reverse/dev-порядки) и не устройство.
+    if ((DATA_SUBS as readonly string[]).includes(t0) && ![...this.devices.values()].some((d) => this.devMatch(d, t0))) {
+      this.runDataCmd(finalTokens, null)
       return
     }
     if (sel !== undefined && sel.kind === 'decryptcmd') {
