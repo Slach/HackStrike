@@ -50,7 +50,7 @@ const (
 	liftSpeed      = 2.8
 	liftFloor2Y    = 8.0
 	liftFloor1Y    = 1.0
-	liftBtnRadius  = 2.0
+	liftBtnRadius  = 3.5 // плейтест: 2 м — «какой-то маленький радиус»
 	physafeBaseRadius      = 6.0
 	physafeChannelWork     = 3.0
 	physafeBaseChannelWork = 6.0
@@ -3065,6 +3065,9 @@ func (w *world) liftTick() {
 		}
 	}
 	// динамические коллайдеры — платформы как пол (приземление applyPhysics)
+	// + КРЫШКА: спущенный лифт оставлял ОТКРЫТУЮ ДЫРУ в плите 2F (плейтест:
+	// «тупо дыра остаётся… проваливаешься») — после прибытия платформы
+	// проём закрывается стальной крышкой на уровне пола 2F
 	dyn := make([]collider, 0, len(w.lifts))
 	for i := range w.lifts {
 		l := &w.lifts[i]
@@ -3073,6 +3076,13 @@ func (w *world) liftTick() {
 			Max: [3]float64{l.x + l.half, l.top, l.z + l.half},
 			Kind: "floor",
 		})
+		if l.top <= liftFloor1Y+0.01 && !l.moving {
+			dyn = append(dyn, collider{
+				Min:  [3]float64{l.x - l.half, liftFloor2Y - l.thick, l.z - l.half},
+				Max:  [3]float64{l.x + l.half, liftFloor2Y, l.z + l.half},
+				Kind: "floor",
+			})
+		}
 	}
 	w.m.dynamic = dyn
 }

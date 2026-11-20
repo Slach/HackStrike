@@ -196,7 +196,7 @@ export class PropsView {
    *  (снапы 20 Гц, платформа движется — без сглаживания дёргается). */
   private lifts = new Map<
     string,
-    { parts: Mesh[]; x: number; z: number; half: number; thick: number; curY: number; targetY: number }
+    { parts: Mesh[]; x: number; z: number; half: number; thick: number; curY: number; targetY: number; cap: Mesh }
   >()
   private readonly liftBtns = new Map<string, SimpleProp>()
   /** Текущая отрисованная позиция меша — lerp к снап-цели (носитель
@@ -415,6 +415,12 @@ export class PropsView {
     edge.position.set(pos[0], pos[1] - 0.02, pos[2])
     edge.material = this.mats.cable // янтарная кромка — видно, где площадка
     edge.isPickable = false
+    // крышка проёма 2F: появляется, когда платформа спустилась (плейтест
+    // «тупо дыра остаётся… проваливаешься»)
+    const cap = MeshBuilder.CreateBox(`prop.${id}.cap`, { width: w, height: h, depth: d }, this.scene)
+    cap.position.set(pos[0], 8 - h / 2, pos[2])
+    cap.material = this.mats.body
+    cap.isVisible = false
     this.lifts.set(id, {
       parts: [plat, edge],
       x: pos[0],
@@ -423,6 +429,7 @@ export class PropsView {
       thick: h,
       curY: pos[1],
       targetY: pos[1],
+      cap,
     })
   }
 
@@ -1015,13 +1022,16 @@ export class PropsView {
   }
 
   tick(dtSec: number): void {
-    // §16.12: платформы лифтов — плавный спуск к target-Y
+    // §16.12: платформы лифтов — плавный спуск к target-Y; крышка проёма
+    // закрывается, как только платформа ушла на 1F (targetY ≈ 1)
     for (const l of this.lifts.values()) {
       const dy = l.targetY - l.curY
-      if (Math.abs(dy) < 0.005) continue
-      const step = Math.sign(dy) * Math.min(Math.abs(dy), 3.2 * dtSec)
-      l.curY += step
-      for (const m of l.parts) m.position.y = l.curY
+      if (Math.abs(dy) >= 0.005) {
+        const step = Math.sign(dy) * Math.min(Math.abs(dy), 3.2 * dtSec)
+        l.curY += step
+        for (const m of l.parts) m.position.y = l.curY
+      }
+      l.cap.isVisible = l.targetY <= 1.01
     }
     // PHYSAFE: меш плавно догоняет снап-цель (носитель ходит, сейф с ним)
     const pf = this.physafePos
