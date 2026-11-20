@@ -58,6 +58,11 @@ type mapProp struct {
 	Backplane float64 `json:"backplane"`
 	// Locked — door: код-замок (§16.7, d3). Только код с клавиатуры.
 	Locked bool `json:"locked"`
+	// Yaw/Pitch — camera (§13.7 M6): стартовая ориентация объектива (рад);
+	// дальше ориентация живёт на сервере устройства. 0/0 → «в центр карты»
+	// достраивает клиент (карта — данные, направление — наблюдаемо).
+	Yaw   float64 `json:"yaw"`
+	Pitch float64 `json:"pitch"`
 }
 
 // parseGameMap — парсинг + валидация: карта встроенная, ошибка означает

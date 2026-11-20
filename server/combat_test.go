@@ -262,3 +262,54 @@ func TestNearestTargetAlongRay(t *testing.T) {
 		t.Fatalf("far target must be untouched, hp=%d", far.hp)
 	}
 }
+
+// TestShotBearing — пеленг выстрелов (M6 §17.1): союзник в 28 м получает
+// report с сектором и дистанцией; враг и сам стрелок — нет; за радиусом —
+// нет; промах тоже пеленгуется (звук выстрела не зависит от попадания).
+func TestShotBearing(t *testing.T) {
+	w, shooter, victim, _ := combatWorld(t)
+	_ = victim
+	ally := w.addPlayer(3, "ally", "assault", -1)
+	foe := w.addPlayer(4, "foe", "assault", -1)
+	ally.team, foe.team = 0, 1
+	far := w.addPlayer(5, "far", "assault", -1)
+	far.team = 0
+	w.takeOut()
+	shooter.pos = vec3{0, 1, 0}
+	ally.pos = vec3{0, 1, 10}  // 10 м на север от стрелка
+	far.pos = vec3{0, 1, 29.5} // за радиусом слышимости
+	foe.pos = vec3{2, 1, 2}    // близко, но враг
+	w.fire(shooter, 0, 0)      // промах в пустоту — пеленг всё равно уходит
+
+	out := w.takeOut()
+	got := make(map[uint64]message)
+	for _, om := range out {
+		if om.msg["t"] == "report" {
+			got[om.to] = om.msg
+		}
+	}
+	// союзники рядом (ally и victim из combatWorld — обе команда 0) слышат;
+	// враг, дальний и сам стрелок — нет
+	for _, id := range []uint64{ally.id, victim.id} {
+		r := got[id]
+		if r == nil {
+			t.Fatalf("ally %d must receive the report, got=%v", id, got)
+		}
+		if r["by"] != shooter.id {
+			t.Fatalf("report.by must be the shooter")
+		}
+		d, _ := r["d"].(float64)
+		if d < 9 || d > 11 {
+			t.Fatalf("report.d must be ~10 m, got %v", d)
+		}
+		dir, _ := r["dir"].(float64)
+		if math.Abs(dir-math.Pi) > 0.01 {
+			t.Fatalf("ally north of shooter: dir must be ~π (на юг), got %v", dir)
+		}
+	}
+	for _, id := range []uint64{foe.id, far.id, shooter.id} {
+		if got[id] != nil {
+			t.Fatalf("player %d must NOT receive the report (враг/за радиусом/сам стрелок)", id)
+		}
+	}
+}

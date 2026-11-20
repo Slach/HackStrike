@@ -12,6 +12,9 @@ import (
 // (клиент целится по интерполированной позиции ~66 мс в прошлом), либо
 // цель в конусе ~2° (мягкий bullet magnetism — «доворачиваются пули, а не
 // прицел»). LOS до центра цели должен быть чист от геометрии. Friendly fire ON.
+// shotHearRadius — пеленг выстрелов (M6 §17.1): «слышимость» союзником, м.
+const shotHearRadius = 28.0
+
 const magnetismHalfAngle = 2.0 * math.Pi / 180
 
 var magnetismCos = math.Cos(magnetismHalfAngle)
@@ -132,8 +135,33 @@ func (w *world) fire(pl *player, yaw, pitch float64) {
 		shot["hit"] = hit.id
 	}
 	w.broadcast(shot)
+	w.reportBearing(pl)
 	if killed {
 		w.sendTo(hit.id, message{"t": "death", "by": pl.id, "respawnAt": hit.respawnAt.UnixMilli()})
+	}
+}
+
+// reportBearing — пеленг выстрела (M6 §17.1): живым СОЮЗНИКАМ стрелка в
+// радиусе слышимости — сектор направления на стрелка + дистанция. Замена
+// позиционного звука: в браузере на телефоне «откуда стреляют» не слышно.
+// Врагам не шлём (пеленг — командный бафф), стрелку тоже (он знает, где он).
+func (w *world) reportBearing(shooter *player) {
+	for _, pl := range w.players {
+		if pl.id == shooter.id || !pl.alive || pl.team != shooter.team {
+			continue
+		}
+		dx := shooter.pos[0] - pl.pos[0]
+		dz := shooter.pos[2] - pl.pos[2]
+		d := math.Sqrt(dx*dx + dz*dz + (shooter.pos[1]-pl.pos[1])*(shooter.pos[1]-pl.pos[1]))
+		if d > shotHearRadius || d < 0.5 {
+			continue
+		}
+		w.sendTo(pl.id, message{
+			"t":   "report",
+			"by":  shooter.id,
+			"dir": math.Round(math.Atan2(dx, dz)*100) / 100,
+			"d":   math.Round(d*10) / 10,
+		})
 	}
 }
 

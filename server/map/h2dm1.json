@@ -1656,6 +1656,24 @@
   },
   {
    "kind": "switch",
+   "id": "s4",
+   "pos": [
+    19,
+    1,
+    26
+   ]
+  },
+  {
+   "kind": "switch",
+   "id": "s5",
+   "pos": [
+    45,
+    1,
+    38
+   ]
+  },
+  {
+   "kind": "switch",
    "id": "s2",
    "pos": [
     45,
@@ -1714,7 +1732,7 @@
    "kind": "cable",
    "id": "c1",
    "from": "t1",
-   "to": "s1",
+   "to": "s4",
    "points": [
     [
      3,
@@ -1743,7 +1761,7 @@
    "kind": "cable",
    "id": "c2",
    "from": "t2",
-   "to": "s2",
+   "to": "s5",
    "points": [
     [
      61,
@@ -1800,7 +1818,7 @@
   {
    "kind": "cable",
    "id": "c4",
-   "from": "s1",
+   "from": "s4",
    "to": "d1",
    "points": [
     [
@@ -1829,7 +1847,7 @@
   {
    "kind": "cable",
    "id": "c5",
-   "from": "s2",
+   "from": "s5",
    "to": "d2",
    "points": [
     [
@@ -1881,7 +1899,7 @@
    "kind": "cable",
    "id": "c6",
    "from": "cam1",
-   "to": "s1",
+   "to": "s4",
    "points": [
     [
      32,
@@ -1915,7 +1933,7 @@
    "kind": "cable",
    "id": "c7",
    "from": "cam2",
-   "to": "s2",
+   "to": "s5",
    "points": [
     [
      32,
@@ -1954,7 +1972,7 @@
    "kind": "cable",
    "id": "c8",
    "from": "g1",
-   "to": "s2",
+   "to": "s5",
    "points": [
     [
      47.5,
@@ -2946,6 +2964,20 @@
      32
     ]
    ]
+  },
+  {
+   "kind": "cable",
+   "id": "c43",
+   "from": "s4",
+   "to": "s3",
+   "bw": 40
+  },
+  {
+   "kind": "cable",
+   "id": "c44",
+   "from": "s5",
+   "to": "s3",
+   "bw": 40
   },
   {
    "kind": "cable",

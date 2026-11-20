@@ -424,6 +424,10 @@ func (w *world) handleMessage(pl *player, msg message) {
 		w.handleRun(pl, msg)
 	case "ctrl": // контроллер устройства (§12.5)
 		w.handleCtrl(pl, msg)
+	case "camrot": // доворот камеры союзником владельца (§13.7 M6)
+		w.handleCamrot(pl, msg)
+	case "campatrol": // автопатруль камеры (§13.7 M6)
+		w.handleCampatrol(pl, msg)
 	case "enter": // ввод кода на клавиатуре d3 (§16.7)
 		w.handleEnter(pl, msg)
 	}

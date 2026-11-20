@@ -141,9 +141,12 @@ interface CameraView {
   fy: number
   led: StandardMaterial
   owner: number | null
-  /** Направление объектива из данных карты (§13.7 живой вид). */
+  /** Направление объектива — серверное (§13.7 M6: snap yaw/pitch, старт — карта). */
   yaw: number
   pitch: number
+  /** patrol — автопатруль включён (§13.7 M6): для LED-мигания/миникарты. */
+  patrol: boolean
+  lens: Mesh
 }
 
 /** Газ (M4 §14.2): ловушка-объём с AABB как у двери. Клиент рисует только
@@ -637,7 +640,10 @@ export class PropsView {
     const lens = MeshBuilder.CreateCylinder(`prop.${id}.lens`, { diameter: 0.14, height: 0.06 }, this.scene)
     lens.rotation.x = Math.PI / 2
     // Линза — на стороне взгляда: объектив смотрит по yaw (§13.7 живой вид)
-    lens.position.set(pos[0] + Math.sin(yaw) * 0.24, pos[1], pos[2] + Math.cos(yaw) * 0.24)
+    const placeLens = (y: number): void => {
+      lens.position.set(pos[0] + Math.sin(y) * 0.24, pos[1], pos[2] + Math.cos(y) * 0.24)
+    }
+    placeLens(yaw)
     lens.material = this.mats.antenna
     lens.isPickable = false
     // LED — свой материал на камеру: цвет динамический (владение из снапа).
@@ -651,7 +657,7 @@ export class PropsView {
     body.layerMask = CAM_PROP_LAYER
     lens.layerMask = CAM_PROP_LAYER
     ledMesh.layerMask = CAM_PROP_LAYER
-    const cam: CameraView = { id, x: pos[0], z: pos[2], fy: pos[1], led, owner: null, yaw, pitch }
+    const cam: CameraView = { id, x: pos[0], z: pos[2], fy: pos[1], led, owner: null, yaw, pitch, patrol: false, lens }
     this.cameras.set(id, cam)
     this.tintCamera(cam)
   }
@@ -918,9 +924,19 @@ export class PropsView {
           }
           const owner = p.owner ?? null
           const known = this.cameras.get(p.id)
-          if (known !== undefined && known.owner !== owner) {
-            known.owner = owner
-            this.tintCamera(known)
+          if (known !== undefined) {
+            if (known.owner !== owner) {
+              known.owner = owner
+              this.tintCamera(known)
+            }
+            // §13.7 M6: ориентация — серверное состояние (довороты союзников,
+            // автопатруль); линза на меше едет вслед за yaw.
+            if (p.yaw !== undefined && p.yaw !== known.yaw) {
+              known.yaw = p.yaw
+              known.lens.position.set(known.x + Math.sin(known.yaw) * 0.24, known.fy, known.z + Math.cos(known.yaw) * 0.24)
+            }
+            if (p.pitch !== undefined) known.pitch = p.pitch
+            known.patrol = p.patrol === true
           }
           break
         }
@@ -1396,9 +1412,9 @@ export class PropsView {
 
   /** Живой вид камеры (§13.7): позиция/владение/направление всех камер.
    *  Доступно всем — владелец камеры уже публичен в snap.props. */
-  cameraViews(): readonly { id: string; x: number; y: number; z: number; yaw: number; pitch: number; owner: number | null }[] {
-    const out: { id: string; x: number; y: number; z: number; yaw: number; pitch: number; owner: number | null }[] = []
-    for (const c of this.cameras.values()) out.push({ id: c.id, x: c.x, y: c.fy, z: c.z, yaw: c.yaw, pitch: c.pitch, owner: c.owner })
+  cameraViews(): readonly { id: string; x: number; y: number; z: number; yaw: number; pitch: number; patrol: boolean; owner: number | null }[] {
+    const out: { id: string; x: number; y: number; z: number; yaw: number; pitch: number; patrol: boolean; owner: number | null }[] = []
+    for (const c of this.cameras.values()) out.push({ id: c.id, x: c.x, y: c.fy, z: c.z, yaw: c.yaw, pitch: c.pitch, patrol: c.patrol, owner: c.owner })
     return out.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
   }
 

@@ -15,6 +15,7 @@ export interface CamInfo {
   z: number
   yaw: number
   pitch: number
+  patrol: boolean
   owner: number | null
 }
 
@@ -44,6 +45,15 @@ export class CamView {
    *  2 Гц — совпадает с «КАДР 2 Гц» ленты и дешевле per-frame. */
   private panels = new Map<string, HTMLCanvasElement[]>()
   /** Колбэк «вид камеры открылся/закрылся/сменился» — main перерисовывает оверлей. */
+  /** §13.7 M6: слать доворот на сервер (main подключает sock.sendCamrot).
+   *  Local-pan — только echo: картинка крутится без задержки, сервер —
+   *  истина (переживает закрытие, видна союзникам, двигает конус). */
+  sendCamrot: ((dev: string, yaw: number, pitch: number) => void) | null = null
+  /** Echo-довороты: pan живёт 500 мс после последнего движения — дальше
+   *  побеждает серверный yaw из снапа (патруль/чужой доворот). */
+  private lastRotAt = new Map<string, number>()
+  private lastSentAt = 0
+  private pendingSend: ReturnType<typeof setTimeout> | null = null
   onChange: (() => void) | null = null
 
   constructor(scene: Scene) {
@@ -168,21 +178,67 @@ export class CamView {
   }
 
   private yawOf(c: CamInfo): number {
+    this.expirePan(c.id)
     return this.pans.get(c.id)?.yaw ?? c.yaw
   }
 
   private pitchOf(c: CamInfo): number {
+    this.expirePan(c.id)
     return this.pans.get(c.id)?.pitch ?? c.pitch
   }
 
-  /** Мдленнный поворот ТЕКУЩЕЙ камеры мышью/тач-кругом в V-режиме (d — px). */
+  /** Echo устарел — серверный yaw из снапа снова главный. */
+  private expirePan(id: string): void {
+    const at = this.lastRotAt.get(id)
+    if (at !== undefined && performance.now() - at > 500) {
+      this.pans.delete(id)
+      this.lastRotAt.delete(id)
+    }
+  }
+
+  /** Мдленненный поворот ТЕКУЩЕЙ камеры мышью/тач-кругом в V-режиме (d — px). */
   rotate(dxPx: number, dyPx: number): void {
     const c = this.current()
     if (c === null) return
-    const cur = this.pans.get(c.id) ?? { yaw: c.yaw, pitch: c.pitch }
+    this.rotateDev(c.id, dxPx, dyPx)
+  }
+
+  /** Поворот КОНКРЕТНОЙ камеры (V — текущей, drag по кадру в деке — своей). */
+  rotateDev(camId: string, dxPx: number, dyPx: number): void {
+    const c = this.list.find((k) => k.id === camId)
+    if (c === undefined) return
+    const cur = this.pans.get(camId) ?? { yaw: c.yaw, pitch: c.pitch }
     cur.yaw += dxPx * CAM_LOOK_SENS
     cur.pitch = Math.max(-CAM_PITCH_LIMIT, Math.min(CAM_PITCH_LIMIT, cur.pitch - dyPx * CAM_LOOK_SENS))
-    this.pans.set(c.id, cur)
+    if (cur.yaw > Math.PI) cur.yaw -= 2 * Math.PI
+    else if (cur.yaw < -Math.PI) cur.yaw += 2 * Math.PI
+    this.pans.set(camId, cur)
+    this.lastRotAt.set(camId, performance.now())
+    this.shipCamrot(c)
+  }
+
+  /** camrot на сервер: не чаще 20 Гц + хвостовой досыл последнего значения. */
+  private shipCamrot(c: CamInfo): void {
+    if (this.sendCamrot === null) return
+    const pan = this.pans.get(c.id)
+    if (pan === undefined) return
+    const now = performance.now()
+    if (now - this.lastSentAt >= 50) {
+      this.lastSentAt = now
+      if (this.pendingSend !== null) {
+        clearTimeout(this.pendingSend)
+        this.pendingSend = null
+      }
+      this.sendCamrot(c.id, pan.yaw, pan.pitch)
+      return
+    }
+    if (this.pendingSend === null) {
+      this.pendingSend = setTimeout(() => {
+        this.pendingSend = null
+        const p = this.pans.get(c.id)
+        if (p !== undefined && this.sendCamrot !== null) this.sendCamrot(c.id, p.yaw, p.pitch)
+      }, 50 - (now - this.lastSentAt))
+    }
   }
 
   /** Обновить позицию/ориентацию камеры из текущего выбора (каждый кадр/смена). */

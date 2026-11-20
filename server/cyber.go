@@ -39,8 +39,8 @@ const (
 	// «вскрываем»: на месте (код) — 3 с, на базе — 6 с.
 	// Feedback-радиус: space у сейфа вне 2.5 м — не молчание, а отказ
 	// «ПОДОЙДИ БЛИЖЕ К СЕЙФУ» (плейтест: «надо как-то на space реагировать»).
-	physafeFeedbackRadius  = 4.5
-	physafeTakeRadius      = 2.5
+	physafeFeedbackRadius = 4.5
+	physafeTakeRadius     = 2.5
 
 	matchRestartDelay = 30 * time.Second // §16.6: end-оверлей поживает 30 с (плейтест «отсчет рестарта 30 секунд =)»)
 	// safeKeyRegenDelay (§16.2, решение владельца 2026-11-20): rm safe_key —
@@ -51,27 +51,30 @@ const (
 	// Лифты (§16.12, итерация 8.5): спуск 2F→1F один раз за матч (кнопка
 	// только на 2F — наверх никак; использованный лифт остаётся внизу).
 	// Скорость 2.8 м/с → 7 м за 2.5 с; платформа 2.7×2.7 — сейф влезает.
-	liftSpeed      = 2.8
-	liftFloor2Y    = 8.0
-	liftFloor1Y    = 1.0
-	liftBtnRadius  = 3.5 // плейтест: 2 м — «какой-то маленький радиус»
+	liftSpeed              = 2.8
+	liftFloor2Y            = 8.0
+	liftFloor1Y            = 1.0
+	liftBtnRadius          = 3.5 // плейтест: 2 м — «какой-то маленький радиус»
 	physafeBaseRadius      = 6.0
 	physafeChannelWork     = 3.0
 	physafeBaseChannelWork = 6.0
-	portscanWork  = 2.0 // с работы при полной CPU-доле (§12.4)
+	portscanWork           = 2.0 // с работы при полной CPU-доле (§12.4)
 
 	// §12.4 ревизия (плейтест «4 раза нажал 1 — и вся сеть видна»):
 	// разведка дорожает с размером УЖЕ известной сети — work сканa =
 	// portscanWork × (1 + 0.25 × открытых устройств). Первые хопи быстрые,
 	// поздняя разведка (когда карта большая) — заметное ожидание.
 	portscanFogFactor = 0.25
-	vulnscanWork  = 3.0
-	trojanWork    = 2.0
-	watcherWork   = 1.0 // §13.1: пассивный слушатель — дешевле vulnscan'а
-	firewallWork  = 1.5 // §13.5: активный фильтр — дороже watcher'а, дешевле trojan'а
-	antivirusWork = 1.5 // §13.6: активная защита — тот же ярус, что firewall
+	vulnscanWork      = 3.0
+	trojanWork        = 2.0
+	watcherWork       = 1.0 // §13.1: пассивный слушатель — дешевле vulnscan'а
+	firewallWork      = 1.5 // §13.5: активный фильтр — дороже watcher'а, дешевле trojan'а
+	antivirusWork     = 1.5 // §13.6: активная защита — тот же ярус, что firewall
 
-	camVisionRadius = 12.0         // §13.7: зона видимости камеры, м (радиус + LOS)
+	camVisionRadius = 12.0  // §13.7: зона видимости камеры, м (радиус + LOS)
+	camConeHalf     = 0.5   // §13.7 M6: полуугол конуса (рад) — как полу-fov рендера 1.0
+	camPatrolAmp    = 0.785 // §13.7: автопатруль, размах ±45° (рад)
+	camPatrolPeriod = 8 * time.Second
 	camFeedEvery    = tickRate / 2 // лента камеры 2 Гц (§13.7: 0.5–1 с достаточно)
 	camBodyHeight   = 0.9          // центр корпуса игрока от ног (цель LOS-луча)
 
@@ -226,17 +229,17 @@ type device struct {
 	safeLevel map[int]int
 	safeAt    map[int]time.Time
 
-	owner       uint64          // владелец trojan (0 = нейтральное)
-	open        bool            // дверь/газ (§14.2): стартует закрытой
-	locked      bool            // §16.7: d3 заперта код-замком (клавиатура)
-	lockedDefault bool          // исходная запертость из карты (сброс на новом матче)
-	keypadFor   string          // §16.7: keypad — id двери, которой управляет
-	gasArmAt    time.Time       // газ (§14.2): момент последнего взвода клапана; нулевой = не взведён
-	gasArmCount uint64          // газ: счётчик взводов для ключа накопленного долга (resync-устойчив)
-	vulnedBy    map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
-	watcherBy   map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
-	firewalled  uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
-	antivirused uint64          // хозяин antivirus-процесса (§13.6; 0 = нет)
+	owner         uint64          // владелец trojan (0 = нейтральное)
+	open          bool            // дверь/газ (§14.2): стартует закрытой
+	locked        bool            // §16.7: d3 заперта код-замком (клавиатура)
+	lockedDefault bool            // исходная запертость из карты (сброс на новом матче)
+	keypadFor     string          // §16.7: keypad — id двери, которой управляет
+	gasArmAt      time.Time       // газ (§14.2): момент последнего взвода клапана; нулевой = не взведён
+	gasArmCount   uint64          // газ: счётчик взводов для ключа накопленного долга (resync-устойчив)
+	vulnedBy      map[uint64]bool // хакеры с завершённым vulnscan (M2: навсегда)
+	watcherBy     map[uint64]bool // хакеры с установленным watcher-триггером (§13.1)
+	firewalled    uint64          // хозяин firewall-фильтра точки входа (§13.5; 0 = нет)
+	antivirused   uint64          // хозяин antivirus-процесса (§13.6; 0 = нет)
 
 	// backplane — switch: суммарная шина транзита, МБ/с (§16.3). Все
 	// трансферы/сканы ЧЕРЕЗ свитч делят её по-честному; слабый свитч = узкое
@@ -252,6 +255,16 @@ type device struct {
 	// watcherLogCap записей; пишется пока на устройстве есть хотя бы один
 	// watcher, читается хозяевами в scan.devices[].log.
 	log []logEntry
+
+	// yaw/pitch/baseYaw/basePitch/patrol — камера (§13.7 M6-конус):
+	// ориентация — состояние сервера (map даёт стартовую), конус видимости
+	// считается от yaw; base* — для автопатруля и сброса матча. patrol —
+	// сервер сам ведёт объектив синусом от baseYaw.
+	yaw       float64
+	pitch     float64
+	baseYaw   float64
+	basePitch float64
+	patrol    bool
 }
 
 // logEntry — запись журнала событий watcher'а (§13.1 №1, §13.2): тик + что
@@ -411,6 +424,16 @@ func buildCyber(m *gameMap) *cyberState {
 			cs.gases = append(cs.gases, d)
 		}
 		if d.kind == "camera" {
+			// §13.7 M6-конус: стартовая ориентация из карты; 0/0 → в центр
+			// карты (ту же логику держит клиент для меша — один источник
+			// правды, дублирование только формулой по bounds).
+			if p.Yaw == 0 && p.Pitch == 0 {
+				d.yaw = math.Atan2(m.Bounds[0]/2-p.Pos[0], m.Bounds[2]/2-p.Pos[2])
+			} else {
+				d.yaw = p.Yaw
+			}
+			d.pitch = p.Pitch
+			d.baseYaw, d.basePitch = d.yaw, d.pitch
 			cs.cameras = append(cs.cameras, d)
 		}
 		cs.devices[d.id] = d
@@ -1514,6 +1537,11 @@ func (w *world) resetCyberMatchState() {
 		d.antivirused = 0
 		d.jobs = nil
 		d.log = nil
+		// §13.7 M6: ориентация камер — к стартовой из карты, патруль гаснет.
+		if d.kind == "camera" {
+			d.yaw, d.pitch = d.baseYaw, d.basePitch
+			d.patrol = false
+		}
 	}
 	for _, pl := range w.players {
 		pl.scanned = nil
@@ -2055,6 +2083,60 @@ func (w *world) sendCodes(team int) {
 // у газа (вентиль). Только владелец trojan, лично и из hacker view
 // (джекнутый), и пока устройство достижимо от точки входа — перерубленный
 // кабель отрезает и управление (контр-хакинг §6).
+// handleCamrot — {"t":"camrot","dev","yaw","pitch"} (§13.7 M6-конус):
+// доворот камеры живым союзником владельца (V-mlook или drag по кадру в
+// деке). Ориентация — состояние сервера: переживает закрытие вида, видна
+// союзникам (snap.props), конус видимости следует за yaw. Ручной доворот
+// глушит автопатруль — камера остаётся там, куда повернули.
+func (w *world) handleCamrot(pl *player, msg message) {
+	if !w.camOperableBy(pl, str(msg, "dev")) {
+		return
+	}
+	cam := w.cyber.devices[str(msg, "dev")]
+	cam.patrol = false
+	cam.yaw = num(msg, "yaw")
+	for cam.yaw > math.Pi {
+		cam.yaw -= 2 * math.Pi
+	}
+	for cam.yaw < -math.Pi {
+		cam.yaw += 2 * math.Pi
+	}
+	cam.pitch = math.Max(-1.3, math.Min(1.3, num(msg, "pitch")))
+	w.fireWatchers(cam, pl, "camrot", "")
+}
+
+// handleCampatrol — {"t":"campatrol","dev","on"} (§13.7): тогл автопатруля.
+// Сервер ведёт yaw синусом от baseYaw (§ camFeedTick), pitch — базовый.
+func (w *world) handleCampatrol(pl *player, msg message) {
+	if !w.camOperableBy(pl, str(msg, "dev")) {
+		return
+	}
+	cam := w.cyber.devices[str(msg, "dev")]
+	cam.patrol = msg["on"] == true
+	if cam.patrol {
+		cam.pitch = cam.basePitch // патруль горизонтальный — вертикаль домой
+	}
+	log.Printf("room: camera %s patrol=%v by player %d", cam.id, cam.patrol, pl.id)
+}
+
+// camOperableBy — поворот/патруль доступны как просмотр: камера захвачена и
+// проситель — живой союзник владельца (§13.7). Молча игнорируем чужих:
+// это не боевое действие, denied-шум не нужен.
+func (w *world) camOperableBy(pl *player, devID string) bool {
+	cam := w.cyber.devices[devID]
+	if cam == nil || cam.kind != "camera" || !pl.alive {
+		return false
+	}
+	if cam.owner == 0 {
+		return false
+	}
+	if cam.owner == pl.id {
+		return true
+	}
+	owner, ok := w.players[cam.owner]
+	return ok && w.sameTeam(owner, pl)
+}
+
 func (w *world) handleCtrl(pl *player, msg message) {
 	if !pl.alive {
 		return
@@ -2831,6 +2913,15 @@ type camSeen struct {
 // у пуль). Получает только живой владелец trojan (джекнут или нет — как
 // alert'ы, §5.5); пустой кадр тоже шлётся, чтобы UI чистил ленту.
 func (w *world) camFeedTick() {
+	// автопатруль (§13.7): сервер ведёт объектив синусом от baseYaw —
+	// синхронно у всех (детерминировано от now, без накопления фазы).
+	for _, cam := range w.cyber.cameras {
+		if !cam.patrol {
+			continue
+		}
+		ph := float64(w.now().UnixNano()%int64(camPatrolPeriod)) / float64(camPatrolPeriod)
+		cam.yaw = cam.baseYaw + camPatrolAmp*math.Sin(2*math.Pi*ph)
+	}
 	if w.tick%camFeedEvery != 0 {
 		return
 	}
@@ -2848,6 +2939,20 @@ func (w *world) camFeedTick() {
 			if cam.pos.sub(center).length() > camVisionRadius {
 				continue
 			}
+			// M6-конус (§13.7): камера видит туда, куда смотрит — картинка
+			// и сенсор совпадают (полуугол = полу-fov рендера). Проверяем
+			// горизонтальный угол до цели; вертикаль — радиус уже покрыл.
+			dx, dz := center[0]-cam.pos[0], center[2]-cam.pos[2]
+			if math.Hypot(dx, dz) > 0.5 {
+				ang := math.Atan2(dx, dz)
+				d := math.Abs(ang - cam.yaw)
+				for d > math.Pi {
+					d = 2 * math.Pi - d
+				}
+				if d > camConeHalf {
+					continue
+				}
+			}
 			if w.segmentBlockedAll(cam.pos, center) {
 				continue // камера за стеной/дверью не «рентгенит» (§13.7)
 			}
@@ -2857,7 +2962,15 @@ func (w *world) camFeedTick() {
 				X: p[0], Y: p[1], Z: p[2],
 			})
 		}
-		w.sendTo(owner.id, message{"t": "cam", "dev": cam.id, "seen": seen})
+		// §17.2 vision-миникарта: кадр — ВСЕЙ команде владельца (было: только
+		// владельцу): враг под союзной камерой — затухающая точка на миникарте
+		// союзников; владельцу кадр нужен ещё и для ленты в деке.
+		for _, p := range w.players {
+			if !p.alive || p.team != owner.team {
+				continue
+			}
+			w.sendTo(p.id, message{"t": "cam", "dev": cam.id, "seen": seen})
+		}
 	}
 }
 
@@ -3001,6 +3114,13 @@ func (cs *cyberState) snapProps() []any {
 			// §13.7: LED-индикатор владения в 3D (нейтральная/своя/чужая).
 			if d.owner != 0 {
 				m["owner"] = d.owner
+			}
+			// M6-конус: ориентация объектива — наблюдаема физически, видна
+			// ВСЕМ (куда смотрит камера видно и с земли); patrol — для UI.
+			m["yaw"] = math.Round(d.yaw*100) / 100
+			m["pitch"] = math.Round(d.pitch*100) / 100
+			if d.patrol {
+				m["patrol"] = true
 			}
 		}
 		props = append(props, m)
@@ -3221,8 +3341,8 @@ func (w *world) liftTick() {
 	for i := range w.lifts {
 		l := &w.lifts[i]
 		dyn = append(dyn, collider{
-			Min: [3]float64{l.x - l.half, l.top - l.thick, l.z - l.half},
-			Max: [3]float64{l.x + l.half, l.top, l.z + l.half},
+			Min:  [3]float64{l.x - l.half, l.top - l.thick, l.z - l.half},
+			Max:  [3]float64{l.x + l.half, l.top, l.z + l.half},
 			Kind: "floor",
 		})
 		if l.top <= liftFloor1Y+0.01 && !l.moving {

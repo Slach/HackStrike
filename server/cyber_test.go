@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -699,8 +700,13 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// итерация 5 (§16.6): NETSAFE — +1 устройство и +1 кабель (c38 к s3, ветка 10).
 	// итерация 8 (§16.8): машзал — s6 + SRV2/SRV3 (+3 устройства) и
 	// стояк через зал c39 s1—s6 / c40 s6—s3 + c41/c42 SRV—s6 (+4 кабеля).
-	if len(cs.order) != 36 || len(cs.cables) != 37 || len(cs.doors) != 6 || len(cs.gases) != 2 {
-		t.Fatalf("m1 props: want 36 devices / 35 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
+	// итерация 8-хвост (2026-11-20): s4/s5 — западный/восточный подъёмные
+	// свитчи (+2 устройства): перекоммутация t1/cam1/d1 → s4, t2/cam2/d2/g1
+	// → s5 и стояки c43 s4—s3 / c44 s5—s3 (+2 кабеля) — у s3 четыре аплинка
+	// (s2/s6/s4/s5): сеть хранилища — меш, firewall на одном транзите ветку
+	// больше не отрезает.
+	if len(cs.order) != 38 || len(cs.cables) != 39 || len(cs.doors) != 6 || len(cs.gases) != 2 {
+		t.Fatalf("m1 props: want 38 devices / 37 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {
@@ -727,10 +733,21 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// Аплинки: r1→ближайший s1, r2→ближайший s2 — обе точки входа ведут в сеть.
 	// 2 этаж в графе через стояк c9 s2—s3.
 	reach := cs.reachable("t1")
-	for _, id := range []string{"t1", "t2", "s1", "s2", "d1", "d2", "g1", "g2", "r1", "r2", "cam1", "cam2",
+	for _, id := range []string{"t1", "t2", "s1", "s2", "s4", "s5", "d1", "d2", "g1", "g2", "r1", "r2", "cam1", "cam2",
 		"s3", "t3", "d3", "cam3", "cam4"} {
 		if !reach[id] {
 			t.Fatalf("%s must be reachable from t1 on m1 (радио — через аплинк)", id)
+		}
+	}
+	// Итерация 8-хвост: у s3 ЧЕТЫРЕ аплинка (s2/s6/s4/s5) — хранилище в
+	// меши, firewall на одном транзите ветку не отрезает.
+	ups := make(map[string]bool)
+	for _, n := range cs.neighbors("s3") {
+		ups[n] = true
+	}
+	for _, up := range []string{"s2", "s6", "s4", "s5"} {
+		if !ups[up] {
+			t.Fatalf("s3 must be linked to %s (mesh, итерация 8-хвост)", up)
 		}
 	}
 	// Двери и газ стоят в проходах/комнатах (не пересекают стены) и вне
@@ -2123,7 +2140,7 @@ func cameraTestWorld(t *testing.T) (*world, *time.Time) {
 	 "props":[
 	  {"kind":"terminal","id":"t1","pos":[5,1,8]},
 	  {"kind":"switch","id":"s1","pos":[5,1,15]},
-	  {"kind":"camera","id":"cam1","pos":[20,2.6,20]},
+	  {"kind":"camera","id":"cam1","pos":[20,2.6,20],"yaw":1.5708},
 	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
 	  {"kind":"cable","id":"c2","from":"cam1","to":"s1"}
 	 ]}`
@@ -3628,7 +3645,7 @@ func TestPhysafe(t *testing.T) {
 	if w.physafe.carrier != foe.id {
 		t.Fatalf("any class must be able to take the physafe")
 	}
-	foe.pos = vec3{35, 1, 35} // точка спавна команды 1
+	foe.pos = vec3{35, 1, 35}   // точка спавна команды 1
 	for i := 0; i < 2*30; i++ { // 2 с < канала: не даём врагу выиграть
 		*clock = clock.Add(time.Second / 30)
 		w.simulateTick()
@@ -3773,5 +3790,107 @@ func TestMatchResetCyberState(t *testing.T) {
 	}
 	if devs != 1 {
 		t.Fatalf("jacked player must receive a scan with just the entry point, got %d devices", devs)
+	}
+}
+
+// TestCamCone — §13.7 M6-конус: камера видит только вперёд (полуугол 0.5,
+// как полу-fov рендера), camrot доворачивает (союзник владельца может, чужой
+// — нет), ручной доворот глушит автопатруль, патруль ведёт yaw синусом в
+// пределах ±45° от базы, новый матч возвращает стартовую ориентацию.
+func TestCamCone(t *testing.T) {
+	w, clock := cameraTestWorld(t)
+	h := w.addPlayer(1, "h", "hacker", -1)
+	ally := w.addPlayer(7, "ally", "assault", -1)
+	foe := w.addPlayer(2, "foe", "assault", -1)
+	// addPlayer балансирует команды; тесту нужна конкретная раскладка
+	h.team, ally.team, foe.team = 0, 0, 1
+	cam := w.cyber.devices["cam1"]
+	cam.owner = h.id // trojan уже стоит — тестируем сенсор, не захват
+	// cam1 yaw=1.5708 из тест-карты: конус смотрит на +X.
+	front := w.addPlayer(3, "front", "assault", 1)
+	front.pos = vec3{26, 1, 20} // ~6 м, прямо по курсу
+	side := w.addPlayer(4, "side", "assault", 1)
+	side.pos = vec3{20, 1, 26} // ~6 м, но сбоку (90° от курса)
+	w.takeOut()
+	for i := 0; i < 45; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	frames := camFrames(w.takeOut(), h.id, "cam1")
+	if len(frames) == 0 {
+		t.Fatalf("owner must receive frames")
+	}
+	ids := seenIDs(frames[len(frames)-1])
+	if !ids[front.id] {
+		t.Fatalf("player straight ahead must be seen: %v", ids)
+	}
+	if ids[side.id] {
+		t.Fatalf("player 90° off-course must be outside the cone")
+	}
+
+	// camrot: союзник владельца доворачивает на +Z — теперь виден side,
+	// а front выпал. Чужой доворот игнорируется (молча, §13.7).
+	w.handleMessage(ally, message{"t": "camrot", "dev": "cam1", "yaw": 0, "pitch": 0})
+	if cam.yaw != 0 {
+		t.Fatalf("ally camrot must set yaw, got %v", cam.yaw)
+	}
+	w.handleMessage(foe, message{"t": "camrot", "dev": "cam1", "yaw": 3, "pitch": 9})
+	if cam.yaw != 0 || cam.pitch != 0 {
+		t.Fatalf("foe camrot must be ignored, yaw=%v pitch=%v", cam.yaw, cam.pitch)
+	}
+	for i := 0; i < 16; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	ids = seenIDs(camFrames(w.takeOut(), h.id, "cam1")[0])
+	if !ids[side.id] || ids[front.id] {
+		t.Fatalf("after camrot the cone must follow: %v", ids)
+	}
+
+	// автопатруль: yaw ходит синусом ±45° от базы; camrot его глушит.
+	w.handleMessage(h, message{"t": "campatrol", "dev": "cam1", "on": true})
+	if !cam.patrol {
+		t.Fatalf("campatrol on must set patrol")
+	}
+	sawSwing := false
+	for i := 0; i < 8*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+		if d := math.Abs(cam.yaw - cam.baseYaw); d > 0.1 {
+			sawSwing = true
+		}
+		if d := math.Abs(cam.yaw - cam.baseYaw); d > camPatrolAmp+0.01 {
+			t.Fatalf("patrol must stay within ±amp, d=%v", d)
+		}
+	}
+	if !sawSwing {
+		t.Fatalf("patrol must swing the cone within a period")
+	}
+	w.handleMessage(ally, message{"t": "camrot", "dev": "cam1", "yaw": 0, "pitch": 0})
+	if cam.patrol {
+		t.Fatalf("manual camrot must kill the patrol")
+	}
+
+	// snap.props несёт ориентацию всем (объектив наблюдаем и с земли).
+	w.broadcastSnap()
+	var prop message
+	for _, om := range w.takeOut() {
+		if om.msg["t"] != "snap" {
+			continue
+		}
+		for _, p := range om.msg["props"].([]any) {
+			if pm := p.(message); pm["id"] == "cam1" {
+				prop = pm
+			}
+		}
+	}
+	if prop["yaw"] == nil || prop["pitch"] == nil {
+		t.Fatalf("snap.props must carry camera yaw/pitch: %+v", prop)
+	}
+
+	// новый матч: ориентация — к стартовой из карты, патруль погашен.
+	w.resetCyberMatchState()
+	if cam.yaw != cam.baseYaw || cam.pitch != cam.basePitch || cam.patrol {
+		t.Fatalf("match reset must restore camera pose, yaw=%v patrol=%v", cam.yaw, cam.patrol)
 	}
 }

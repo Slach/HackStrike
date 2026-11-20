@@ -28,6 +28,8 @@ export type ClientMessage =
   | { t: 'enter'; dev: string; code: string } // §16.7: код на клавиатуре d3 / §16.6: у PHYSAFE (dev=physafe)
   | { t: 'takesafe' } // §16.6: кнопка ВЗЯТЬ в паде PHYSAFE (space занят падом)
   | { t: 'ctrl'; dev: string; action: 'toggle' }
+  | { t: 'camrot'; dev: string; yaw: number; pitch: number } // §13.7 M6: доворот камеры союзником владельца
+  | { t: 'campatrol'; dev: string; on: boolean } // §13.7 M6: автопатруль камеры
 
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
@@ -51,6 +53,9 @@ export interface SnapProp {
   radius?: number // radio
   owner?: number // camera (M3 §13.7): LED-индикатор владения; отсутствует = нейтральная
   carriedBy?: number // physafe (§16.6): кто несёт; pos дублирует носителя
+  yaw?: number // camera (§13.7 M6): ориентация объектива, рад
+  pitch?: number // camera (§13.7 M6)
+  patrol?: boolean // camera (§13.7 M6): автопатруль включён
 }
 
 /** Link bandwidth of a scanned device (M5 §16.9, iter 1.5). */
@@ -184,6 +189,7 @@ export type ServerMessage =
   | { t: 'team'; team: number } // server rebalanced me to the other team
   | ({ t: 'snap' } & Snapshot)
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
+  | { t: 'report'; by: number; dir: number; d: number } // M6 §17.1: пеленг выстрела союзника
   | { t: 'death'; by: number; respawnAt: number }
   | { t: 'envkill'; victim: number; owner: number } // M4 (GDD §14.3): broadcast; owner — trojan-владелец ловушки (0 = нейтрали)
   | { t: 'matchend'; winner: number; scores: [number, number]; reason?: string; players?: MatchPlayer[] } // reason=extract|time|frags; players — таблица фрагов (§3.3)
@@ -309,6 +315,11 @@ function parseProp(v: unknown): SnapProp | null {
   if (Number.isFinite(owner) && owner > 0) prop.owner = owner
   const carriedBy = num(p.carriedBy, 0)
   if (carriedBy > 0) prop.carriedBy = carriedBy
+  const yaw = num(p.yaw, Number.NaN)
+  if (Number.isFinite(yaw)) prop.yaw = yaw
+  const pitch = num(p.pitch, Number.NaN)
+  if (Number.isFinite(pitch)) prop.pitch = pitch
+  if (p.patrol === true) prop.patrol = true
   return prop
 }
 
@@ -481,6 +492,13 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       const to = vec3(m.to)
       if (from === null || to === null) return null
       return { t: 'shot', by: num(m.by, -1), hit: num(m.hit, 0), from, to }
+    }
+    case 'report': {
+      // M6 §17.1: пеленг выстрела союзника (dir — рад от меня к стрелку).
+      const dir = num(m.dir, Number.NaN)
+      const d = num(m.d, Number.NaN)
+      if (!Number.isFinite(dir) || !Number.isFinite(d)) return null
+      return { t: 'report', by: num(m.by, -1), dir, d }
     }
     case 'death':
       return { t: 'death', by: num(m.by, -1), respawnAt: num(m.respawnAt, 0) }
@@ -791,6 +809,15 @@ export class GameSocket {
 
   sendCtrl(dev: string, action: 'toggle'): void {
     this.send({ t: 'ctrl', dev, action })
+  }
+
+  // §13.7 M6: доворот/патруль камеры — доступ проверяет сервер.
+  sendCamrot(dev: string, yaw: number, pitch: number): void {
+    this.send({ t: 'camrot', dev, yaw, pitch })
+  }
+
+  sendCampatrol(dev: string, on: boolean): void {
+    this.send({ t: 'campatrol', dev, on })
   }
 
   private trackStats(msg: ServerMessage): void {

@@ -25,7 +25,7 @@ import { Controls } from './controls'
 import { AutoFire, Effects, Scope, type TargetBox } from './combat'
 import { EXTRACT_LORE, Hud } from './hud'
 import { Minimap } from './minimap'
-import type { MiniCyberDev } from './minimap'
+import type { MiniCyberDev, MiniMark } from './minimap'
 import { PropsView } from './props'
 import { CamView } from './camview'
 import { HackView } from './hackview'
@@ -289,6 +289,10 @@ let matchOver = false
 let lastTimeLeft = Number.POSITIVE_INFINITY
 
 let latestMeta = new Map<number, SnapPlayer>()
+// §17.2 vision: враги под союзными камерами — точка живёт 3 с после кадра.
+const camSpotted = new Map<number, { x: number; z: number; at: number }>()
+// §17.1 пеленг: шеврон на стрелка, живёт 1.5 с; бледнеет с дистанцией.
+const shotReports: { x: number; z: number; yaw: number; at: number; d: number }[] = []
 /** Устройства, раскрытые МОИМ portscan'ом (M3 §13.8: кибер-слой миникарты;
  *  персистентны между джек-инами, как devices в hackview — ГДД §12.1). */
 let scanDevs = new Map<string, MiniCyberDev>()
@@ -724,9 +728,29 @@ const sock = new GameSocket({
         break
       }
       case 'cam':
-        // Лента камеры (M3 §13.7): только моей — сервер фильтрует; храним и
-        // вне hackview (открыв таб, увиим последний кадр).
+        // Лента камеры (M3 §13.7 → §17.2): всей команде владельца —
+        // hackview рисует ленту в табе, миникарте оставляем врагов кадра.
         hackview.onCam(msg)
+        for (const s2 of msg.seen) {
+          if (s2.team !== myTeam) camSpotted.set(s2.id, { x: s2.x, z: s2.z, at: performance.now() })
+        }
+        break
+      case 'report':
+        // M6 §17.1: пеленг выстрела союзника — метка-шеврон на миникарте.
+        // dir задан ОТ меня К стрелку на момент выстрела: точка = моя
+        // позиция + вектор dir·d.
+        if (myId !== null) {
+          const me0 = latestMeta.get(myId)
+          if (me0 !== undefined) {
+            shotReports.push({
+              x: me0.x + Math.sin(msg.dir) * msg.d,
+              z: me0.z + Math.cos(msg.dir) * msg.d,
+              yaw: msg.dir,
+              at: performance.now(),
+              d: msg.d,
+            })
+          }
+        }
         break
       case 'radar':
         // Радар-срез watcher'а (M3 §13.1 №3): только мой — сервер фильтрует;
@@ -769,8 +793,12 @@ const hackview = new HackView({
       hackviewOff(true)
       camView.openFor(camId)
     },
+    rotate: (camId, dx, dy) => camView.rotateDev(camId, dx, dy),
+    patrol: (camId, on) => sock.sendCampatrol(camId, on),
   },
 })
+// §13.7 M6: довороты камеры уходят на сервер (local-echo в camview).
+camView.sendCamrot = (dev, yaw, pitch) => sock.sendCamrot(dev, yaw, pitch)
 
 function hackviewOn(msg: JackinMsg): void {
   // §16.7 (плейтест: конфликт PIN-пада и деки): пад держит window-capture
@@ -1377,6 +1405,12 @@ engine.runRenderLoop(() => {
       if (p.id === myId || !p.meta.alive || p.meta.team !== myTeam) continue
       allies.push({ x: p.x, z: p.z })
     }
+    const nowMs = performance.now()
+    for (const [id, sp] of camSpotted) if (nowMs - sp.at > 3000) camSpotted.delete(id)
+    while (shotReports.length > 0 && nowMs - shotReports[0].at > 1500) shotReports.shift()
+    const marks: MiniMark[] = []
+    for (const sp of camSpotted.values()) marks.push({ x: sp.x, z: sp.z, kind: 'cam', alpha: 1 - (nowMs - sp.at) / 3000 })
+    for (const r of shotReports) marks.push({ x: r.x, z: r.z, kind: 'report', alpha: (1 - (nowMs - r.at) / 1500) * (1 - Math.min(1, r.d / 28)), yaw: r.yaw })
     minimap.draw(
       me !== undefined ? { x: me.x, z: me.z, y: me.y, yaw: controls.yaw } : null,
       allies,

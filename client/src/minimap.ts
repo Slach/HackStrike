@@ -13,6 +13,17 @@ export interface MiniAlly {
   z: number
 }
 
+/** Метка «враг замечен» (M6 §17): пеленг выстрела (сектор на стрелка) или
+ *  враг под союзной камерой (затухающая точка). alpha — гашение TTL. */
+export interface MiniMark {
+  x: number
+  z: number
+  kind: 'report' | 'cam'
+  alpha: number
+  /** report: направление НА стрелка (рад, конвенция yaw) — рисуем шеврон. */
+  yaw?: number
+}
+
 export interface MiniSelf {
   x: number
   z: number
@@ -96,6 +107,7 @@ export class Minimap {
     myTeam: number,
     props: readonly MiniProp[] = [],
     cyber: MiniCyber | null = null,
+    marks: readonly MiniMark[] = [],
   ): void {
     // Этаж игрока (плейтест: «миникарта показывает первый этаж хотя я уже
     // ушёл на второй»): слой карты выше STAIR_TOP (1 этаж < 8 < 2 этаж).
@@ -135,6 +147,38 @@ export class Minimap {
       ctx.arc(this.px(a.x), this.pz(a.z), 3, 0, Math.PI * 2)
       ctx.fill()
       ctx.stroke()
+    }
+    // §17: враги замечены — пеленг (шеврон на стрелка) и камерные точки.
+    for (const m of marks) {
+      const a = Math.max(0, Math.min(1, m.alpha))
+      if (a <= 0.02) continue
+      const x = this.px(m.x)
+      const y = this.pz(m.z)
+      if (m.kind === 'report') {
+        ctx.save()
+        ctx.translate(x, y)
+        ctx.rotate(-(m.yaw ?? 0))
+        ctx.strokeStyle = `rgba(255, 210, 80, ${0.9 * a})`
+        ctx.fillStyle = `rgba(255, 210, 80, ${0.35 * a})`
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(0, -6)
+        ctx.lineTo(4.5, 3)
+        ctx.lineTo(0, 1)
+        ctx.lineTo(-4.5, 3)
+        ctx.closePath()
+        ctx.fill()
+        ctx.stroke()
+        ctx.restore()
+      } else {
+        ctx.strokeStyle = `rgba(255, 96, 120, ${0.85 * a})`
+        ctx.fillStyle = `rgba(255, 96, 120, ${0.28 * a})`
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.arc(x, y, 3.5, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
     }
     if (me !== null) {
       ctx.save()

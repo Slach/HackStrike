@@ -1621,6 +1621,59 @@
         aspect-ratio: 16 / 9;
         background: #020a05;
         image-rendering: auto;
+        touch-action: none; /* §13.7 M6: drag по кадру = доворот, не скролл */
+        cursor: grab;
+      }
+      .cam-live:active { cursor: grabbing; }
+      /* §13.7 M6: управление камерой под кадром — патруль, компас, подсказка */
+      .cam-ctl {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        max-width: 420px;
+        margin: 6px auto 0;
+        width: 100%;
+      }
+      .cam-patrol {
+        font: inherit;
+        font-size: 11px;
+        letter-spacing: 1px;
+        color: #baffdd;
+        background: rgba(4, 18, 11, 0.7);
+        border: 1px solid rgba(55, 255, 155, 0.4);
+        border-radius: 3px;
+        padding: 4px 8px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .cam-patrol.on {
+        color: #37ff9b;
+        border-color: rgba(55, 255, 155, 0.8);
+        background: rgba(55, 255, 155, 0.12);
+      }
+      .cam-compass {
+        flex: 1;
+        height: 10px;
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 2px;
+        position: relative;
+        background:
+          repeating-linear-gradient(90deg, rgba(55, 255, 155, 0.25) 0 1px, transparent 1px 12.5%);
+      }
+      .cam-compass-mark {
+        position: absolute;
+        top: -4px;
+        left: var(--cam-dir, 50%);
+        transform: translateX(-50%);
+        color: #78e6ff;
+        font-size: 10px;
+        line-height: 1;
+      }
+      .cam-ctl-hint {
+        font-size: 9px;
+        letter-spacing: 1px;
+        color: rgba(170, 255, 210, 0.5);
+        white-space: nowrap;
       }
       .cam-stage.tap { cursor: pointer; }
       .cam-owner-chip { color: rgba(170, 255, 210, 0.75); }
