@@ -777,6 +777,9 @@
         text-align: justify;
         font-size: 17px;
         line-height: 1.8;
+        /* старт −50%: текст УЖЕ нижней третью в кадре (плейтест «вместо
+           финала — чёрный экран»: от 0% он въезжал только к 14-й секунде);
+           финиш −300%: уходит за верх целиком в пределах 26 с */
         animation: crawlUp 26s linear forwards;
       }
       .crawl-text h3 {
@@ -789,10 +792,10 @@
       }
       @keyframes crawlUp {
         from {
-          transform: translateY(0);
+          transform: translateY(-50%);
         }
         to {
-          transform: translateY(-240%);
+          transform: translateY(-300%);
         }
       }
       .crawl-skip {
