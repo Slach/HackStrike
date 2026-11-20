@@ -1995,6 +1995,19 @@
         font-size: 10px;
         opacity: 0.7;
       }
+      /* §15.28 (ревебр owner): владение объектом в палитре — цветом подписи:
+         зелёный «ВЫ»/союзник, жёлтый «НЕЙТРАЛЬНО», красный «ВРАГ <ник>».
+         Красятся device-хешты touch-дерева и desktop-кандидатов; статусы
+         («УЖЕ В ТАБАХ», MEM, «ПРОГРАММА») класса не получают. */
+      .hv-pal-hintc.pal-you {
+        color: #37ff9b;
+      }
+      .hv-pal-hintc.pal-neut {
+        color: #ffd237;
+      }
+      .hv-pal-hintc.pal-enemy {
+        color: #ff4d5e;
+      }
       .hv-pal-more {
         font-size: 10px;
         color: rgba(170, 255, 210, 0.5);

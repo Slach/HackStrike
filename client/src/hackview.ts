@@ -138,6 +138,9 @@ interface PalCand {
   data?: string // item: имя данных
   label: string
   hint: string
+  /** §15.28: владение для цветовой подсветки hint'а (зелёный/жёлтый/красный);
+   *  undefined — hint показывает не владельца (программа, MEM, «в табах»). */
+  owner?: number | null
 }
 
 const HISTORY_MAX = 60 // 30 с истории при 2 Гц deck-сообщений
@@ -1596,7 +1599,12 @@ export class HackView {
       const b = el('button', 'hv-pal-cand hv-pal-dev')
       const name = txt('span', 'hv-pal-name', `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`)
       b.append(name)
-      b.append(txt('span', 'hv-pal-hintc', this.paletteMode === 'tab' ? this.tabHint(d) : this.ownerLabel(d.owner)))
+      // §15.28: hint окрашен bucket'ом владения, кроме «УЖЕ В ТАБАХ» (это
+      // статус таба, не владение) — там прежняя тусклая подпись.
+      const tabbed = this.paletteMode === 'tab' && this.tabs.some((t) => t.dev === d.id)
+      const hintSpan = txt('span', 'hv-pal-hintc', this.paletteMode === 'tab' ? this.tabHint(d) : this.ownerLabel(d.owner))
+      if (!tabbed) hintSpan.classList.add(this.palOwnerCls(d.owner))
+      b.append(hintSpan)
       b.addEventListener('click', () => {
         if (this.paletteMode === 'tab') {
           this.ensureTab(d.id, true)
@@ -1758,7 +1766,12 @@ export class HackView {
       const b = el('button', 'hv-pal-cand hv-pal-dev')
       b.append(
         txt('span', 'hv-pal-name', `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`),
-        txt('span', 'hv-pal-hintc', d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : this.ownerLabel(d.owner)),
+        (() => {
+          // §15.28: приёмник cp всегда «свой» — MEM-строка не владелец, не красим
+          const s = txt('span', 'hv-pal-hintc', d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : this.ownerLabel(d.owner))
+          if (d.mem === undefined) s.classList.add(this.palOwnerCls(d.owner))
+          return s
+        })(),
       )
       b.addEventListener('click', () => {
         this.closePalette()
@@ -1837,6 +1850,8 @@ export class HackView {
         dev: d.id,
         label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
         hint: ownedOnly && d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : this.ownerLabel(d.owner),
+        // §15.28: MEM-подсказка приёмника cp — не владение, не красим
+        owner: ownedOnly && d.mem !== undefined ? undefined : d.owner,
       })
     }
     return out
@@ -2015,6 +2030,8 @@ export class HackView {
           dev: d.id,
           label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
           hint: isTabMode ? this.tabHint(d) : this.ownerLabel(d.owner),
+          // §15.28: «УЖЕ В ТАБАХ» — статус таба, не владение → owner undefined
+          owner: isTabMode && this.tabs.some((t) => t.dev === d.id) ? undefined : d.owner,
         })
       }
       if (!isTabMode) {
@@ -2096,6 +2113,7 @@ export class HackView {
           dev: d.id,
           label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
           hint: this.ownerLabel(d.owner),
+          owner: d.owner, // §15.28
         })
       }
     } else {
@@ -2121,7 +2139,9 @@ export class HackView {
     cands.slice(0, MAX_SHOWN).forEach((c, i) => {
       const row = el('div', 'hv-pal-cand' + (i === this.paletteSel ? ' sel' : ''))
       row.append(txt('span', 'hv-pal-name', c.label))
-      row.append(txt('span', 'hv-pal-hintc', c.hint))
+      const hintEl = txt('span', 'hv-pal-hintc', c.hint)
+      if (c.owner !== undefined) hintEl.classList.add(this.palOwnerCls(c.owner)) // §15.28
+      row.append(hintEl)
       if (IS_TOUCH) {
         // Тап по кандидату = тот же Enter (ГДД §15.2): выделение ставим на него
         // и запускаем — на телефоне Tab/↑↓ недоступны.
@@ -2421,6 +2441,16 @@ export class HackView {
     if (owner === null) return '#7d8f85' // нейтральный серый
     if (owner === this.myId) return '#ffffff'
     return this.deps.teamOf(owner) === this.deps.teamOf(this.myId ?? -1) ? '#ffffff' : '#ff4d5e'
+  }
+
+  /** §15.28 (ревебр owner): владение в палитре — цветом подписи-хеша:
+   *  зелёный «ВЫ»/союзник, жёлтый нейтрально, красный враг. Три bucket'а —
+   *  в палитре надо за тап/глаз понять «можно ли трогать», детали чьё-то
+   *  имя несут текстом. */
+  private palOwnerCls(owner: number | null): string {
+    if (owner === null) return 'pal-neut'
+    if (owner === this.myId) return 'pal-you'
+    return this.deps.teamOf(owner) === this.deps.teamOf(this.myId ?? -1) ? 'pal-you' : 'pal-enemy'
   }
 
   /** Firewall чей (§13.5): свой / союзный / чужой — подпись бейджа. */
