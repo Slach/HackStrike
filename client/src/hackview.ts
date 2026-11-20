@@ -3348,13 +3348,15 @@ export class HackView {
       ref.count.textContent = `ЦЕЛЕЙ: ${seen?.length ?? 0}`
       ref.list.replaceChildren()
       ref.tags.replaceChildren()
-      ref.empty.classList.toggle('hidden', (seen?.length ?? 0) > 0)
+      // «СЕКТОР ЧИСТ» — ОДИН стейт поверх кадра (плейтест 2026-11-20: был
+      // дубль — оверлей на кадре + заголовок в ленте снизу). До первого
+      // кадра оверлей скрыт (звать сектор чистым рано), лента — телеметрия.
+      ref.empty.classList.toggle('hidden', seen !== undefined && seen.length === 0)
       if (seen === undefined) {
         ref.list.append(txt('div', 'cam-empty', 'ОЖИДАНИЕ КАДРА…'))
         continue
       }
       if (seen.length === 0) {
-        ref.list.append(txt('div', 'cam-empty-title', 'СЕКТОР ЧИСТ'))
         const last = this.camLastContact.get(ref.dev)
         const lastText =
           last !== undefined
