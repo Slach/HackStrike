@@ -223,6 +223,10 @@ export class PropsView {
   private readonly codeDoors = new Map<string, SimpleProp & { door: string }>()
   private readonly cables = new Map<string, CableView>()
   private readonly cameras = new Map<string, CameraView>()
+  /** §13.7 REC: setViewing от main (fullscreen/панели), фаза мигания, часы. */
+  private camViewing = new Set<string>()
+  private recPhase = true
+  private recT = 0
   private readonly gases = new Map<string, GasView>()
   private readonly fires = new Map<string, FireView>()
   private readonly valves = new Map<string, ValveView>()
@@ -653,14 +657,36 @@ export class PropsView {
   }
 
   private tintCamera(cam: CameraView): void {
+    this.applyLed(cam)
+  }
+
+  /** Базовый цвет LED владения (без REC-мигания). */
+  private baseLed(cam: CameraView): Color3 {
     if (cam.owner === null || this.ownerState === null) {
-      cam.led.emissiveColor = new Color3(0.3, 0.38, 0.34) // нейтральная: тускло-серый
-      return
+      return new Color3(0.3, 0.38, 0.34) // нейтральная: тускло-серый
     }
     // LED владения: своё — белый (WhiteHat/союзник), чужое — красный
     // (чёрный LED не виден на тёмном корпусе камеры).
-    cam.led.emissiveColor =
-      this.ownerState(cam.owner) === 'own' ? new Color3(1, 1, 1) : new Color3(1.0, 0.3, 0.37)
+    return this.ownerState(cam.owner) === 'own' ? new Color3(1, 1, 1) : new Color3(1.0, 0.3, 0.37)
+  }
+
+  /** §13.7 REC-мигание: LED «пишущей» камеры пульсирует 1 Гц затемнением —
+   *  видно с земли, что в неё сейчас смотрят (V или таб hackview). */
+  private applyLed(cam: CameraView): void {
+    const base = this.baseLed(cam)
+    if (this.camViewing.has(cam.id) && this.recPhase) {
+      base.scaleInPlace(0.18)
+    }
+    cam.led.emissiveColor = base
+  }
+
+  /** Камеры, на которые сейчас смотрят (fullscreen-V / панели деки). main
+   *  зовёт каждый кадр; мигание тикает в tick(), перекраска — на фазе. */
+  setViewing(ids: Iterable<string>): void {
+    const next = new Set(ids)
+    const changed = next.size !== this.camViewing.size || [...next].some((i) => !this.camViewing.has(i))
+    this.camViewing = next
+    if (changed) for (const c of this.cameras.values()) this.applyLed(c)
   }
 
   /** Газ (M4 §14.2): AABB-объём ловушки — полупрозрачный fill + каркас из
@@ -1075,6 +1101,14 @@ export class PropsView {
   }
 
   tick(dtSec: number): void {
+    // §13.7 REC-мигание: фаза 0.5 с on / 0.5 с dim
+    this.recT += dtSec
+    const phase = this.recT % 1 < 0.5
+    if (phase !== this.recPhase) {
+      this.recPhase = phase
+      for (const c of this.cameras.values())
+        if (this.camViewing.has(c.id)) this.applyLed(c)
+    }
     // §16.12: платформы лифтов — плавный спуск к target-Y; крышка проёма
     // закрывается, как только платформа ушла на 1F (targetY ≈ 1)
     for (const l of this.lifts.values()) {

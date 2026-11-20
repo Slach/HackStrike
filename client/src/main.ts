@@ -1154,6 +1154,9 @@ engine.runRenderLoop(() => {
   camView.apply()
   scene.activeCamera = camView.visible ? camView.camera : camera
   syncCamOverlay()
+  // §13.7 REC-мигание: модель «пишущей» камеры (в которую смотрят — fullscreen
+  // V или панели деки) пульсирует LED 1 Гц — видно с земли, что её наблюдают.
+  propsView?.setViewing(camView.active && camView.currentId ? [camView.currentId] : camView.visiblePanels.keys())
   // §13.7 (плейтест 2026-11-20 «в режиме V вертишь mlook, дезориентация на
   // выходе»): под видом камеры look тела заморожен — мышь крутит не тело
   // (его yaw сохраняется, выход в ту же сторону), а WASD ходит по-прежнему
