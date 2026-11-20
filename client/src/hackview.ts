@@ -1423,15 +1423,23 @@ export class HackView {
       this.closePalette()
       return
     }
-    if (e.key === 'Tab' || e.key === 'ArrowDown') {
+    // Стрелки — ТОЛЬКО подсветка кандидата (плейтест M5: «вниз сразу
+    // выбирает первый объект, когда их три»); ввод не трогаем — дописывание
+    // токена осталось за Tab, запуск подсвеченного — Enter.
+    if (e.key === 'ArrowDown') {
       e.preventDefault()
-      this.paletteCycle(1)
+      this.paletteMove(1)
       return
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault()
       if (pal.input.value.trim() === '') this.recallHistory()
-      else this.paletteCycle(-1)
+      else this.paletteMove(-1)
+      return
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      this.paletteCycle(1)
       return
     }
     if (e.key === 'Enter') {
@@ -2167,6 +2175,16 @@ export class HackView {
 
   /** Tab/↑↓: цикл по кандидатам; первый выбор дописывает токен в строку.
    *  В ls-листинге (§16.2) двигаем только выделение — строку не трогаем. */
+  /** Стрелки: двигаем ТОЛЬКО подсветку по списку кандидатов (строку ввода
+   *  не трогаем — в отличие от Tab-цикла, плейтест M5 «вниз сразу выбирает
+   *  первый объект»). Enter по подсвеченному — paletteRun. */
+  private paletteMove(dir: 1 | -1): void {
+    if (this.palette === null || this.palette.input === null || this.paletteCands.length === 0) return
+    const len = this.paletteCands.length
+    this.paletteSel = this.paletteSel < 0 ? (dir > 0 ? 0 : len - 1) : (this.paletteSel + dir + len) % len
+    this.updatePalette()
+  }
+
   private paletteCycle(dir: 1 | -1): void {
     const pal = this.palette
     if (pal === null || pal.input === null || this.paletteCands.length === 0) return

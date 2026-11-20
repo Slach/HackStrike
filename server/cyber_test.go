@@ -2735,6 +2735,28 @@ func TestSafeKeyRegen(t *testing.T) {
 // TestCpRmMidFlight — POSIX-семантика rm у cp (плейтест M5, симметрично
 // decrypt): источник rm-нут mid-flight — трансфер доносит снапшот старта
 // («открытый дескриптор»), а не молча глотает результат на финише.
+// TestMatchResetWipesChaffCopies — плейтест M5 «между раундами неправильное
+// содержимое на srv2/srv3»: chaff-копии (и расшифрованные!) door_key/safe_key
+// на ЛЮБЫХ хостах не переживают границу матча.
+func TestMatchResetWipesChaffCopies(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	w.takeOut()
+	t1 := w.cyber.devices["t1"]
+	t1.items = []dataItem{
+		{Name: "door_key_02_13", MB: 60, Enc: false, Code: "1234"},
+		{Name: "safe_key", MB: 120, Enc: true},
+		{Name: "notes", MB: 5, Enc: false},
+	}
+	w.matchActive = false
+	w.matchRestartAt = w.now().Add(matchRestartDelay)
+	*clock = clock.Add(matchRestartDelay + time.Second)
+	w.simulateTick() // новый матч
+	if len(t1.items) != 1 || t1.items[0].Name != "notes" {
+		t.Fatalf("new match must wipe door_key/safe_key copies from ALL hosts, got %v", t1.items)
+	}
+	_ = h
+}
+
 func TestCpRmMidFlight(t *testing.T) {
 	w, h, clock := cpSetup(t)
 	t1 := w.cyber.devices["t1"]
