@@ -115,10 +115,14 @@ export class TouchOverlay {
    *  pointerdown/смена сектора/pointerup/ДЕЙСТВИЕ. Без коллбэка — noop. */
   onActivity: (() => void) | null = null
 
-  /** §13.7: кнопка КАМ — тап-эквивалент V (открыть вид камеры / следующая). */
+  /** §13.7: кнопка КАМЕРЫ — тап-эквивалент V (открыть вид камеры / следующая).
+   *  §15.35 (ревебр owner): переименована из «КАМ», показывается только когда
+   *  есть захваченная камера союзников — setCamVisible вызывается из
+   *  snap-хэндлера main.ts. */
   onCam: (() => void) | null = null
 
   private readonly root: HTMLElement
+  private readonly cam: HTMLButtonElement
   private readonly pad: HTMLElement
   private readonly segs: Record<'up' | 'down' | 'left' | 'right', HTMLElement>
   private readonly look: HTMLElement
@@ -182,15 +186,18 @@ export class TouchOverlay {
     // Справа столбик: ДЕЙСТВИЕ над кругом прицела (оба под правый палец).
     const rightCol = document.createElement('div')
     rightCol.className = 'tc-right'
-    // §13.7: КАМ — тап-эквивалент V: открыть вид камеры / следующая камера.
-    const cam = document.createElement('button')
-    cam.className = 'tc-cam'
-    cam.textContent = 'КАМ'
-    cam.addEventListener('pointerdown', (e) => {
+    // §13.7: КАМЕРЫ — тап-эквивалент V: открыть вид камеры / следующая
+    // камера. §15.35: скрыта пока нет ни одной захваченной камеры союзников
+    // (setCamVisible из main), чтобы не светить мёртвую кнопку.
+    this.cam = document.createElement('button')
+    this.cam.className = 'tc-cam'
+    this.cam.textContent = 'КАМЕРЫ'
+    this.cam.style.display = 'none'
+    this.cam.addEventListener('pointerdown', (e) => {
       e.preventDefault()
       this.onCam?.()
     })
-    rightCol.append(act, cam, this.look)
+    rightCol.append(act, this.cam, this.look)
     this.root.append(this.pad, rightCol)
     document.body.append(this.root)
   }
@@ -213,6 +220,12 @@ export class TouchOverlay {
     if (!this.interactQueued) return 0
     this.interactQueued = false
     return 1
+  }
+
+  /** §15.35: видимость кнопки КАМЕРЫ — только при захваченных камерах
+   *  союзников (владение приходит снапшотами, main синкает на каждый snap). */
+  setCamVisible(on: boolean): void {
+    this.cam.style.display = on ? 'flex' : 'none'
   }
 
   // ── крестина: позиционный хит-тест (палец скользит по кресту, не по кнопкам) ──

@@ -69,7 +69,7 @@ if (IS_TOUCH) {
   document.body.classList.add('touch')
   startKeyboardTracker()
   touch = new TouchOverlay(controls)
-  touch.onCam = () => camToggle() // §13.7: КАМ = V (открыть/следующая)
+  touch.onCam = () => camToggle() // §13.7: КАМЕРЫ = V (открыть/следующая)
 }
 const views = new PlayerViews(scene)
 const buffer = new SnapshotBuffer()
@@ -379,6 +379,9 @@ function handleSnap(snap: SnapMsg): void {
       propsView.cameraViews(),
       (owner) => owner !== null && myId !== null && (owner === myId || latestMeta.get(owner)?.team === myTeam),
     )
+    // §15.35 (ревебр owner): кнопка КАМЕРЫ на тапе светится только когда есть
+    // на что смотреть — владение приходит снапшотами, синк на каждый snap.
+    touch?.setCamVisible(camView.hasCameras())
   }
   hud.setRoster(snap.players, myId)
   const me = myId !== null ? latestMeta.get(myId) : undefined
@@ -960,12 +963,14 @@ function syncCamOverlay(): void {
     const rec = document.createElement('span')
     rec.className = 'camhud-rec'
     rec.textContent = '● REC'
+    // §15.35: явные классы zin/zout (nth-of-type не матчился — первый button
+    // в рамке это ×, и − оставалась без right, вставая поверх текста hint)
     const zin = document.createElement('button')
-    zin.className = 'camhud-zoom'
+    zin.className = 'camhud-zoom zin'
     zin.textContent = '+'
     zin.addEventListener('click', (e) => { e.stopPropagation(); camView.zoomBy((camView.currentId ?? ''), 1.3) })
     const zout = document.createElement('button')
-    zout.className = 'camhud-zoom'
+    zout.className = 'camhud-zoom zout'
     zout.textContent = '−'
     zout.addEventListener('click', (e) => { e.stopPropagation(); camView.zoomBy((camView.currentId ?? ''), 1 / 1.3) })
     box.append(x, rec, label, zin, zout, hint)

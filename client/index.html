@@ -1706,21 +1706,30 @@
         left: 12px;
         animation: camrec 1s steps(2, start) infinite;
       }
+      /* §15.35 (ревебр owner: «контролы голубые, криво расположены кнопки
+         zoom»): прошлый nth-of-type(1/2) не матчился — nth-of-type считает
+         по типу <button>, а первый button внутри camhud — это ×. Одна кнопка
+         получала right, вторая (без right) выпадала в flex-поток поверх
+         текста подсказки. Теперь явные классы, trio [− + ×] в одну линию
+         с REC; base padding держит под ними место, в hint-состоянии
+         (камер нет) зум не нужен и скрыт. */
       .camhud-zoom {
         position: absolute;
-        top: 26px;
-        width: 22px;
-        height: 22px;
+        top: 4px;
+        width: 24px;
+        height: 24px;
         border: 1px solid rgba(120, 230, 255, 0.5);
+        border-radius: 4px;
         background: rgba(2, 12, 16, 0.8);
         color: #bdefff;
         font: inherit;
-        font-size: 13px;
-        line-height: 1;
+        font-size: 14px;
+        line-height: 22px;
+        text-align: center;
         cursor: pointer;
       }
-      .camhud-zoom:nth-of-type(1) { right: 8px; }
-      .camhud-zoom:nth-of-type(2) { right: 34px; }
+      .camhud-zoom.zin { right: 34px; }
+      .camhud-zoom.zout { right: 60px; }
       @keyframes camrec {
         50% { opacity: 0.25; }
       }
@@ -2769,7 +2778,9 @@
         flex-direction: column;
         align-items: center;
         gap: 2px;
-        padding: 8px 34px 8px 16px;
+        /* §15.35: padding-right под трио [− + ×] (88px) — текст подсказки не
+           заезжает под кнопки; в hint-состоянии (камер нет) зум скрыт */
+        padding: 8px 88px 8px 16px;
         border: 1px solid rgba(120, 230, 255, 0.55);
         border-radius: 8px;
         background: rgba(2, 12, 16, 0.72);
@@ -2794,7 +2805,10 @@
         font-size: 16px;
         cursor: pointer;
       }
-      .camhud.hint { cursor: default; border-color: rgba(255, 159, 67, 0.6); color: #ffcf9f; }
+      /* §15.35: в подсказке «НЕТ КАМЕР» зум-кнопки не нужны — прячутся, а
+         padding возвращается к старому (место под trio не нужно) */
+      .camhud.hint { cursor: default; border-color: rgba(255, 159, 67, 0.6); color: #ffcf9f; padding-right: 34px; }
+      .camhud.hint .camhud-zoom { display: none; }
       /* touch: topbar компактнее (≈8+36) и с safe-area — своя база ниже него */
       body.touch .camhud { bottom: calc(84px + env(safe-area-inset-bottom)); }
       .camhud.hint .camhud-label { color: #ff9f43; }
