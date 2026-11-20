@@ -914,7 +914,7 @@ export class HackView {
     const row = el('div', 'cprow')
     row.append(
       txt('span', 'cptitle', `${PROG_LABEL[prog as RunProg] ?? prog.toUpperCase()}${dev === '' ? '' : ` · ${dev.toUpperCase()}`}`),
-      txt('span', 'cpdst', dev === '' ? 'ПОИСК СЕТИ' : 'СКАНИРОВАНИЕ'),
+      txt('span', 'cpdst', dev === '' ? 'ПОИСК СЕТИ' : prog === 'vulnscan' || prog === 'portscan' ? 'СКАНИРОВАНИЕ' : 'УСТАНОВКА'),
     )
     const bar = el('div', 'cpbar')
     const fill = el('div', 'cpbar-fill')
