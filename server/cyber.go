@@ -803,6 +803,10 @@ type program struct {
 	data string
 	mb   int
 	mbps float64
+	// enc — снапшот Enc источника на старте: POSIX-семантика rm (как у
+	// decrypt): item могли удалить mid-flight — трансфер доносит снапшот,
+	// «открытый дескриптор» (плейтест M5: финиш молча глотал результат).
+	enc bool
 }
 
 func progWork(name string) float64 {
@@ -1134,6 +1138,39 @@ func deckHasItem(pl *player, name string) bool {
 		}
 	}
 	return false
+}
+
+// hostItemIndex/deckItemIndex — индекс item'а по имени (−1 = нет): финиш
+// cp/mv берёт источник по индексу (mv вырезает), чтобы не тащить мутабельную
+// ссылку по циклу.
+func hostItemIndex(dev *device, name string) int {
+	for i, it := range dev.items {
+		if it.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func deckItemIndex(pl *player, name string) int {
+	for i, it := range pl.items {
+		if it.Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// cpSnapshot — POSIX-«открытый дескриптор» (§16.2, как у decrypt): источник
+// могли rm-нуть mid-flight — трансфер всё равно доносит снапшот старта.
+// Код расшифрованного item'а — текущего поколения (кто расшифровал до старта
+// трансфера, тот код уже знает через codes).
+func (w *world) cpSnapshot(p *program) dataItem {
+	d := dataItem{Name: p.data, MB: p.mb, Enc: p.enc}
+	if !p.enc {
+		d.Code = w.decryptCodeOf(p.data)
+	}
+	return d
 }
 
 // cpNominal — номинальная бутылочка маршрута (МБ/с): min по bw кабелей
@@ -1689,6 +1726,7 @@ func (w *world) handleCp(pl *player, srcID, dstID, dataName, prog string) {
 		dev: srcID, dst: dstID, data: it.Name, mb: it.MB,
 		work: float64(it.MB) / mbps, // прогресс в секундах чистой полосы
 		path: path, mbps: mbps,
+		enc: it.Enc, // POSIX-снапшот источника (rm mid-flight, как у decrypt)
 	}
 	pl.progs = append(pl.progs, p)
 	pl.nextProgID++
@@ -2295,38 +2333,44 @@ func (w *world) completeProgram(pl *player, p *program) {
 		}
 		if p.dst == "deck" {
 			if src := w.cyber.devices[p.dev]; src != nil {
-				for i, it := range src.items {
-					if it.Name == p.data {
-						pl.items = append(pl.items, it)
-						if p.prog == "mv" {
-							src.items = append(src.items[:i], src.items[i+1:]...)
-						}
-						break
+				i := hostItemIndex(src, p.data)
+				var d dataItem
+				if i >= 0 {
+					d = src.items[i]
+					if p.prog == "mv" {
+						src.items = append(src.items[:i], src.items[i+1:]...)
 					}
+				} else {
+					d = w.cpSnapshot(p)
 				}
+				pl.items = append(pl.items, d)
 			}
 		} else if dst := w.cyber.devices[p.dst]; dst != nil {
 			// deck→host (chaff) и host→host.
 			if p.dev == "deck" {
-				for i, it := range pl.items {
-					if it.Name == p.data {
-						dst.items = append(dst.items, it)
-						if p.prog == "mv" {
-							pl.items = append(pl.items[:i], pl.items[i+1:]...)
-						}
-						break
+				i := deckItemIndex(pl, p.data)
+				var d dataItem
+				if i >= 0 {
+					d = pl.items[i]
+					if p.prog == "mv" {
+						pl.items = append(pl.items[:i], pl.items[i+1:]...)
 					}
+				} else {
+					d = w.cpSnapshot(p)
 				}
+				dst.items = append(dst.items, d)
 			} else if src := w.cyber.devices[p.dev]; src != nil {
-				for i, it := range src.items {
-					if it.Name == p.data {
-						dst.items = append(dst.items, it)
-						if p.prog == "mv" {
-							src.items = append(src.items[:i], src.items[i+1:]...)
-						}
-						break
+				i := hostItemIndex(src, p.data)
+				var d dataItem
+				if i >= 0 {
+					d = src.items[i]
+					if p.prog == "mv" {
+						src.items = append(src.items[:i], src.items[i+1:]...)
 					}
+				} else {
+					d = w.cpSnapshot(p)
 				}
+				dst.items = append(dst.items, d)
 			}
 		}
 		w.sendScan(pl) // листинг/память приёмника-источника обновить

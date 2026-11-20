@@ -2698,6 +2698,27 @@ func TestMvDeckTransfer(t *testing.T) {
 	}
 }
 
+// TestCpRmMidFlight — POSIX-семантика rm у cp (плейтест M5, симметрично
+// decrypt): источник rm-нут mid-flight — трансфер доносит снапшот старта
+// («открытый дескриптор»), а не молча глотает результат на финише.
+func TestCpRmMidFlight(t *testing.T) {
+	w, h, clock := cpSetup(t)
+	t1 := w.cyber.devices["t1"]
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	if findProg(h, "cp") == nil {
+		t.Fatalf("cp not started")
+	}
+	// rm прямо в полёте: имя исчезло, трансфер продолжает идти
+	t1.items = nil
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.items) != 1 || h.items[0].Name != "door_key" || h.items[0].MB != 60 {
+		t.Fatalf("POSIX: cp must deliver the snapshot after mid-flight rm, items=%v", h.items)
+	}
+}
+
 // TestCpCopyKeepsSrc — §16.2 ревизия 3 (владелец «cp это КОПИРОВАНИЕ»):
 // cp оставляет экземпляр в источнике — MEM занят на обеих сторонах;
 // точный повтор dup; та же копия на другой приёмник легальна.
