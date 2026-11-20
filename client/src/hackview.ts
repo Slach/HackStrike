@@ -98,6 +98,26 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
 /** Скан-программы — у них живая карточка с % (deck.pct), не тост-«ЗАПУЩЕНО». */
 const SCAN_PROGS: ReadonlySet<string> = new Set(['portscan', 'vulnscan', 'trojan', 'watcher', 'firewall', 'antivirus'])
 
+/** Проги дока деки/таба: на тапе без цифр-хоткеев (§15.27), desktop с ними.
+ *  Общий для `buildDeckPane` и дока таба устройства (§15.31). */
+const DOCK_PROGS: readonly (readonly [string, RunProg])[] = IS_TOUCH
+  ? [
+      ['PORTSCAN', 'portscan'],
+      ['VULNSCAN', 'vulnscan'],
+      ['TROJAN', 'trojan'],
+      ['WATCHER', 'watcher'],
+      ['FIREWALL', 'firewall'],
+      ['ANTIVIRUS', 'antivirus'],
+    ]
+  : [
+      ['1 PORTSCAN', 'portscan'],
+      ['2 VULNSCAN', 'vulnscan'],
+      ['3 TROJAN', 'trojan'],
+      ['4 WATCHER', 'watcher'],
+      ['5 FIREWALL', 'firewall'],
+      ['6 ANTIVIRUS', 'antivirus'],
+    ]
+
 /** Программы слэш-палитры (ГДД §13.3) — порядок = порядок ряда хоткеев 1..6. */
 const PALETTE_PROGS: readonly RunProg[] = [
   'portscan',
@@ -2692,6 +2712,32 @@ export class HackView {
     return box
   }
 
+  /** Ряд кнопок запуска (§15.31 — вынесен из buildDeckPane, общий с табом
+   *  устройства на тапе). На тапе — плитки без цифр-хоткеев, бейдж цели
+   *  `·S2`; desktop — «1 PORTSCAN → ЦЕЛЬ?» (§13.3). `dev` — таб устройства:
+   *  программы запускаются на ЭТО устройство (контекст вместо глобальной
+   *  цели), палитра сразу на уровне программ, суффикс цели не нужен. */
+  private buildRunDock(dev: string | null = null): HTMLElement {
+    const run = el('div', 'hv-run' + (dev !== null ? ' pane-run' : ''))
+    for (const [label, prog] of DOCK_PROGS) {
+      const b = el('button', 'hv-btn')
+      b.textContent = dev !== null ? label : label + this.targetSuffix()
+      b.addEventListener('click', () => (dev !== null ? this.runProgAt(prog, dev) : this.runProg(prog)))
+      run.append(b)
+    }
+    // §16.2: одна кнопка данных — палитра с листингом активного таба
+    const dataBtn = el('button', 'hv-btn')
+    dataBtn.textContent = IS_TOUCH ? 'ДАННЫЕ' : '7 DATA'
+    dataBtn.addEventListener('click', () => this.dataEntry())
+    run.append(dataBtn)
+    // [ / ] — тап-эквивалент клавиши '/' (ГДД §15.2): на мобильнике хоткея нет.
+    const slash = el('button', 'hv-btn hv-btn-slash')
+    slash.textContent = IS_TOUCH ? 'ПАЛИТРА' : '/ ПАЛИТРА'
+    slash.addEventListener('click', () => this.openPalette('run', dev))
+    run.append(slash)
+    return run
+  }
+
   private buildDeckPane(body: HTMLElement): void {
     // Графики — одной горизонтальной строкой НАД контентом (плейтест M3:
     // в узкой левой колонке канвасы наезжали на карту сети).
@@ -2715,42 +2761,7 @@ export class HackView {
     this.deckDataBox = inv
     this.deckMemLine = memLine
 
-    const run = el('div', 'hv-run')
-    // §15.27: на тапе цифры-хоткеи бессмысленны (клавиатуры нет), суффикс
-    // «→ ЦЕЛЬ?» съедает ширину плитки — на кнопках чистое имя программы.
-    const PROGS: readonly (readonly [string, RunProg])[] = IS_TOUCH
-      ? [
-          ['PORTSCAN', 'portscan'],
-          ['VULNSCAN', 'vulnscan'],
-          ['TROJAN', 'trojan'],
-          ['WATCHER', 'watcher'],
-          ['FIREWALL', 'firewall'],
-          ['ANTIVIRUS', 'antivirus'],
-        ]
-      : [
-          ['1 PORTSCAN', 'portscan'],
-          ['2 VULNSCAN', 'vulnscan'],
-          ['3 TROJAN', 'trojan'],
-          ['4 WATCHER', 'watcher'],
-          ['5 FIREWALL', 'firewall'],
-          ['6 ANTIVIRUS', 'antivirus'],
-        ]
-    for (const [label, prog] of PROGS) {
-      const b = el('button', 'hv-btn')
-      b.textContent = label + this.targetSuffix()
-      b.addEventListener('click', () => this.runProg(prog))
-      run.append(b)
-    }
-    // §16.2: одна кнопка данных — палитра с листингом активного таба
-    const dataBtn = el('button', 'hv-btn')
-    dataBtn.textContent = IS_TOUCH ? 'ДАННЫЕ' : '7 DATA'
-    dataBtn.addEventListener('click', () => this.dataEntry())
-    run.append(dataBtn)
-    // [ / ] — тап-эквивалент клавиши '/' (ГДД §15.2): на мобильнике хоткея нет.
-    const slash = el('button', 'hv-btn hv-btn-slash')
-    slash.textContent = IS_TOUCH ? 'ПАЛИТРА' : '/ ПАЛИТРА'
-    slash.addEventListener('click', () => this.openPalette('run'))
-    run.append(slash)
+    const run = this.buildRunDock()
 
     const right = el('div', 'deck-right')
     const netmapBox = el('div', 'hv-netmap')
@@ -2837,6 +2848,7 @@ export class HackView {
       body.append(wrap)
       this.doorRefs.push({ dev, kind: d.kind, status, btn })
       this.appendWatchPanel(body, dev, d)
+      if (IS_TOUCH) body.append(this.buildRunDock(dev)) // §15.31
       return
     }
     if (d.kind === 'camera') {
@@ -2867,6 +2879,7 @@ export class HackView {
       }
       body.append(wrap)
       this.appendWatchPanel(body, dev, d)
+      if (IS_TOUCH) body.append(this.buildRunDock(dev)) // §15.31
       return
     }
     const info = el('div', 'dev-info')
@@ -2986,6 +2999,12 @@ export class HackView {
     info.append(txt('div', 'hv-dim', 'КОНТРОЛЛЕРОВ НЕТ — ЗАГЛУШКА M2'))
     body.append(info)
     this.appendWatchPanel(body, dev, d)
+    // §15.31 (ревебр owner: «и чё, как тут мне теперь сделать vulnscan,
+    // portscan?»): на тапе в табе устройства контент не лезет без дока —
+    // ряд кнопок пристыкован к табам (door/cam/generic). ЦЕЛЬ = это
+    // устройство (контекст, не глобальный this.target), палитра открывается
+    // сразу на уровне его программ.
+    if (IS_TOUCH) body.append(this.buildRunDock(dev))
   }
 
   /** Панель «ПРОЦЕССЫ» (§13.1, ред. 2026-11-17 — бывш. «РАДАР СЕГМЕНТА»):

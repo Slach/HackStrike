@@ -2756,6 +2756,18 @@
         position: absolute; top: 4px; right: 6px; z-index: 3;
         min-width: 36px; min-height: 30px;
       }
+      /* §15.31 (ревебр owner: «как тут мне теперь сделать vulnscan,
+         portscan?»): в табе устройства на тапе док с кнопками был только на
+         ДЕКА — здесь же pane-head/floor скрыты, док пристыкован к контенту
+         (buildRunDock(dev)): цели = устройство таба, sticky по низу скролла
+         контента, фон плотный чтобы инфо-строки не просвечивали. */
+      body.touch .pane-run {
+        position: sticky;
+        bottom: 0;
+        background: rgba(2, 16, 9, 0.96);
+        padding-top: 4px;
+        z-index: 2;
+      }
       /* §15.30 (ревебр owner: «баблы справа загораживают палитру команд»):
          job-карточки на тапе уходят из нижнего угла (там док и bubble
          палитры) в верхний правый угол ПЕЙНА — над картой (pointer-events
