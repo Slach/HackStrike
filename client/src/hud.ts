@@ -10,6 +10,17 @@ import QRCode from 'qrcode'
 const TEAM_END_LABEL = ['WHITEHAT', 'BLACKHAT'] as const // team 0 = WhiteHat (белая, §2)
 /** Лор извлечения (итерация 7, формулировка владельца): ЧТО мы вынесли. */
 export const EXTRACT_LORE = 'ИЗВЛЕЧЕНО: ПРОТОКОЛ «ГЕНЕАЛОГИЯ» — КОМПОНЕНТ ВИРУСА, УБИВАЮЩЕГО ПО ДНК НОСИТЕЛЯ И ВСЕХ ЕГО ДЕТЕЙ'
+
+/** Полёт-титры extract-победы (плейтест M5 «как в звёздных войнах =)»):
+ *  тот же лор «ГЕНЕАЛОГИИ», развёрнутый до заставки. HTML статичен. */
+const CRAWL_HTML = `
+<h3>ПРОТОКОЛ «ГЕНЕАЛОГИЯ»</h3>
+<p>Крышка PHYSAFE ещё дымится. Внутри — не золото и не код. Внутри — протокол.</p>
+<p>«ГЕНЕАЛОГИЯ» — компонент вируса, убивающего по ДНК носителя. И всех его детей. И детей его детей. Корпорация называла это «санитарией родословных»: цель исчезает не одна — исчезает линия крови.</p>
+<p>Заказчик платил за то, чтобы список целей никогда не всплыл. Теперь он у вас. Распечатка на термо-бумаге, сорок тысяч строк, каждая строка — человек.</p>
+<p>Протокол нельзя запустить. Пока нельзя. Но тот, кто знает ЧТО искать, соберёт остальное. Где-то в сети есть второй контейнер…</p>
+<p>КОНЕЦ ПЕРВОЙ ОПЕРАЦИИ.</p>
+`
 const KILLFEED_ROWS = 5
 const KILLFEED_FADE_MS = 4000
 const END_RESTART_MS = 30000
@@ -317,6 +328,7 @@ export class Hud {
   private joinCls: Cls = 'assault'
   /** Меню паузы: карточки классов залочены — живой класс не меняется. */
   private joinCardsLocked = false
+  private crawlTimer = 0
   private joinTeam = -1 // -1 = авто-баланс; выбор хранится в localStorage
   private deathCls: Cls = 'assault'
   private mapReady = false
@@ -374,6 +386,8 @@ export class Hud {
     endTitle: byId('endTitle'),
     endScore: byId('endScore'),
     endCount: byId('endCount'),
+    crawl: byId('crawl'),
+    crawlText: byId('crawlText'),
     hpFill: byId('hpfill'),
     hpNum: byId('hpNum'),
     clsLabel: byId('clsLabel'),
@@ -550,6 +564,8 @@ export class Hud {
         this.el.settings.classList.add('hidden')
         this.el.invite.classList.add('hidden')
       }
+      // скип полёт-титров любой клавишей
+      if (!this.el.crawl.classList.contains('hidden')) this.hideCrawl()
       // Хоткеи команд A/W/B (десктоп, по e.code — любая раскладка): кликаем
       // сегмент команды на join. Из поля ника — не перехватываем.
       if (!this.el.join.classList.contains('hidden') && !e.repeat) {
@@ -572,6 +588,7 @@ export class Hud {
       if (cont.classList.contains('hidden')) return
       cont.querySelectorAll<HTMLElement>('.card')[idx]?.click()
     })
+    this.el.crawl.addEventListener('click', () => this.hideCrawl())
     // Enter в join-окне = ДЕПЛОЙ (в том числе прямо из поля ника). В меню
     // паузы деплой скрыт — Enter там ничего не делает.
     document.addEventListener('keydown', (e) => {
@@ -1121,9 +1138,30 @@ export class Hud {
     if (!this.endActive) return
     this.endActive = false
     this.el.end.classList.add('hidden')
+    this.hideCrawl() // рестарт не ждёт титров
     const done = this.onEndDone
     this.onEndDone = null
     done?.()
+  }
+
+  /** Полёт-титры extract-победы: чёрный экран поверх end-панели, текст
+   *  уходит в перспективу 26 с; скип — любая клавиша/клик (или рестарт). */
+  showCrawl(): void {
+    if (!this.el.crawl.classList.contains('hidden')) return
+    this.el.crawlText.innerHTML = CRAWL_HTML
+    this.el.crawl.classList.remove('hidden')
+    // рестарт анимации при повторном показе: пересоздаём узел стиля не нужно —
+    // форсируем reflow снятием/установкой класса анимации
+    this.el.crawlText.style.animation = 'none'
+    void this.el.crawlText.offsetWidth
+    this.el.crawlText.style.animation = ''
+    window.clearTimeout(this.crawlTimer)
+    this.crawlTimer = window.setTimeout(() => this.hideCrawl(), 26500)
+  }
+
+  hideCrawl(): void {
+    window.clearTimeout(this.crawlTimer)
+    this.el.crawl.classList.add('hidden')
   }
 
   stats(s: NetStats): void {
