@@ -55,6 +55,12 @@ const (
 	physafeChannelWork     = 3.0
 	physafeBaseChannelWork = 6.0
 	portscanWork  = 2.0 // с работы при полной CPU-доле (§12.4)
+
+	// §12.4 ревизия (плейтест «4 раза нажал 1 — и вся сеть видна»):
+	// разведка дорожает с размером УЖЕ известной сети — work сканa =
+	// portscanWork × (1 + 0.25 × открытых устройств). Первые хопи быстрые,
+	// поздняя разведка (когда карта большая) — заметное ожидание.
+	portscanFogFactor = 0.25
 	vulnscanWork  = 3.0
 	trojanWork    = 2.0
 	watcherWork   = 1.0 // §13.1: пассивный слушатель — дешевле vulnscan'а
@@ -1470,6 +1476,10 @@ func (w *world) handleRun(pl *player, msg message) {
 	work := progWork(prog)
 	if work == 0 {
 		return // неизвестная программа — мусор в протоколе, игнорируем
+	}
+	if prog == "portscan" {
+		// §12.4 ревизия: туман войны дорожает — пропорционально открытому
+		work *= 1 + float64(len(pl.scanned))*portscanFogFactor
 	}
 	devID := str(msg, "dev")
 	if len(pl.progs) >= deckRAM {

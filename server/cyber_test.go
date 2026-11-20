@@ -262,9 +262,10 @@ func TestProgramFairQueues(t *testing.T) {
 		t.Fatalf("exactly one scan after portscan, got %d", scans)
 	}
 
-	// Прогрессивное открытие: второй portscan раскрывает соседей s1 (d1 среди них).
+	// Прогрессивное открытие: второй portscan раскрывает соседей s1 (d1 среди
+	// них). §12.4 ревизия: scanned {t1,s1} → work 3 с = 90 тиков.
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 70; i++ {
+	for i := 0; i < 110; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
@@ -272,28 +273,31 @@ func TestProgramFairQueues(t *testing.T) {
 		t.Fatalf("second portscan must reveal d1, scanned=%v", h.scanned)
 	}
 
-	// Две: каждая 1/2 скорости; portscan (2 с работы) готов на ~120-м тике.
+	// Две: каждая 1/2 скорости; portscan (scanned 4 → 4 с работы, §12.4
+	// ревизия) готов на ~240-м тике, vulnscan (3 с) — сразу после.
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
 	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
-	for i := 0; i < 115; i++ {
+	for i := 0; i < 150; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
 	if len(h.progs) != 2 {
-		t.Fatalf("at 115 ticks neither program must be done (half speed each)")
+		t.Fatalf("at 150 ticks neither program must be done (half speed each)")
 	}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 50; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
-	if len(h.progs) != 1 || h.progs[0].prog != "vulnscan" {
-		t.Fatalf("portscan must finish first at ~120 ticks, progs=%+v", h.progs)
+	// §12.4 ревизия: portscan (4 с) теперь ДОЛЬШЕ vulnscan (3 с) — первым
+	// уходит vulnscan, portscan доедает на полной доле
+	if len(h.progs) != 1 || h.progs[0].prog != "portscan" {
+		t.Fatalf("vulnscan must finish first at ~180 ticks, progs=%+v", h.progs)
 	}
-	if w.cyber.devices["d1"].vulnedBy[h.id] {
-		t.Fatalf("vulnscan must still be running")
+	if !w.cyber.devices["d1"].vulnedBy[h.id] {
+		t.Fatalf("vulnscan must have completed")
 	}
-	// После ухода portscan vulnscan идёт на полной доле: 1 с работы осталось.
-	for i := 0; i < 35; i++ {
+	// После ухода vulnscan portscan идёт на полной доле: остаток работы.
+	for i := 0; i < 80; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
@@ -887,7 +891,7 @@ func TestProgressivePortscan(t *testing.T) {
 	jackAt(w, h, "t1")
 
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 70 && len(h.progs) > 0; i++ {
+	for i := 0; i < 110 && len(h.progs) > 0; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
@@ -899,7 +903,7 @@ func TestProgressivePortscan(t *testing.T) {
 	}
 
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 70 && len(h.progs) > 0; i++ {
+	for i := 0; i < 110 && len(h.progs) > 0; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
