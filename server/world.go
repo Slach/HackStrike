@@ -212,6 +212,7 @@ func (w *world) startMatchIfNeeded() {
 		if !w.doorKeyNameLocked {
 			w.resetDoorKey()
 		}
+		w.resetCyberMatchState()
 		w.doorCodes = map[int]string{}
 		w.safeCodes = map[int]string{}
 		// §16.6: новый матч — сейф дома, каналы сброшены, +10 ещё не давали

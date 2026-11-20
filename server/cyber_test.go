@@ -3562,3 +3562,51 @@ func TestLift(t *testing.T) {
 		t.Fatalf("new match must raise the lifts, top=%v", lift.top)
 	}
 }
+
+// TestMatchResetCyberState — плейтест 2026-11-20 «после нескольких раундов
+// старая мапа»: новый матч сбрасывает СЕТЬ — владельцев, vulned/firewall/
+// antivirus/watcher, открытые двери, запертость d3–d6, SRV-джобы; scanned
+// игроков пуст (туман войны заново), деке уходит пустой scan.
+func TestMatchResetCyberState(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	w.takeOut()
+	// насоздавали состояние прошлого матча
+	t1 := w.cyber.devices["t1"]
+	t1.owner = h.id
+	t1.vulnedBy[h.id] = true
+	t1.watcherBy[h.id] = true
+	t1.firewalled = h.id
+	t1.antivirused = h.id
+	d1 := w.cyber.devices["d1"]
+	d1.open = true
+	srv := w.cyber.devices["srv1"]
+	srv.jobs = append(srv.jobs, &devJob{id: 1, data: "x", mb: 10, by: h.id, team: h.team, progress: 5})
+	h.scanned["netsafe"] = true
+	w.matchActive = false
+	w.matchRestartAt = w.now().Add(matchRestartDelay)
+	*clock = clock.Add(matchRestartDelay + time.Second)
+	w.simulateTick() // новый матч
+	if t1.owner != 0 || len(t1.vulnedBy) != 0 || t1.watcherBy[h.id] || t1.firewalled != 0 || t1.antivirused != 0 {
+		t.Fatalf("new match must wipe owners/soft on devices")
+	}
+	if d1.open {
+		t.Fatalf("new match must close doors")
+	}
+	if len(srv.jobs) != 0 {
+		t.Fatalf("new match must kill leftover SRV jobs")
+	}
+	if h.scanned != nil && len(h.scanned) != 0 {
+		t.Fatalf("new match must clear scanned fog of war, got %v", h.scanned)
+	}
+	empty := true
+	for _, om := range w.takeOut() {
+		if om.to == h.id && om.msg["t"] == "scan" {
+			if devs, ok := om.msg["devices"].([]scanDevice); ok && len(devs) > 0 {
+				empty = false
+			}
+		}
+	}
+	if !empty {
+		t.Fatalf("jacked player must receive an empty scan after reset")
+	}
+}

@@ -219,6 +219,7 @@ type device struct {
 	owner       uint64          // владелец trojan (0 = нейтральное)
 	open        bool            // дверь/газ (§14.2): стартует закрытой
 	locked      bool            // §16.7: d3 заперта код-замком (клавиатура)
+	lockedDefault bool          // исходная запертость из карты (сброс на новом матче)
 	keypadFor   string          // §16.7: keypad — id двери, которой управляет
 	gasArmAt    time.Time       // газ (§14.2): момент последнего взвода клапана; нулевой = не взведён
 	gasArmCount uint64          // газ: счётчик взводов для ключа накопленного долга (resync-устойчив)
@@ -383,6 +384,7 @@ func buildCyber(m *gameMap) *cyberState {
 		}
 		if d.kind == "door" {
 			d.locked = p.Locked
+			d.lockedDefault = p.Locked
 			d.box = aabb{
 				min: vec3{p.Pos[0] - p.Size[0]/2, p.Pos[1], p.Pos[2] - p.Size[2]/2},
 				max: vec3{p.Pos[0] + p.Size[0]/2, p.Pos[1] + p.Size[1], p.Pos[2] + p.Size[2]/2},
@@ -1367,6 +1369,37 @@ func (w *world) doorKeyValid(pl *player, code string) bool {
 		return true
 	}
 	return w.doorKeyPrevCode != "" && code == w.doorKeyPrevCode
+}
+
+// resetCyberMatchState — новый матч = НОВАЯ СЕТЬ (плейтест 2026-11-20
+// «после нескольких раундов в клиенте старая мапа»): trojan'ы/владельцы,
+// vulned/firewall/antivirus/watcher, открытые двери, запертость d3–d6,
+// журналы и SRV-джобы прошлого матча не переезжают; знания скана (scanned)
+// игроков чистятся — туман войны заново (портсить сеть придётся по новой,
+// но карта деки не врёт старыми захватами).
+func (w *world) resetCyberMatchState() {
+	for _, d := range w.cyber.devices {
+		d.owner = 0
+		d.open = false
+		if d.kind == "door" {
+			d.locked = d.lockedDefault
+		}
+		d.gasArmAt = time.Time{}
+		d.gasArmCount = 0
+		d.vulnedBy = make(map[uint64]bool)
+		d.watcherBy = make(map[uint64]bool)
+		d.firewalled = 0
+		d.antivirused = 0
+		d.jobs = nil
+		d.log = nil
+	}
+	for _, pl := range w.players {
+		pl.scanned = nil
+		if pl.jacked && pl.jackHost != nil {
+			w.sendScan(pl) // деке — пустой срез: старая карта уходит с экрана
+		}
+	}
+	log.Printf("room: cyber state reset for new match")
 }
 
 // seedData — стартовые данные матча (§16.1): одно поколение door_key на SRV1.
