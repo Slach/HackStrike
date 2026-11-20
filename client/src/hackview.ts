@@ -2947,7 +2947,7 @@ export class HackView {
           txt('span', 'cam-report-status', 'ЗАХВАЧЕНА'),
         )
         const owner = el('span', 'cam-owner-chip')
-        owner.append('ВЛАД: ', this.ownerSpan(d.owner))
+        owner.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner))
         bar.append(owner)
         time = txt('span', 'cam-report-time', 'T+00:00')
         count = txt('span', 'cam-report-count', 'ЦЕЛЕЙ: 0')
