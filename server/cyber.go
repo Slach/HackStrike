@@ -1383,6 +1383,22 @@ func (w *world) resetDoorKey() {
 	if ns := w.cyber.devices[w.safeKeyHost]; ns != nil {
 		ns.items = []dataItem{{Name: "safe_key", MB: 120, Enc: true}}
 	}
+	// Плейтест M5 «между раундами неправильное содержимое на srv2/srv3»:
+	// chaff-копии door_key/safe_key (в т.ч. РАСШИФРОВАННЫЕ, с кодом прошлого
+	// матча) жили на остальных хостах сквозь границу матча — чистим ВСЕ
+	// устройства, не только дом ключа и деки.
+	for _, d := range w.cyber.devices {
+		if d.id == w.doorKeyHost || d.id == w.safeKeyHost {
+			continue // дом ключа и NETSAFE пересеиваются выше
+		}
+		kept := d.items[:0]
+		for _, it := range d.items {
+			if !strings.HasPrefix(it.Name, "door_key") && it.Name != "safe_key" {
+				kept = append(kept, it)
+			}
+		}
+		d.items = kept
+	}
 	for _, pl := range w.players {
 		kept := pl.items[:0]
 		for _, it := range pl.items {
