@@ -3743,3 +3743,9 @@ paxhistoria.co, но «сильно играбельнее»; матч = опе�
   на выходе»): **под V look тела заморожен** (controls.frozen в render-loop
   по camView.active, снимается иерархично): тело сохраняет yaw, WASD ходит;
   выход из камеры — та же ориентация. §13.7.
+
+- 2026-11-20 (плейтест M5, владелец «SPACE в режиме V нечаянно кидает в
+  hackview»): **ДЕЙСТВИЕ под V мертво**: Space съедается interactInterceptor
+  (в controls он раньше взведения keys.interact), touch-кнопка — consume в
+  sendInputNow; на сервер interact из-под камеры не уходит. Движение не
+  тронуто. §13.7.

@@ -1053,6 +1053,10 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
     {
       const pv = propsView
       controls.interactInterceptor = () => {
+        // §13.7 (плейтест 2026-11-20 «SPACE в режиме V нечаянно джек-инит»):
+        // под видом камеры ДЕЙСТВИЕ проглатывается целиком — ни пада кода,
+        // ни interact на сервер (тело может стоять у терминала/сейфа).
+        if (camView.active) return true
         if (codePad !== null || !playing || hackview.active) return false
         const feetY = camera.position.y - EYE_HEIGHT
         const kp = pv.nearestKeypad(camera.position.x, camera.position.z, feetY)
@@ -1097,7 +1101,9 @@ function sendInputNow(): void {
   lastInputSentAt = performance.now()
   // Touch ДЕЙСТВИЕ — edge как у Space: 1 в ближайший тик (сервер видит rising
   // edge interact); controls.keys.interact при этом остаётся 0 (§15.1).
-  if (touch !== null) controls.keys.interact = touch.consumeInteract()
+  // §13.7: под видом камеры edge тоже гасится (тот же класс, что Space).
+  if (touch !== null)
+    controls.keys.interact = camView.active ? 0 : touch.consumeInteract()
   sock.sendInput(controls.keys, controls.yaw, controls.pitch)
 }
 window.setInterval(() => {
