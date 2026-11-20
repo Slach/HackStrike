@@ -2609,6 +2609,10 @@ type deckProg struct {
 	Prog  string `json:"prog"`
 	Dev   string `json:"dev"`
 	EtaMs int64  `json:"etaMs"`
+	// Pct — доля выполнения 0..1 для ЛЮБОЙ программы: сканы (portscan и
+	// др.) не имеют МБ-прогресса, но их карточка в деке живёт на этой
+	// доле (плейтест M5: «бабл ушёл, а portscan идёт»).
+	Pct float64 `json:"pct"`
 	// cp (§16.9): приёмник, остаток данных и текущая скорость (МБ/с с
 	// учётом доли канала) — прогресс-бар трансфера в деке.
 	Dst    string  `json:"dst,omitempty"`
@@ -2641,7 +2645,7 @@ func (w *world) deckStatusTick() {
 			if remain < 0 {
 				remain = 0
 			}
-			dp := deckProg{ID: pr.id, Prog: pr.prog, Dev: pr.dev, EtaMs: int64(remain * 1000)}
+			dp := deckProg{ID: pr.id, Prog: pr.prog, Dev: pr.dev, EtaMs: int64(remain * 1000), Pct: round3(pr.progress / pr.work)}
 			if pr.prog == "cp" || pr.prog == "mv" {
 				// §16.9: остаток МБ и текущая скорость (доля канала × номинал)
 				dp.Dst = pr.dst

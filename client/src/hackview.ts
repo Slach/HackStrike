@@ -95,6 +95,9 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   decrypt: 'DECRYPT',
 }
 
+/** Скан-программы — у них живая карточка с % (deck.pct), не тост-«ЗАПУЩЕНО». */
+const SCAN_PROGS: ReadonlySet<string> = new Set(['portscan', 'vulnscan', 'trojan', 'watcher', 'firewall', 'antivirus'])
+
 /** Программы слэш-палитры (ГДД §13.3) — порядок = порядок ряда хоткеев 1..6. */
 const PALETTE_PROGS: readonly RunProg[] = [
   'portscan',
@@ -284,6 +287,18 @@ export class HackView {
     missed: number
     seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
   }[] = []
+  /** Карточки сканов (плейтест M5: «бабл ушёл, а portscan идёт»): живой %
+   *  любой скан-программы из deck-сообщения 2 Гц (поле pct), финиш — как у
+   *  cp: «ГОТОВО ✓», не видевшая прогресса карточка — отказ на старте. */
+  private scanCards: {
+    prog: string
+    dev: string // "" у portscan без цели
+    wrap: HTMLElement
+    fill: HTMLElement
+    status: HTMLElement
+    missed: number
+    seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
+  }[] = []
   /** DECRYPT-карточки (§16.4, плейтест «другую анимацию, со %»): голубой
    *  NPU-бар, крупный процент, бегущая hex-строка. Прогресс из двух каналов:
    *  job 1 Гц (SRV-джобы, всей команде) и deck-сообщение 2 Гц (джоба деки);
@@ -415,6 +430,7 @@ export class HackView {
     for (const r of this.jobCards) window.clearInterval(r.timer)
     this.jobCards = []
     this.cpToasts = []
+    this.scanCards = []
     this.toasts.replaceChildren()
     // Дедупликаторы тостов-«находок» живут в синглтоне страницы и переживали
     // смерть/реконнект: повторный vulnscan той же цели приходил как «не новое»
@@ -458,6 +474,7 @@ export class HackView {
     for (const r of this.jobCards) window.clearInterval(r.timer)
     this.jobCards = []
     this.cpToasts = []
+    this.scanCards = []
     this.toasts.replaceChildren()
     this.sparkRefs = []
     this.progLists = []
@@ -875,11 +892,67 @@ export class HackView {
       return
     }
     if (dev !== null) this.target = dev
-    const devSuffix = needDev && target !== null ? ` → ${target.toUpperCase()}` : ''
     this.deps.send(
       needDev && target !== null ? { t: 'run', prog, dev: target } : { t: 'run', prog },
     )
+    // Сканы живут своей карточкой с % (плейтест: «бабл ушёл, а portscan
+    // идёт») — тост-«ЗАПУЩЕНО» у них только дубль.
+    if (SCAN_PROGS.has(prog)) {
+      this.scanCardStart(prog, needDev && target !== null ? target : '')
+      return
+    }
+    const devSuffix = needDev && target !== null ? ` → ${target.toUpperCase()}` : ''
     this.toast(`ЗАПУЩЕНО: ${PROG_LABEL[prog] ?? prog}${devSuffix}`)
+  }
+
+  /** Карточка скана: полоса с % (deck 2 Гц, поле pct) и ETA — portscan
+   *  без цели это «ПОИСК СЕТИ», у целевых сканов цель в заголовке. */
+  private scanCardStart(prog: string, dev: string): void {
+    const wrap = el('div', 'hv-toast hv-cptoast scan')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `${PROG_LABEL[prog as RunProg] ?? prog.toUpperCase()}${dev === '' ? '' : ` · ${dev.toUpperCase()}`}`),
+      txt('span', 'cpdst', dev === '' ? 'ПОИСК СЕТИ' : 'СКАНИРОВАНИЕ'),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    fill.style.width = '0%'
+    bar.append(fill)
+    const status = txt('div', 'cpstatus', '0%')
+    wrap.append(row, bar, status)
+    this.toasts.append(wrap)
+    this.scanCards.push({ prog, dev, wrap, fill, status, missed: 0, seen: false })
+  }
+
+  /** 2 Гц: прогресс скан-карточек из deck-сообщения; два тика без процесса —
+   *  финиш (как у cp-тостов: видевшая прогресс — «ГОТОВО ✓», не видевшая —
+   *  отказ сервера на старте). */
+  private updateScanCards(): void {
+    for (const r of [...this.scanCards]) {
+      const p = this.progs.find((q) => q.prog === r.prog && (q.dev ?? '') === r.dev)
+      if (p !== undefined) {
+        r.seen = true
+        r.missed = 0
+        r.fill.style.width = `${Math.round(p.pct * 100)}%`
+        const eta = Math.ceil(p.etaMs / 1000)
+        r.status.textContent = `${Math.round(p.pct * 100)}% · ${eta} С`
+        continue
+      }
+      r.missed += 1
+      if (r.missed < 2) continue
+      this.scanCards = this.scanCards.filter((x) => x !== r)
+      if (r.seen) {
+        r.wrap.classList.add('ok')
+        r.fill.style.width = '100%'
+        r.status.textContent = 'ГОТОВО ✓'
+        this.fadeCard(r.wrap, 1300)
+      } else {
+        r.wrap.classList.add('fail')
+        r.fill.style.width = '100%'
+        r.status.textContent = 'ОТКАЗ НА СТАРТЕ'
+        this.fadeCard(r.wrap, 2200)
+      }
+    }
   }
 
   // ── команда данных `data` (§16.2) ───────────────────────────────────────
@@ -1152,6 +1225,8 @@ export class HackView {
     // cp-тостам: внутри цикла вызывался только пока существуют cp-тосты,
     // и дековый decrypt без cp висел на 0% (плейтест).
     this.updateJobCards()
+    // Скан-карточки — тот же принцип (вне цикла, каждый deck-тик).
+    this.updateScanCards()
   }
 
   /** Покраснить карточку отказа: красный мигающий бар + причина (§16.2). */

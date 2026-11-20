@@ -2190,6 +2190,30 @@
         margin-top: 4px;
         letter-spacing: 1px;
       }
+      /* Скан-карточка (portscan/vulnscan…): янтарная, чтобы отличалась от
+         зелёного трансфера и голубого NPU-декрипта. */
+      .hv-cptoast.scan {
+        border-color: rgba(255, 200, 90, 0.55);
+        color: #ffe9b8;
+        box-shadow: 0 0 16px rgba(255, 190, 80, 0.16);
+      }
+      .hv-cptoast.scan .cpbar {
+        background: rgba(255, 220, 150, 0.12);
+      }
+      .hv-cptoast.scan .cpbar-fill {
+        background: repeating-linear-gradient(
+          45deg,
+          #ffc355 0 6px,
+          rgba(255, 195, 85, 0.45) 6px 12px
+        );
+      }
+      .hv-cptoast.scan.ok {
+        border-color: rgba(255, 200, 90, 0.9);
+        box-shadow: 0 0 18px rgba(255, 190, 80, 0.4);
+      }
+      .hv-cptoast.scan.ok .cpbar-fill {
+        background: #ffc355;
+      }
       .hv-cptoast.ok {
         border-color: rgba(90, 255, 170, 0.9);
         box-shadow: 0 0 18px rgba(90, 255, 170, 0.4);

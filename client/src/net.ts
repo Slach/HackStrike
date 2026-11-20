@@ -121,6 +121,7 @@ export interface DeckProg {
   prog: string
   dev: string | null
   etaMs: number
+  pct: number // доля выполнения 0..1 любой программы (сканы без МБ-прогресса)
   dst?: string // cp/mv: приёмник ("deck" | hostId)
   data?: string // cp/mv/rm/decrypt: имя item
   mbLeft?: number // cp/mv/decrypt: остаток МБ
@@ -410,6 +411,7 @@ function parseDeckProg(v: unknown): DeckProg | null {
     prog,
     dev: str(p.dev),
     etaMs: Math.max(0, num(p.etaMs, 0)),
+    pct: Math.min(1, Math.max(0, num(p.pct, 0))),
   }
   const dst = str(p.dst)
   if (dst !== null) d.dst = dst
