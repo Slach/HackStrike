@@ -2143,7 +2143,10 @@ export class HackView {
     } else if (subFirst) {
       // «/cp⏎» на объекте: ключи активного хоста; выбор перепишет строку в
       // каноническую reverse-форму `<key> cp` (см. paletteRun).
-      const qk = trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
+      // Фильтр — по КЛЮЧУ (второй токен), не по подкоманде: «rm» сам по себе
+      // не префикс имён, и список был пуст (плейтест M5 «почему для rm нет
+      // кандидатов»).
+      const qk = tokens.length < 2 ? '' : trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
       for (const it of this.dataHostItems(activeHost)) {
         const text = this.itemText(it.n, activeHost)
         if (qk !== '' && !text.toLowerCase().startsWith(qk) && !it.n.toLowerCase().startsWith(qk)) continue
