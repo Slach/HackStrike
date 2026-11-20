@@ -41,6 +41,9 @@ export interface HackViewDeps {
   /** Джек-аут по тапу на touch (ГДД §15.2): на телефоне Ctrl/Cmd+ALT+DEL
    *  физически недоступен, кнопка ВЫХОД в шапке дека — его touch-эквивалент. */
   jackout: () => void
+  /** §13.7 живой вид камеры: таб камеры показывает реальный кадр. attach —
+   *  рендерить камеру camId в canvas панели; detach — панель закрыта. */
+  camLive?: { attach: (canvas: HTMLCanvasElement, camId: string) => void; detach: () => void }
 }
 
 const DENIED_TEXT: Readonly<Record<string, string>> = {
@@ -420,6 +423,8 @@ export class HackView {
    *  статуса/кнопки без перестройки DOM. kind нужен для подписи статуса. */
   private doorRefs: { dev: string; kind: 'door' | 'gas' | 'valve'; status: HTMLElement; btn: HTMLButtonElement }[] = []
   private camRefs: { dev: string; list: HTMLElement; time: HTMLElement; count: HTMLElement }[] = []
+  /** §13.7: canvas живого кадра в табе камеры (одна панель за раз). */
+  private camLiveCanvas: HTMLCanvasElement | null = null
   private radarRefs: { dev: string; list: HTMLElement; count: HTMLElement }[] = []
 
   constructor(private deps: HackViewDeps) {
@@ -497,6 +502,11 @@ export class HackView {
   deactivate(): void {
     if (!this._active) return
     this._active = false
+    // §13.7: живой кадр камеры живёт только в открытой деке.
+    if (this.camLiveCanvas !== null) {
+      this.deps.camLive?.detach()
+      this.camLiveCanvas = null
+    }
     this.menuOpen = false
     this.closePalette()
     this.netmapZoom = HackView.NETMAP_ZOOM0 // зум/пан карты не переживает сессию деки
@@ -1205,7 +1215,7 @@ export class HackView {
       this.toast('ИСТОЧНИК = ПРИЁМНИК')
       return
     }
-    this.sendData('cp', src.host, src.key, dst)
+    this.sendData(sub === 'mv' ? 'mv' : 'cp', src.host, src.key, dst)
     this.pushHistoryClose(pal.input.value.trim())
   }
 
@@ -2166,6 +2176,11 @@ export class HackView {
     } else if (revMode) {
       // reverse: item выбран → подкоманда → приёмник
       if (this.paletteTok === 0) {
+        // «de…» — и item, и команда decrypt: item-префикс не должен
+        // вытеснять команду из списка.
+        if ('decrypt'.startsWith(dq)) {
+          cands.push({ kind: 'decryptcmd', text: 'decrypt', label: 'DECRYPT', hint: 'КЛЮЧ — NPU-ДЖОБА' })
+        }
         for (const it of revItems) {
           cands.push({
             kind: 'item',
@@ -2193,6 +2208,12 @@ export class HackView {
       // не префикс имён, и список был пуст (плейтест M5 «почему для rm нет
       // кандидатов»).
       const qk = tokens.length < 2 ? '' : trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
+      // «de» — префикс и подкоманды data decrypt, и команды decrypt:
+      // подкоманда не должна вытеснять саму команду из списка (плейтест:
+      // «куда decrypt после de делся?»).
+      if ('decrypt'.startsWith(dq)) {
+        cands.push({ kind: 'decryptcmd', text: 'decrypt', label: 'DECRYPT', hint: 'КЛЮЧ — NPU-ДЖОБА' })
+      }
       for (const it of this.dataHostItems(activeHost)) {
         const text = this.itemText(it.n, activeHost)
         if (qk !== '' && !text.toLowerCase().startsWith(qk) && !it.n.toLowerCase().startsWith(qk)) continue
@@ -2478,6 +2499,39 @@ export class HackView {
         return
       }
     }
+    // Форма `<cmd> <key> [dst]` (cp/mv/rm первыми токеном, набранное руками):
+    // палитра канонизирует её в reverse-форму при вставке, но ввод вручную
+    // раньше уходил в «НЕТ ТАКОЙ ПРОГРАММЫ» — cp не программа палитры.
+    if ((t0 === 'cp' || t0 === 'mv' || t0 === 'rm') && finalTokens[1] !== undefined) {
+      const keyTok = finalTokens[1].toLowerCase()
+      const at = keyTok.indexOf('@')
+      const name = at >= 0 ? keyTok.slice(0, at) : keyTok
+      const hint = at >= 0 ? this.dataHostAt(keyTok.slice(at + 1)) : null
+      const src = this.resolveDataSrc(name, hint)
+      if (src !== null) {
+        if (t0 === 'rm') {
+          this.sendData('rm', src.host, src.key, null)
+          this.pushHistoryClose(raw)
+          return
+        }
+        let dst = 'deck'
+        if (finalTokens[2] !== undefined) {
+          const dh = this.dataHostAt(finalTokens[2].toLowerCase())
+          if (dh === null) {
+            this.toast('НЕТ ТАКОГО ПРИЁМНИКА — TAB ПОКАЖЕТ СПИСОК')
+            return
+          }
+          dst = dh
+        }
+        if (dst === src.host) {
+          this.toast('ИСТОЧНИК = ПРИЁМНИК')
+          return
+        }
+        this.sendData(t0, src.host, src.key, dst)
+        this.pushHistoryClose(raw)
+        return
+      }
+    }
     // Кандидат-item первого токена (reverse без подкоманды) — дописываем и
     // ждём cp/rm; кандидат-datacmd — листинг цели.
     if (sel !== undefined && sel.kind === 'item' && this.paletteTok === 0) {
@@ -2614,6 +2668,13 @@ export class HackView {
 
   private render(): void {
     if (!this._active) return
+    // §13.7: живой кадр камеры привязан к canvas прошлой панели — панель
+    // пересобирается, старая стоит detached: отцепляем, таб камеры заново
+    // сделает attach (attachPanel/detachPanel в camview).
+    if (this.camLiveCanvas !== null) {
+      this.deps.camLive?.detach()
+      this.camLiveCanvas = null
+    }
     // render() перестраивает DOM целиком — фокус с клавиатуры (линки ходятся
     // табом/стрелками, плейтест M4) восстанавливаем по data-link чипу.
     const refocusLink =
@@ -2866,14 +2927,26 @@ export class HackView {
       return
     }
     if (d.kind === 'camera') {
-      // §13.7: сенсор — «картинка в UI» это лента наблюдения (видео — M7+).
-      // Плейтест M3: лента = «рапорт» — шапка (id/статус/T+/цели) + строки-
-      // профили целей; пустой кадр — осмысленный стейт «СЕКТОР ЧИСТ».
+      // §13.7: сенсор — «картинка в UI» теперь ЖИВОЙ КАДР (ревебр владельца
+      // 2026-11-20: «в hackview тоже должна быть картинка с камеры, а не
+      // тупо журнал»). Лента-«рапорт» остаётся подпись под кадром: шапка
+      // (id/статус/T+/цели) + строки-профили; пустой кадр — «СЕКТОР ЧИСТ».
       const wrap = el('div', 'cam-ui')
       const camOwn = el('div', 'cam-owner')
       camOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner), ' · РАДИУС 12 М + LOS')
       wrap.append(camOwn)
       if (d.owner === this.myId) {
+        // Живой кадр: canvas 16:9, рендер camCam и блит из рендер-канваса
+        // (deps.camLive из main — hackview не знает про Babylon).
+        if (this.deps.camLive !== undefined) {
+          const live = document.createElement('canvas')
+          live.className = 'cam-live'
+          live.width = 320
+          live.height = 180
+          wrap.append(live)
+          this.deps.camLive.attach(live, dev)
+          this.camLiveCanvas = live
+        }
         const report = el('div', 'cam-report')
         const head = el('div', 'cam-report-head')
         const id = txt('span', 'cam-report-id', dev.toUpperCase())

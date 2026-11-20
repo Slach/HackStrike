@@ -49,6 +49,10 @@ export interface MapProp {
   /** fire → id своего водяного клапана; valve → switch в сети (§14.6.1). */
   to: string | null
   locked: boolean
+  /** camera → направление объектива (рад, 0 = +Z; §13.7 живой вид). */
+  yaw: number
+  /** camera → наклон объектива (рад, + = вверх), 0 по умолчанию. */
+  pitch: number
 }
 
 const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe', 'lift', 'liftbtn']
@@ -82,6 +86,8 @@ function parseMapProps(raw: readonly unknown[]): MapProp[] {
       axis: r.axis === 'z' ? 'z' : 'x',
       to: typeof r.to === 'string' && r.to.length > 0 ? r.to : null,
       locked: r.locked === true,
+      yaw: typeof r.yaw === 'number' && Number.isFinite(r.yaw) ? r.yaw : 0,
+      pitch: typeof r.pitch === 'number' && Number.isFinite(r.pitch) ? r.pitch : 0,
       points: Array.isArray(r.points)
         ? r.points.flatMap((p): [number, number, number][] => {
             const t = tuple3(p)
@@ -129,6 +135,9 @@ interface CameraView {
   fy: number
   led: StandardMaterial
   owner: number | null
+  /** Направление объектива из данных карты (§13.7 живой вид). */
+  yaw: number
+  pitch: number
 }
 
 /** Газ (M4 §14.2): ловушка-объём с AABB как у двери. Клиент рисует только
@@ -289,7 +298,7 @@ export class PropsView {
           view.buildCable(prop.id, prop.points)
           break
         case 'camera':
-          view.buildCamera(prop.id, prop.pos)
+          view.buildCamera(prop.id, prop.pos, prop.yaw, prop.pitch)
           break
         case 'gas':
           view.buildGas(prop.id, prop.pos, prop.size)
@@ -607,14 +616,15 @@ export class PropsView {
   }
 
   /** Камера наблюдения (§13.7): кронштейн + корпус + линза + LED владения. */
-  private buildCamera(id: string, pos: readonly [number, number, number]): void {
+  private buildCamera(id: string, pos: readonly [number, number, number], yaw = 0, pitch = 0): void {
     const body = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.34, height: 0.24, depth: 0.42 }, this.scene)
     body.position.set(pos[0], pos[1], pos[2])
     body.material = this.mats.body
     body.isPickable = false
     const lens = MeshBuilder.CreateCylinder(`prop.${id}.lens`, { diameter: 0.14, height: 0.06 }, this.scene)
     lens.rotation.x = Math.PI / 2
-    lens.position.set(pos[0], pos[1], pos[2] + 0.24)
+    // Линза — на стороне взгляда: объектив смотрит по yaw (§13.7 живой вид)
+    lens.position.set(pos[0] + Math.sin(yaw) * 0.24, pos[1], pos[2] + Math.cos(yaw) * 0.24)
     lens.material = this.mats.antenna
     lens.isPickable = false
     // LED — свой материал на камеру: цвет динамический (владение из снапа).
@@ -625,7 +635,7 @@ export class PropsView {
     ledMesh.position.set(pos[0], pos[1] + 0.16, pos[2])
     ledMesh.material = led
     ledMesh.isPickable = false
-    const cam: CameraView = { id, x: pos[0], z: pos[2], fy: pos[1], led, owner: null }
+    const cam: CameraView = { id, x: pos[0], z: pos[2], fy: pos[1], led, owner: null, yaw, pitch }
     this.cameras.set(id, cam)
     this.tintCamera(cam)
   }
@@ -1336,6 +1346,14 @@ export class PropsView {
 
   miniProps(): readonly MiniProp[] {
     return this.miniCache
+  }
+
+  /** Живой вид камеры (§13.7): позиция/владение/направление всех камер.
+   *  Доступно всем — владелец камеры уже публичен в snap.props. */
+  cameraViews(): readonly { id: string; x: number; y: number; z: number; yaw: number; pitch: number; owner: number | null }[] {
+    const out: { id: string; x: number; y: number; z: number; yaw: number; pitch: number; owner: number | null }[] = []
+    for (const c of this.cameras.values()) out.push({ id: c.id, x: c.x, y: c.fy, z: c.z, yaw: c.yaw, pitch: c.pitch, owner: c.owner })
+    return out.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }))
   }
 
   private known(id: string): boolean {

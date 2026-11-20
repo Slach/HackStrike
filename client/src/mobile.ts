@@ -115,6 +115,9 @@ export class TouchOverlay {
    *  pointerdown/смена сектора/pointerup/ДЕЙСТВИЕ. Без коллбэка — noop. */
   onActivity: (() => void) | null = null
 
+  /** §13.7: кнопка КАМ — тап-эквивалент V (открыть вид камеры / следующая). */
+  onCam: (() => void) | null = null
+
   private readonly root: HTMLElement
   private readonly pad: HTMLElement
   private readonly segs: Record<'up' | 'down' | 'left' | 'right', HTMLElement>
@@ -179,7 +182,15 @@ export class TouchOverlay {
     // Справа столбик: ДЕЙСТВИЕ над кругом прицела (оба под правый палец).
     const rightCol = document.createElement('div')
     rightCol.className = 'tc-right'
-    rightCol.append(act, this.look)
+    // §13.7: КАМ — тап-эквивалент V: открыть вид камеры / следующая камера.
+    const cam = document.createElement('button')
+    cam.className = 'tc-cam'
+    cam.textContent = 'КАМ'
+    cam.addEventListener('pointerdown', (e) => {
+      e.preventDefault()
+      this.onCam?.()
+    })
+    rightCol.append(act, cam, this.look)
     this.root.append(this.pad, rightCol)
     document.body.append(this.root)
   }

@@ -27,6 +27,7 @@ import { EXTRACT_LORE, Hud } from './hud'
 import { Minimap } from './minimap'
 import type { MiniCyberDev } from './minimap'
 import { PropsView } from './props'
+import { CamView } from './camview'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
 import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen } from './mobile'
@@ -51,6 +52,8 @@ const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement
 // (скриншот meatview для invite-заставки, §15.5).
 const engine = new Engine(canvas, true, { preserveDrawingBuffer: true })
 const { scene, camera } = createScene(engine)
+// §13.7 живой вид камер: вторая камера в той же сцене — V подменяет картинку.
+const camView = new CamView(scene)
 
 const hud = new Hud()
 const controls = new Controls(canvas)
@@ -66,6 +69,7 @@ if (IS_TOUCH) {
   document.body.classList.add('touch')
   startKeyboardTracker()
   touch = new TouchOverlay(controls)
+  touch.onCam = () => camToggle() // §13.7: КАМ = V (открыть/следующая)
 }
 const views = new PlayerViews(scene)
 const buffer = new SnapshotBuffer()
@@ -365,6 +369,13 @@ function handleSnap(snap: SnapMsg): void {
       ? (owner) => (owner === myId || latestMeta.get(owner)?.team === myTeam ? 'own' : 'foe')
       : null,
   )
+  // Живой вид камер: доступны камеры, захваченные СОЮЗНИКОМ (или мной).
+  if (propsView !== null) {
+    camView.setCameras(
+      propsView.cameraViews(),
+      (owner) => owner !== null && myId !== null && (owner === myId || latestMeta.get(owner)?.team === myTeam),
+    )
+  }
   hud.setRoster(snap.players, myId)
   const me = myId !== null ? latestMeta.get(myId) : undefined
   // Самоисцеление десинка (плейтест M2-2): сервер считает нас джекнутыми, а
@@ -745,12 +756,19 @@ const hackview = new HackView({
     sock.sendJackout()
     hackviewOff(true)
   },
+  // §13.7: живой кадр камеры в табе деки — рендерим camCam и блитим в canvas
+  // панели (рендер-канвас с preserveDrawingBuffer, §15.5).
+  camLive: {
+    attach: (cv, camId) => camView.attachPanel(cv, camId),
+    detach: () => camView.detachPanel(),
+  },
 })
 
 function hackviewOn(msg: JackinMsg): void {
   // §16.7 (плейтест: конфликт PIN-пада и деки): пад держит window-capture
   // keydown и глотает цифры/Enter/Esc деки — при джек-ине закрываем его.
   closeCodePad()
+  camView.close() // §13.7: вид камер — meatview-режим, дека его вытесняет
   hackview.activate(msg, propsView?.hostKind(msg.host) ?? null)
   document.body.classList.add('hackmode') // прячет FPS-HUD (CSS)
   controls.frozen = true // взгляд и клавиши не меняют состояние тела
@@ -798,6 +816,73 @@ window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null) return
   if (playing && myCls === 'hacker') cyberMapOn = !cyberMapOn
 })
+
+// §13.7 живой вид камер: V — открыть/следующая, Esc — вернуться в meatview.
+// Хоткей только при игре и не в hackview (там V — буква палитры).
+let camHintUntil = 0
+function camToggle(): void {
+  if (!camView.hasCameras()) {
+    // камер союзников нет — короткая подсказка вместо тихого no-op
+    camHintUntil = performance.now() + 1500
+    syncCamOverlay()
+    return
+  }
+  camView.toggle()
+}
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'KeyV' || e.repeat || !playing || hackview.active) return
+  if (e.target instanceof HTMLElement && e.target.closest('button, input, .card, .chk, .segBtn') !== null) return
+  camToggle()
+})
+// Esc: под pointer-lock до страницы не доходит — поэтому ещё и потеря lock
+// (exiting the capture) закрывает вид, как и on-screen ×.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !camView.active) return
+  camView.close()
+})
+// Под pointer-lock Esc выходит из захвата и до страницы не доходит —
+// потеря lock (или уход в деку/смерть) тоже закрывает вид камеры.
+document.addEventListener('pointerlockchange', () => {
+  if (camView.active && document.pointerLockElement === null && !IS_TOUCH) camView.close()
+})
+
+// Рамка вида камеры в meatview: подпись CAMx · цикл · выход. DOM, не Babylon
+// GUI (инвариант 7). Тап по рамке — следующая камера, × — закрыть.
+let camHud: { box: HTMLElement; label: HTMLElement } | null = null
+function syncCamOverlay(): void {
+  const hinting = performance.now() < camHintUntil
+  if (!camView.active && !hinting) {
+    if (camHud !== null) {
+      camHud.box.remove()
+      camHud = null
+    }
+    return
+  }
+  if (camHud === null) {
+    const box = document.createElement('div')
+    box.className = 'camhud'
+    const label = document.createElement('div')
+    label.className = 'camhud-label'
+    const hint = document.createElement('div')
+    hint.className = 'camhud-hint'
+    hint.textContent = IS_TOUCH ? 'ТАП — СЛЕДУЮЩАЯ · × — ВЫЙТИ' : 'V — СЛЕДУЮЩАЯ · ESC — ВЫЙТИ'
+    const x = document.createElement('button')
+    x.className = 'camhud-x'
+    x.textContent = '×'
+    x.addEventListener('click', (e) => {
+      e.stopPropagation()
+      camView.close()
+    })
+    box.append(x, label, hint)
+    box.addEventListener('click', () => camView.next())
+    document.body.append(box)
+    camHud = { box, label }
+  }
+  camHud.label.textContent = camView.active
+    ? `КАМЕРА ${(camView.currentId ?? '').toUpperCase()}`
+    : 'НЕТ КАМЕР СОЮЗНИКОВ'
+  camHud.box.classList.toggle('hint', !camView.active)
+}
 
 hud.onSensScale = (k) => {
   controls.sensScale = Math.max(0.3, Math.min(4, k))
@@ -1022,12 +1107,20 @@ engine.runRenderLoop(() => {
   camera.rotation.x = -controls.pitch
   camera.rotation.y = controls.yaw
 
+  // §13.7 живой вид камер: пока открыт, рисуем сцену камерой камеры вместо
+  // своей (одна сцена, подмена activeCamera — бесплатно). Управление телом
+  // остаётся: это монитор охраны, можно идти и смотреть.
+  camView.apply()
+  scene.activeCamera = camView.visible ? camView.camera : camera
+  syncCamOverlay()
+
   views.sync(states, myId)
 
   // Анимация дверей пропсов: шаг по реальному кадру (клэмп от табов в фоне).
   propsView?.tick(Math.min(0.1, engine.getDeltaTime() / 1000))
 
   const alive = me?.meta.alive === true
+  if (playing && !alive && camView.active) camView.close() // смерть выбивает из камер
 
   // Подсказка джек-ина: хакер в 2 м от терминала / 8 м от радио (ГДД §12.1).
   // Ховер-метка пропса под прицелом (switch/терминал/радио/дверь).
@@ -1195,6 +1288,7 @@ engine.runRenderLoop(() => {
     alive &&
     !matchOver &&
     !hackview.active &&
+    !camView.active && // §13.7: из камеры не стреляем — тело стреляет из своего места
     (controls.locked || touch?.aiming === true) && // touch-гейт вместо pointer lock (§15.1)
     world !== null &&
     (myCls !== 'sniper' || scope.armed)
@@ -1216,6 +1310,8 @@ engine.runRenderLoop(() => {
     autofire.lockedOn = false
   }
   hud.crosshairLocked(autofire.lockedOn)
+  // §13.7: в виде камеры прицела нет (стрелять из камеры нельзя) — прячем.
+  document.body.classList.toggle('camview-on', camView.active)
 
   effects.update(nowSec)
 
@@ -1247,6 +1343,13 @@ engine.runRenderLoop(() => {
     fpsChip.textContent = `${Math.round(engine.getFps())} FPS`
   }
   scene.render()
+  // §13.7: кадр камеры в панели деки — после рендера блитим его из канваса
+  // (panelCanvas задан, только пока открыт таб камеры).
+  const pc = camView.panelCanvas
+  if (pc !== null) {
+    const ictx = pc.getContext('2d')
+    if (ictx !== null) ictx.drawImage(canvas, 0, 0, pc.width, pc.height)
+  }
 })
 
 window.addEventListener('resize', () => {
@@ -1264,6 +1367,7 @@ declare global {
       players: () => Map<number, SnapPlayer>
       shots: () => ShotMsg[]
       hackview: HackView
+      camView: CamView
       propsView: PropsView | null
       doorAngle: (id: string) => number | null
       cyberMap: () => { on: boolean; devices: Map<string, MiniCyberDev> } // M3 §13.8
@@ -1278,6 +1382,7 @@ window.__hs = {
   players: () => latestMeta,
   shots: () => [...debugShots],
   hackview,
+  camView,
   propsView: null, // ставится после загрузки карты
   doorAngle: (id) => propsView?.doorAngle(id) ?? null,
   cyberMap: () => ({ on: cyberMapOn && myCls === 'hacker', devices: scanDevs }),

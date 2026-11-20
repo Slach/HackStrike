@@ -187,6 +187,118 @@ check('после ухода 2v0 → 1v1', new Set(remaining).size === remaining
   y.ws.close()
 }
 
+// --- 8. M5: данные — джек-ин, сеть, щит SRV, cp, decrypt, codes (§16) ---
+// Хайст проверяем хакером от t1: portscan раскрывает сеть, щит SRV1 отбивает
+// первые попытки взлома, trojan даёт владение → листинг → cp door_key на
+// деку → decrypt на SRV (NPU ×3) → codes.door команде. Замок d3 физически
+// (клавиатура на 2F) в e2e не открываем — только denied too_far издалека.
+{
+  await sleep(300)
+  const t1 = map.props.find((p) => p.id === 't1')
+  const H = await connect()
+  send(H, { t: 'join', name: 'E2E_H', cls: 'hacker', team: 0 })
+  const wH = await waitFor(H, (m) => m.t === 'welcome')
+  const walkTo = async (c, tx, tz) => {
+    for (let i = 0; i < 250; i++) {
+      const p = me(c)
+      if (!p) { await sleep(50); continue }
+      const dx = tx - p.x, dz = tz - p.z
+      if (Math.hypot(dx, dz) < 1.5) break
+      send(c, { t: 'input', seq: 20000 + i, keys: { w: 1, a: 0, s: 0, d: 0, interact: 0 }, yaw: Math.atan2(dx, dz), pitch: 0 })
+      await sleep(33)
+    }
+  }
+  // waitFor ищет по ВСЕМ накопленным сообщениям; здесь нужны только НОВЫЕ
+  const waitNew = (c, t, ms = 8000, pred = () => true) => new Promise((res, rej) => {
+    const n0 = c.msgs.filter((m) => m.t === t).length
+    const t0 = Date.now()
+    const iv = setInterval(() => {
+      const m = c.msgs.filter((x) => x.t === t).slice(n0).find(pred)
+      if (m) { clearInterval(iv); res(m) }
+      else if (Date.now() - t0 > ms) { clearInterval(iv); rej(new Error(`timeout ${t}`)) }
+    }, 50)
+  })
+
+  await walkTo(H, t1.pos[0], t1.pos[2])
+  for (let i = 0; i < 3; i++) {
+    send(H, { t: 'input', seq: 21000 + i, keys: { w: 0, a: 0, s: 0, d: 0, interact: 1 }, yaw: 0, pitch: 0 })
+    await sleep(33)
+  }
+  const jin = await waitFor(H, (m) => m.t === 'jackin', 8000).catch(() => null)
+  check('M5: джек-ин в t1', jin?.host === 't1')
+
+  // portscan — туман войны открывает сеть по хопам; сканируем до раскрытия
+  // нужных узлов (d3 за свитчом 2F — глубже, чем 3 хопа)
+  const seenIDs = () => {
+    const s = [...H.msgs].reverse().find((m) => m.t === 'scan')
+    return s ? s.devices.map((d) => d.id) : []
+  }
+  const need = ['srv1', 'netsafe', 'd3']
+  for (let i = 0; i < 6 && !need.every((id) => seenIDs().includes(id)); i++) {
+    send(H, { t: 'run', prog: 'portscan' })
+    await waitNew(H, 'scan').catch(() => {})
+    await sleep(200)
+  }
+  const ids = seenIDs()
+  check('M5: portscan раскрыл SRV1/NETSAFE/d3', need.every((id) => ids.includes(id)), `раскрыто ${ids.length} устройств`)
+
+  // дать портсканам завершиться — иначе слоты RAM заняты и следующий запуск
+  // получит ram_full вместо честной попытки
+  const progsIdle = async () => {
+    for (let i = 0; i < 200; i++) {
+      const d = [...H.msgs].reverse().find((m) => m.t === 'deck')
+      if (d && (d.progs || []).length === 0) return
+      await sleep(100)
+    }
+  }
+  await progsIdle()
+
+  // щит SRV (§16.5): первые попытки взлома отбиваются, заряд тратится
+  let shields = 0
+  const tryProg = async (prog, dev) => {
+    send(H, { t: 'run', prog, dev })
+    const d = await waitNew(H, 'denied', 900, (m) => m.reason === 'shield').catch(() => null)
+    if (d) { shields++; return false }
+    return true
+  }
+  let started = false
+  for (let i = 0; i < 4 && !started; i++) started = await tryProg('vulnscan', 'srv1')
+  await sleep(3400)
+  const srvVulned = [...H.msgs].reverse().find((m) => m.t === 'scan')?.devices.find((d) => d.id === 'srv1')?.vulned
+  check('M5: щит SRV1 отбил 3 попытки, затем vulnscan прошёл', shields === 3 && srvVulned === true, `отбоев=${shields}`)
+
+  send(H, { t: 'run', prog: 'trojan', dev: 'srv1' })
+  await sleep(2600)
+  const srvDev = [...H.msgs].reverse().find((m) => m.t === 'scan')?.devices.find((d) => d.id === 'srv1')
+  const key = srvDev?.data?.[0]?.n
+  check('M5: trojan на SRV1, door_key в листинге владельца', srvDev?.owner === wH.id && !!key && key.startsWith('door_key'), key)
+
+  // cp door_key srv1 → deck (источник остаётся, §16.2 ревизия 3)
+  send(H, { t: 'run', prog: 'cp', dev: 'srv1', dst: 'deck', data: key })
+  const cpStart = await waitNew(H, 'deck', 5000, (m) => (m.progs || []).some((p) => p.prog === 'cp' && p.data === key)).catch(() => null)
+  check('M5: cp door_key srv1→deck запущен (мб/скорость в процессе)', !!cpStart && cpStart.progs.some((p) => p.prog === 'cp' && p.mbLeft > 0))
+  let copied = false
+  for (let i = 0; i < 250 && !copied; i++) {
+    const d = [...H.msgs].reverse().find((m) => m.t === 'deck')
+    copied = (d?.data || []).some((it) => it.n === key)
+    if (!copied) await sleep(100)
+  }
+  check('M5: door_key приехал на деку', copied)
+
+  // decrypt на SRV1 (NPU ×3 → 6 МБ/с): 60 МБ ≈ 10 с → codes.door команде
+  send(H, { t: 'run', prog: 'decrypt', dev: 'srv1', data: key })
+  const codes = await waitNew(H, 'codes', 20000, (m) => !!m.door).catch(() => null)
+  check('M5: decrypt на SRV1 → codes.door команде', !!codes && /^\d{4}$/.test(codes.door), codes?.door)
+
+  // замок d3 — физический ввод у клавиатуры: издалека denied too_far
+  send(H, { t: 'jackout' })
+  await sleep(300)
+  send(H, { t: 'enter', dev: 'd3', code: '0000' })
+  const far = await waitNew(H, 'denied', 3000, (m) => m.reason === 'too_far').catch(() => null)
+  check('M5: enter издалека от клавиатуры → denied too_far', !!far)
+  H.ws.close()
+}
+
 clients.forEach((c) => c.ws.readyState === 1 && c.ws.close())
 console.log(failures === 0 ? '\nE2E: ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ ✓' : `\nE2E: ПРОВАЛОВ ${failures}`)
 process.exit(failures === 0 ? 0 : 1)

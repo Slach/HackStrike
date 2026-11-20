@@ -1557,6 +1557,15 @@
         max-height: 240px;
         overflow-y: auto;
       }
+      /* §13.7: живой кадр камеры в табе деки — 16:9, как монитор наблюдения */
+      .cam-live {
+        width: 100%;
+        aspect-ratio: 16 / 9;
+        border: 1px solid rgba(55, 255, 155, 0.45);
+        border-radius: 4px;
+        background: #020a05;
+        image-rendering: auto;
+      }
       .cam-row {
         display: grid;
         grid-template-columns: minmax(90px, 1fr) auto auto auto 1.2em;
@@ -2556,6 +2565,66 @@
         letter-spacing: 1px;
       }
       .tc-act:active { background: rgba(55, 255, 155, 0.3); }
+      /* §13.7: КАМ — тап-эквивалент V (вид камеры / следующая камера) */
+      .tc-cam {
+        pointer-events: auto;
+        touch-action: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        text-indent: 1px;
+        min-width: calc(112px * var(--ctl, 1));
+        padding: 0 9px;
+        height: calc(40px * var(--ctl, 1));
+        border-radius: 10px;
+        background: rgba(120, 230, 255, 0.08);
+        border: 1px solid rgba(120, 230, 255, 0.45);
+        color: #bdefff;
+        font: inherit;
+        font-size: calc(12px * var(--ctl, 1));
+        letter-spacing: 1px;
+      }
+      .tc-cam:active { background: rgba(120, 230, 255, 0.25); }
+      /* §13.7 живой вид камер в meatview: рамка-подпись поверх сцены */
+      .camhud {
+        position: fixed;
+        top: calc(14px + env(safe-area-inset-top));
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 9;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 8px 34px 8px 16px;
+        border: 1px solid rgba(120, 230, 255, 0.55);
+        border-radius: 8px;
+        background: rgba(2, 12, 16, 0.72);
+        color: #bdefff;
+        font-size: 12px;
+        letter-spacing: 2px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .camhud-label { font-size: 14px; font-weight: 700; color: #78e6ff; }
+      .camhud-hint { font-size: 10px; color: rgba(189, 239, 255, 0.65); letter-spacing: 1px; }
+      .camhud-x {
+        position: absolute;
+        top: 4px;
+        right: 6px;
+        width: 24px;
+        height: 24px;
+        border: 0;
+        background: transparent;
+        color: #bdefff;
+        font: inherit;
+        font-size: 16px;
+        cursor: pointer;
+      }
+      .camhud.hint { cursor: default; border-color: rgba(255, 159, 67, 0.6); color: #ffcf9f; }
+      .camhud.hint .camhud-label { color: #ff9f43; }
+      /* в виде камеры прицел не про картинку камеры */
+      body.camview-on #crosshair { display: none; }
       .tc-look {
         pointer-events: auto;
         touch-action: none;
