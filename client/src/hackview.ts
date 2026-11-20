@@ -2035,6 +2035,15 @@ export class HackView {
       dq !== '' &&
       (PALETTE_PROGS.some((p) => p.startsWith(dq)) || DATA_CMD.startsWith(dq)) &&
       ![...this.devices.values()].some((d) => this.devMatch(d, dq))
+    // Подкоманда данных первым токеном («/cp», «/decrypt» на объекте):
+    // кандидаты — ключи активного хоста; вставка переписывает строку в
+    // каноническую reverse-форму `<key> cp` (палитра не находила
+    // кандидатов, хотя ключи в деке есть — плейтест M5).
+    const subFirst =
+      !isTabMode && dq !== '' && !progFirst &&
+      (DATA_SUBS as readonly string[]).some((s) => s.startsWith(dq)) &&
+      !PALETTE_PROGS.some((p) => p === dq) &&
+      ![...this.devices.values()].some((d) => this.devMatch(d, dq))
     // reverse-форма (§16.2): первый токен — item активного таба
     // («door_key cp t2» из открытого таба с данными).
     const activeHost = this.dataCtxHost()
@@ -2047,7 +2056,7 @@ export class HackView {
     // Команда данных: 'data …' или '[host] data …' (обратный порядок).
     const hostPrefix = pq === DATA_CMD && dq !== DATA_CMD ? this.dataHostAt(dq) : null
     const dataMode = !isTabMode && (dq === DATA_CMD || (pq === DATA_CMD && hostPrefix !== null))
-    if (isTabMode || (!progFirst && !dataMode && !revMode && this.paletteTok === 0)) {
+    if (isTabMode || (!progFirst && !dataMode && !revMode && !subFirst && this.paletteTok === 0)) {
       // Первый токен (порядок «dev prog» / режим таба): устройства, потом
       // программы + DATA, в хвосте — items активного таба (reverse §16.2).
       const devs = [...this.devices.values()]
@@ -2130,6 +2139,22 @@ export class HackView {
         if (tokens[1]?.toLowerCase() !== 'decrypt') {
           cands.push(...this.dataHostCands(qq, true).filter((c) => c.dev !== src))
         }
+      }
+    } else if (subFirst) {
+      // «/cp⏎» на объекте: ключи активного хоста; выбор перепишет строку в
+      // каноническую reverse-форму `<key> cp` (см. paletteRun).
+      const qk = trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
+      for (const it of this.dataHostItems(activeHost)) {
+        const text = this.itemText(it.n, activeHost)
+        if (qk !== '' && !text.toLowerCase().startsWith(qk) && !it.n.toLowerCase().startsWith(qk)) continue
+        cands.push({
+          kind: 'item',
+          text,
+          dev: activeHost,
+          data: it.n,
+          label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
+          hint: `${dq.toUpperCase()} · ${activeHost === 'deck' ? 'ДЕКА' : activeHost.toUpperCase()}`,
+        })
       }
     } else if (progFirst) {
       // Второй токен (порядок «prog dev»): список целей с владельцем.
@@ -2274,10 +2299,13 @@ export class HackView {
     }
     const raw = pal.input.value.trim()
     const tokens = raw.split(/\s+/).filter((t) => t !== '')
-    const sel =
+    let sel =
       this.paletteSel >= 0 && this.paletteSel < this.paletteCands.length
         ? this.paletteCands[this.paletteSel]
         : undefined
+    // Единственный кандидат — Enter его и вставляет (плейтест M5): без этого
+    // при одном варианте Enter запускал сырой ввод и терял токен.
+    if (sel === undefined && this.paletteCands.length === 1) sel = this.paletteCands[0]
     if (this.paletteMode === 'tab') {
       let devT: string | null =
         sel !== undefined && sel.kind === 'dev' && sel.dev !== undefined ? sel.dev : null
@@ -2303,6 +2331,20 @@ export class HackView {
     // хвостовой пробел в строке ошибочно считался «дописывать нечего»).
     // Вставка работает и с пробелом: ключ — это СЛЕДУЮЩИЙ токен.
     if (sel !== undefined && ['dev', 'item', 'sub', 'datacmd'].includes(sel.kind)) {
+      // Подкоманда первым токеном («/cp» + ключ): канонизируем в reverse-
+      // форму `<key> cp ` — дальше штатный разбор reverse-формы.
+      const t0s = (tokens[0] ?? '').toLowerCase()
+      const subFirstMode =
+        sel.kind === 'item' &&
+        (DATA_SUBS as readonly string[]).includes(t0s) &&
+        !PALETTE_PROGS.some((p) => p === t0s) &&
+        ![...this.devices.values()].some((d) => this.devMatch(d, t0s))
+      if (subFirstMode) {
+        pal.input.value = `${sel.text} ${t0s} `
+        this.paletteSel = -1
+        this.updatePalette()
+        return
+      }
       const parts = tokens.slice(0, Math.min(this.paletteTok, tokens.length))
       parts.push(sel.text)
       pal.input.value = `${parts.join(' ')} `
