@@ -2,6 +2,7 @@ package main
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -236,17 +237,18 @@ func TestProgramFairQueues(t *testing.T) {
 	w.takeOut()
 	jackAt(w, h, "t1")
 
-	// Одна: portscan 2 с — готов за ~60 тиков.
+	// Одна: portscan 2 с × (1 + 0.25 × точка входа в scanned, §12.5) = 2.5 с —
+	// готов за ~75 тиков.
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 58; i++ {
+	for i := 0; i < 70; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
 	if len(h.progs) != 1 {
-		t.Fatalf("portscan must still run at 58 ticks")
+		t.Fatalf("portscan must still run at 70 ticks")
 	}
 	var scans int
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 8; i++ {
 		w.simulateTick()
 	}
 	for _, om := range w.takeOut() {
@@ -255,15 +257,16 @@ func TestProgramFairQueues(t *testing.T) {
 		}
 	}
 	if len(h.progs) != 0 {
-		t.Fatalf("portscan must complete by 62 ticks (2 s)")
+		t.Fatalf("portscan must complete by 78 ticks (2.5 s)")
 	}
 	if scans != 1 {
 		t.Fatalf("exactly one scan after portscan, got %d", scans)
 	}
 
-	// Прогрессивное открытие: второй portscan раскрывает соседей s1 (d1 среди них).
+	// Прогрессивное открытие: второй portscan раскрывает соседей s1 (d1 среди
+	// них). §12.4 ревизия: scanned {t1,s1} → work 3 с = 90 тиков.
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 70; i++ {
+	for i := 0; i < 110; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
@@ -271,28 +274,31 @@ func TestProgramFairQueues(t *testing.T) {
 		t.Fatalf("second portscan must reveal d1, scanned=%v", h.scanned)
 	}
 
-	// Две: каждая 1/2 скорости; portscan (2 с работы) готов на ~120-м тике.
+	// Две: каждая 1/2 скорости; portscan (scanned 4 → 4 с работы, §12.4
+	// ревизия) готов на ~240-м тике, vulnscan (3 с) — сразу после.
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
 	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
-	for i := 0; i < 115; i++ {
+	for i := 0; i < 150; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
 	if len(h.progs) != 2 {
-		t.Fatalf("at 115 ticks neither program must be done (half speed each)")
+		t.Fatalf("at 150 ticks neither program must be done (half speed each)")
 	}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 50; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
-	if len(h.progs) != 1 || h.progs[0].prog != "vulnscan" {
-		t.Fatalf("portscan must finish first at ~120 ticks, progs=%+v", h.progs)
+	// §12.4 ревизия: portscan (4 с) теперь ДОЛЬШЕ vulnscan (3 с) — первым
+	// уходит vulnscan, portscan доедает на полной доле
+	if len(h.progs) != 1 || h.progs[0].prog != "portscan" {
+		t.Fatalf("vulnscan must finish first at ~180 ticks, progs=%+v", h.progs)
 	}
-	if w.cyber.devices["d1"].vulnedBy[h.id] {
-		t.Fatalf("vulnscan must still be running")
+	if !w.cyber.devices["d1"].vulnedBy[h.id] {
+		t.Fatalf("vulnscan must have completed")
 	}
-	// После ухода portscan vulnscan идёт на полной доле: 1 с работы осталось.
-	for i := 0; i < 35; i++ {
+	// После ухода vulnscan portscan идёт на полной доле: остаток работы.
+	for i := 0; i < 80; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
@@ -522,8 +528,9 @@ func TestDeckStatus(t *testing.T) {
 	if !ok || len(progs) != 1 || progs[0].Prog != "portscan" || progs[0].Dev != "" {
 		t.Fatalf("deck progs: %+v", deck["progs"])
 	}
-	if eta := progs[0].EtaMs; eta < 1400 || eta > 1600 {
-		t.Fatalf("deck etaMs = %d, want ~1533 (2 с минус 14 тиков работы)", eta)
+	// 2.5 с работы (точка входа в scanned, §12.5) минус ~14 тиков ≈ 2033
+	if eta := progs[0].EtaMs; eta < 1900 || eta > 2100 {
+		t.Fatalf("deck etaMs = %d, want ~2033", eta)
 	}
 }
 
@@ -686,8 +693,14 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// c12 s3—cam3, c13 s3—cam4).
 	// §14.6.1 (ревизия v1): огонь lv1..lv3 — НЕ устройство; клапаны
 	// v1..v3 — устройства (+3 к графе), кабели c15/c16/c17 (+3).
-	if len(cs.order) != 20 || len(cs.cables) != 19 || len(cs.doors) != 3 || len(cs.gases) != 2 {
-		t.Fatalf("m1 M2+M3+M4 props: want 20 devices / 16 cables + 2 radio uplinks / 3 doors / 2 gas, got %d/%d/%d/%d",
+	// итерация 3 (§16.5): SRV1 — +1 устройство и +2 кабеля (c33/c34 к s1/s2);
+	// код-замок: d4/d5/d6 — +3 двери и +3 кабеля (c35–c37 к s3); клавиатуры
+	// на ОБЕИХ сторонах d3–d6 — +8 устройств и +8 кабелей (c380–c387 к s3).
+	// итерация 5 (§16.6): NETSAFE — +1 устройство и +1 кабель (c38 к s3, ветка 10).
+	// итерация 8 (§16.8): машзал — s6 + SRV2/SRV3 (+3 устройства) и
+	// стояк через зал c39 s1—s6 / c40 s6—s3 + c41/c42 SRV—s6 (+4 кабеля).
+	if len(cs.order) != 36 || len(cs.cables) != 37 || len(cs.doors) != 6 || len(cs.gases) != 2 {
+		t.Fatalf("m1 props: want 36 devices / 35 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {
@@ -761,6 +774,24 @@ func TestEmbeddedMapCyber(t *testing.T) {
 					t.Fatalf("spawn %v inside jack-in radius of %s", s, id)
 				}
 			}
+			// Корпуса устройств (плейтест: «не проходить сквозь сервера,
+			// терминалы, камеры и свитчи») не должны накрывать спавн.
+			for _, db := range m.deviceBoxes {
+				if boxesOverlap(playerBoxAt(vec3(s)), db) {
+					t.Fatalf("spawn %v overlaps device body %v", s, db)
+				}
+			}
+		}
+	}
+	// И сами корпуса не вмурованы в стены (иначе двойная блокировка).
+	for _, db := range m.deviceBoxes {
+		for _, c := range m.Colliders {
+			if c.Kind == "floor" || c.Kind == "stair" {
+				continue
+			}
+			if boxesOverlap(db, aabb{vec3(c.Min), vec3(c.Max)}) {
+				t.Fatalf("device body %v intersects %s collider", db, c.Kind)
+			}
 		}
 	}
 }
@@ -793,6 +824,11 @@ func TestEmbeddedMapCyberFloor2(t *testing.T) {
 	// террасы y=8), дверь data-отсека достижима от неё.
 	w.handleMessage(h, message{"t": "jackout"})
 	jackAt(w, h, "t3")
+	// Тело из лавы: lv3 покрывает весь пол комнаты (плейтест «лава по всей
+	// поверхности»), t3 — в её центре, 25 HP/с убивает за тики. Тест
+	// проверяет ТОПОЛОГИЮ (t3 → d3), а не урон среды — джекнутый хакер
+	// работает из сети, телу достаточно быть живым.
+	h.pos = vec3{19, 8, 32} // коридор 2 этажа к западу от d5
 	if !h.jacked || h.jackHost.id != "t3" {
 		t.Fatalf("hacker must be able to jack into the second-floor entry t3")
 	}
@@ -807,11 +843,12 @@ func TestEmbeddedMapCyberFloor2(t *testing.T) {
 	if w.cyber.devices["d3"].owner != h.id {
 		t.Fatalf("d3 captured from t3 must end owned by h, owner=%v", w.cyber.devices["d3"].owner)
 	}
-	// Toggle владеемой двери из деки — проходит (не denied) и открывает.
+	// §16.7: d3 заперта код-замком — троян НЕ отпирает её, toggle denied
+	// locked. После кода с клавиатуры (TestCodeLock) toggle работает.
 	w.handleMessage(h, message{"t": "ctrl", "dev": "d3", "action": "toggle"})
-	assertDenied(t, w, h, "") // no denial in the queue
-	if !w.cyber.devices["d3"].open {
-		t.Fatalf("ctrl toggle from t3 must open d3")
+	assertDenied(t, w, h, "locked")
+	if w.cyber.devices["d3"].open {
+		t.Fatalf("locked d3 must not open by trojan toggle")
 	}
 }
 
@@ -856,7 +893,7 @@ func TestProgressivePortscan(t *testing.T) {
 	jackAt(w, h, "t1")
 
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 70 && len(h.progs) > 0; i++ {
+	for i := 0; i < 110 && len(h.progs) > 0; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
@@ -868,7 +905,7 @@ func TestProgressivePortscan(t *testing.T) {
 	}
 
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 70 && len(h.progs) > 0; i++ {
+	for i := 0; i < 110 && len(h.progs) > 0; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
@@ -889,6 +926,8 @@ func TestSessionRestore(t *testing.T) {
 	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "d1"})
 	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "d1"})
 	w.handleMessage(h, message{"t": "jackout"})
+	// §16.1 ревизия «хром»: инвентарь деки кладём в сессию (cp до отката)
+	h.items = []dataItem{{Name: "door_key", MB: 60, Enc: true}}
 	home := h.pos
 	homeTeam := h.team
 
@@ -919,6 +958,9 @@ func TestSessionRestore(t *testing.T) {
 	}
 	if w.cyber.devices["d1"].owner != h2.id {
 		t.Fatalf("door ownership must be remapped to the new id, owner=%v", w.cyber.devices["d1"].owner)
+	}
+	if len(h2.items) != 1 || h2.items[0].Name != "door_key" {
+		t.Fatalf("deck inventory must survive rejoin, items=%v", h2.items)
 	}
 	*clock = clock.Add(time.Second)
 	jackAt(w, h2, "t1") // джек-стейт не переживает реконнект — точка входа та же
@@ -2330,13 +2372,22 @@ func TestJackinResendsScan(t *testing.T) {
 		t.Fatalf("re-jackin must resend scan with ownership: scan=%v doorOwned=%v", scanSeen, doorOwned)
 	}
 
-	// А с нуля (новый игрок, знаний нет) — scan не приходит.
+	// А с нуля (новый игрок, знаний нет) — scan приходит С ТОЧКОЙ ВХОДА
+	// (§12.5 + плейтест-баг: молчаливый jackin оставлял клиенту карту
+	// прошлой сессии).
 	foe := w.addPlayer(2, "f", "hacker", -1)
 	w.takeOut()
+	fresh := false
 	for _, om := range jackAt(w, foe, "t2") {
-		if om.msg["t"] == "scan" {
-			t.Fatalf("fresh jackin must not send scan")
+		if om.msg["t"] != "scan" || om.to != foe.id {
+			continue
 		}
+		if devs, ok := om.msg["devices"].([]scanDevice); ok && len(devs) == 1 && devs[0].ID == "t2" {
+			fresh = true
+		}
+	}
+	if !fresh {
+		t.Fatalf("fresh jackin must send a scan with just the entry point")
 	}
 }
 
@@ -2563,5 +2614,1087 @@ func TestExpensiveJackin(t *testing.T) {
 	// NET деки камеры — худший кабель (не паспортные 100).
 	if net := w.deckNet(h); net >= 100 {
 		t.Fatalf("device jack-in deck net = %v, want worst cable (<100)", net)
+	}
+}
+
+// ── M5 итерация 2: MEM + cp + rm (§16.1/§16.2) ────────────────────────
+
+// cpSetup — хакер захватил t1 (там seed-данные door_key 60 МБ) и стоит
+// в джек-ине. Возвращает мир, игрока и часы.
+func cpSetup(t *testing.T) (*world, *player, *time.Time) {
+	t.Helper()
+	w, clock := cyberTestWorld(t)
+	h := w.addPlayer(1, "h1", "hacker", 0)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	ensureVulned(w, h, "t1")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "trojan", "dev": "t1"})
+	// §16.5: door_key сеется на SRV1 (за щитом); трансферные тесты проверяют
+	// механику cp/mv/rm — кладём item прямо на захваченный t1.
+	w.cyber.devices["t1"].items = append(w.cyber.devices["t1"].items, dataItem{Name: "door_key", MB: 60, Enc: true})
+	w.takeOut()
+	return w, h, clock
+}
+
+func findProg(pl *player, prog string) *program {
+	for _, p := range pl.progs {
+		if p.prog == prog {
+			return p
+		}
+	}
+	return nil
+}
+
+// TestMvDeckTransfer — §16.2 ревизия 3: mv door_key из троянового t1 в деку:
+// 60 МБ по магистрали 40 = 1.5 с чистой полосы; item переезжает (не копия).
+func TestMvDeckTransfer(t *testing.T) {
+	w, h, clock := cpSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "t1", "dst": "deck"})
+	p := findProg(h, "mv")
+	if p == nil {
+		t.Fatalf("mv not started")
+	}
+	// Локальный трансфер (t1 = точка входа деки): полоса = входной канал
+	// хоста; в cyberTestWorld c1 без явного bw → дефолт-магистраль 40.
+	if p.mb != 60 || p.mbps != 40 {
+		t.Fatalf("mv mb/mbps = %d/%v, want 60/40", p.mb, p.mbps)
+	}
+	// Резервация в деку: 60 из 256 занято сразу.
+	if used := w.deckItemsUsed(h); used != 60 {
+		t.Fatalf("deck reservation = %d, want 60", used)
+	}
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.items) != 1 || h.items[0].Name != "door_key" || h.items[0].MB != 60 {
+		t.Fatalf("door_key must land in deck, items=%v", h.items)
+	}
+	if hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("door_key must leave t1 (mv = transfer)")
+	}
+	if used := w.deckItemsUsed(h); used != 60 {
+		t.Fatalf("deck after transfer = %d, want 60 (item, reservation gone)", used)
+	}
+	// Wire (§16.1): deck-сообщение обязано нести инвентарь — плейтест:
+	// data[] не клалось в сообщение, дека на клиенте была вечно пуста.
+	// Deck-тик 2 Гц (раз в 15 тиков) — флашим буфер (там до-финишные deck'и)
+	// и крутим до ближайшего окна после завершения трансфера.
+	w.takeOut()
+	var deckMsg message
+	for i := 0; i < 30 && deckMsg == nil; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+		for _, om := range w.takeOut() {
+			if om.msg["t"] == "deck" && om.to == h.id {
+				deckMsg = om.msg
+			}
+		}
+	}
+	inv, ok := deckMsg["data"].([]dataItem)
+	if !ok || len(inv) != 1 || inv[0].Name != "door_key" {
+		t.Fatalf("deck message must carry data inventory, got %+v", deckMsg["data"])
+	}
+}
+
+// TestCpCopyKeepsSrc — §16.2 ревизия 3 (владелец «cp это КОПИРОВАНИЕ»):
+// cp оставляет экземпляр в источнике — MEM занят на обеих сторонах;
+// точный повтор dup; та же копия на другой приёмник легальна.
+func TestCpCopyKeepsSrc(t *testing.T) {
+	w, h, clock := cpSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.items) != 1 || h.items[0].Name != "door_key" {
+		t.Fatalf("deck must hold the copy, items=%v", h.items)
+	}
+	if !hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("cp must keep the source copy (not mv)")
+	}
+	if used := w.deckItemsUsed(h); used != 60 {
+		t.Fatalf("deck after copy = %d, want 60", used)
+	}
+	// Тот же item с того же источника в тот же приёмник — dup.
+	w.takeOut()
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	out := w.takeOut()
+	if !hasDenied(out, h.id, "dup") {
+		t.Fatalf("exact repeat copy must be denied dup")
+	}
+	// Копия на ДРУГОЙ приёмник легальна (t2 тоже seed с door_key — dup
+	// там и правда должен сработать; свитч s1 — MEM 16 < 60; берём r1
+	// (радио 64 МБ) через два хопа скана).
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	r1 := w.cyber.devices["r1"]
+	r1.owner = h.id
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "r1", "data": "door_key"})
+	if findProg(h, "cp") == nil {
+		t.Fatalf("copy to another dst must start")
+	}
+	// радио-аплинк 5 МБ/с: 60 МБ = 12 с чистой полосы — окно с запасом
+	for i := 0; i < 15*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !hostHasItem(r1, "door_key") || !hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("copy: both src and dst must hold door_key")
+	}
+}
+
+// TestCpDenied — §16.2: dup и mem_full.
+func TestCpDenied(t *testing.T) {
+	w, h, clock := cpSetup(t)
+	// первый трансфер резервировал 60 — второй такой же упрётся в dup.
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	w.takeOut()
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	out := w.takeOut()
+	if !hasDenied(out, h.id, "dup") {
+		t.Fatalf("second cp of same item must be denied dup")
+	}
+	// Wire (§16.2 ред. «красный мигающий бар»): denied несёт prog+data.
+	deniedWire := false
+	for _, om := range out {
+		if om.to == h.id && om.msg["t"] == "denied" && om.msg["prog"] == "cp" && om.msg["data"] == "door_key" {
+			deniedWire = true
+		}
+	}
+	if !deniedWire {
+		t.Fatalf("data-op denied must carry prog+data on wire")
+	}
+	// mem_full: докачать до отказа нельзя (t1 один item) — вместо этого
+	// деку почти заполняем и пробуем второй item большего размера: seed
+	// дополнительного item'а на t2 (владелец h) через прямой доступ.
+	w2dev := w.cyber.devices["t2"]
+	w2dev.owner = h.id
+	w2dev.items = append(w2dev.items, dataItem{Name: "big", MB: 220, Enc: true})
+	// t2 открыть сканом (прогрессивно: s1 → s2 → t2 — три хопа).
+	for i := 0; i < 3; i++ {
+		runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	}
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t2", "dst": "deck", "data": "big"})
+	if findProg(h, "cp") == nil {
+		// 60 уже зарезервировано, 220 не влезает в 256 — mem_full
+		out = w.takeOut()
+		if !hasDenied(out, h.id, "mem_full") {
+			t.Fatalf("oversized transfer must be denied mem_full")
+		}
+	} else {
+		t.Fatalf("220+60 > 256 must be denied before start")
+	}
+	// Дождёмся первого трансфера — он не пострадал (резервации честные).
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.items) != 1 || h.items[0].Name != "door_key" {
+		t.Fatalf("reserved transfer must complete despite second denied one")
+	}
+}
+
+func hasDenied(out []outMsg, to uint64, reason string) bool {
+	for _, m := range out {
+		if m.to == to && m.msg["t"] == "denied" && m.msg["reason"] == reason {
+			return true
+		}
+	}
+	return false
+}
+
+// TestCpCancelFirewall — §16.2 «отмена»: чужой firewall встал на линке
+// зафиксированного маршрута — трансфер умирает, резервация ушла.
+func TestCpCancelFirewall(t *testing.T) {
+	w, h, clock := cpSetup(t)
+	// h захватил t1; перелогинимся в t2, чтобы маршрут t1→дека шёл через s1.
+	w.handleMessage(h, message{"t": "jackout"})
+	w.takeOut()
+	jackAt(w, h, "t2")
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, h, message{"t": "run", "prog": "portscan"})
+	// Тяжёлый item (200 МБ = 5 с по магистрали 40): firewall успеет в середину.
+	w.cyber.devices["t1"].items = append(w.cyber.devices["t1"].items, dataItem{Name: "blob", MB: 200, Enc: true})
+	// Враг (id 2, другая команда) входит через радио r1: вся подготовка ДО
+	// старта трансфера (портсканы+вулнскан ~7 с симуляции), firewall — после.
+	foe := w.addPlayer(2, "f2", "hacker", 1)
+	w.takeOut()
+	jackAt(w, foe, "r1")
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "portscan"})
+	ensureVulned(w, foe, "s1")
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck", "data": "blob"})
+	p := findProg(h, "cp")
+	if p == nil {
+		t.Fatalf("cp not started")
+	}
+	if len(p.path) == 0 || p.path[1] != "s1" {
+		t.Fatalf("setup: route must go through s1, path=%v", p.path)
+	}
+	runAndWaitM2(w, foe, message{"t": "run", "prog": "firewall", "dev": "s1"})
+	for i := 0; i < 5*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.progs) != 0 {
+		t.Fatalf("cp must be cancelled by enemy firewall on route")
+	}
+	if len(h.items) != 0 {
+		t.Fatalf("cancelled transfer must not deliver data")
+	}
+	if used := w.deckItemsUsed(h); used != 0 {
+		t.Fatalf("reservation must be released on cancel, used=%d", used)
+	}
+}
+
+// TestRmAndDupChaff — §16.2: rm удаляет item с хоста; chaff-цикл
+// «переслать → rm → ...» (mv-ноги: cp оставил бы копию в источнике).
+func TestRmAndDupChaff(t *testing.T) {
+	w, h, clock := cpSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "t1", "dst": "deck"})
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	// Слить обратно на t1 (chaff-закладка, mv) и удалить с деки.
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "deck", "dst": "t1", "data": "door_key"})
+	if findProg(h, "mv") == nil {
+		t.Fatalf("deck->host mv must start (chaff)")
+	}
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !hostHasItem(w.cyber.devices["t1"], "door_key") || len(h.items) != 0 {
+		t.Fatalf("chaff: door_key must move back to t1")
+	}
+	// rm на своём хосте, 0.5 с.
+	w.handleMessage(h, message{"t": "run", "prog": "rm", "dev": "t1", "data": "door_key"})
+	if p := findProg(h, "rm"); p == nil || p.work != 0.5 {
+		t.Fatalf("rm must run 0.5s")
+	}
+	for i := 0; i < 30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if hostHasItem(w.cyber.devices["t1"], "door_key") {
+		t.Fatalf("rm must delete the item")
+	}
+	// И снова cp/mv с t1 нечему (item удалён; dup уже не мешает, но и
+	// качать нечего — fast-path не находит items).
+	w.handleMessage(h, message{"t": "run", "prog": "mv", "dev": "t1", "dst": "deck"})
+	if findProg(h, "mv") != nil {
+		t.Fatalf("mv of removed item must not start")
+	}
+}
+
+// TestDeathWipesDeckMEM — §16.1: смерть хакера стирает MEM его деки.
+func TestDeathWipesDeckMEM(t *testing.T) {
+	w, h, _ := cpSetup(t)
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "t1", "dst": "deck"})
+	for i := 0; i < 4*30 && len(h.progs) > 0; i++ {
+		w.simulateTick()
+	}
+	if len(h.items) != 1 {
+		t.Fatalf("setup: door_key in deck")
+	}
+	foe := w.addPlayer(2, "f2", "assault", 1)
+	foe.pos = h.pos
+	w.damage(foe, h, 500)
+	if len(h.items) != 0 {
+		t.Fatalf("death must wipe deck MEM, items=%v", h.items)
+	}
+}
+
+// TestSeedTwoDoorKeys — решение владельца 2026-11-17: door_key сеется ДВУМЯ
+// копиями (t1+t2), rm убивает навсегда — матч-киллер исключён наличием
+// TestSeedDoorKeyOnSrv1 — §16.5 (ревизия 2026-11-18): door_key живёт на SRV1
+// (одна копия — соревноваться короче), SRV1 стартует со щитом ×3, имя ключа —
+// поколение door_keyYYYYMMDDHHII.
+func TestSeedDoorKeyOnSrv1(t *testing.T) {
+	// SRV1 живёт во встроенной карте — крошечный cyberTestWorld его не несёт.
+	w := newWorld(mustParseEmbeddedMap(t))
+	now := time.Now()
+	w.now = func() time.Time { return now }
+	srv := w.cyber.devices["srv1"]
+	if srv == nil {
+		t.Fatalf("map must carry srv1")
+	}
+	if srv.shield != 3 {
+		t.Fatalf("srv1 shield = %d, want 3", srv.shield)
+	}
+	if len(srv.items) != 1 || !strings.HasPrefix(srv.items[0].Name, "door_key") || srv.items[0].MB != 60 {
+		t.Fatalf("srv1 must hold one door_key generation, items=%v", srv.items)
+	}
+	if w.cyber.devices["t1"].items != nil || w.cyber.devices["t2"].items != nil {
+		t.Fatalf("t1/t2 must not hold door_key anymore")
+	}
+	// Ротация T=120 с: следующее поколение появляется и код меняется.
+	code0 := w.doorKeyCode
+	now = now.Add(121 * time.Second)
+	w.simulateTick()
+	if len(srv.items) != 2 {
+		t.Fatalf("rotation must add a new generation, items=%v", srv.items)
+	}
+	if w.doorKeyCode == code0 || w.doorKeyPrevCode != code0 {
+		t.Fatalf("rotation must change code with grace: prev=%s cur=%s (old %s)", w.doorKeyPrevCode, w.doorKeyCode, code0)
+	}
+	if !w.doorKeyValid(nil, code0) || !w.doorKeyValid(nil, w.doorKeyCode) {
+		t.Fatalf("current and previous generation codes must be valid")
+	}
+	// Решение владельца: все поколения матча копятся (6 × 60 = 360 ≤ 512):
+	// хакер без SRV1 не знает, какой ключ валидный. Ещё 4 ротации → всего 6.
+	for i := 0; i < 4; i++ {
+		now = now.Add(121 * time.Second)
+		w.simulateTick()
+	}
+	if n := len(srv.items); n != 6 {
+		t.Fatalf("generations accumulate within a match, got %d items, want 6", n)
+	}
+	if total := 6 * 60; total > srv.mem {
+		t.Fatalf("6 generations (%d MB) must fit srv MEM %d", total, srv.mem)
+	}
+	// Новый матч: ключи из прошлого раунда не переезжают (§16.5).
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	h.items = []dataItem{{Name: "door_key_old", MB: 60, Enc: true}}
+	w.matchActive = false
+	w.startMatchIfNeeded()
+	if len(srv.items) != 1 || len(h.items) != 0 {
+		t.Fatalf("new match must reset door_key (srv=%v deck=%v)", srv.items, h.items)
+	}
+}
+
+// TestCodeLock — §16.7: d3 заперта код-замком; ввод кода с клавиатуры:
+// верный (текущее поколение) открывает, неверный — N/4 подсказка и журнал,
+// из деки вводить нельзя, троян на d3 не отпирает запертую.
+func TestCodeLock(t *testing.T) {
+	w := newWorld(mustParseEmbeddedMap(t))
+	now := time.Now()
+	w.now = func() time.Time { return now }
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	d3 := w.cyber.devices["d3"]
+	if !d3.locked {
+		t.Fatalf("d3 must start locked")
+	}
+	// у двери: позиция в радиусе
+	h.pos = vec3{32, 8, 41}
+	code := w.doorKeyCode
+	// неверный код — N/4 и jurnal
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": "0000"})
+	out := w.takeOut()
+	var hint message
+	for _, om := range out {
+		if om.msg["t"] == "code" && om.to == h.id {
+			hint = om.msg
+		}
+	}
+	if hint == nil || hint["ok"] != false {
+		t.Fatalf("wrong code must answer ok=false, got %+v", hint)
+	}
+	if _, has := hint["match"]; !has {
+		t.Fatalf("wrong code must carry N/4 hint")
+	}
+	// анти-флуд 1/2 с: повтор сразу не перебирает код, но отвечает
+	// (match=-1) — молчание вешало панель на «ПРОВЕРКА…»
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": "1111"})
+	flooded := false
+	for _, om := range w.takeOut() {
+		if om.msg["t"] == "code" && om.msg["match"] == -1 {
+			flooded = true
+		}
+	}
+	if !flooded {
+		t.Fatalf("enter flood must be answered with match=-1")
+	}
+	// верный код после паузы открывает и разлочивает
+	now = now.Add(3 * time.Second)
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": code})
+	okMsg := false
+	for _, om := range w.takeOut() {
+		if om.msg["t"] == "code" && om.msg["ok"] == true {
+			okMsg = true
+		}
+	}
+	if !okMsg || d3.locked || !d3.open {
+		t.Fatalf("valid code must unlock+open d3: okMsg=%v locked=%v open=%v", okMsg, d3.locked, d3.open)
+	}
+}
+
+// --- §16.4 decrypt ------------------------------------------------------------
+
+// decryptWorld — мир для decrypt-тестов: cyberTestWorld + SRV-станция на s1
+// (cable 20). seedData сеет door_key на SRV1 сам (§16.5).
+func decryptWorld(t *testing.T) (*world, *player, *time.Time) {
+	t.Helper()
+	const j = `{
+	 "name":"cyber","bounds":[40,8,40],
+	 "colliders":[
+	  {"min":[0,0,0],"max":[40,1,40],"kind":"floor"},
+	  {"min":[0,1,37],"max":[0.7,1.5,39],"kind":"stair"}
+	 ],
+	 "spawns":{"0":[[5,1,5]],"1":[[35,1,35]]},
+	 "props":[
+	  {"kind":"terminal","id":"t1","pos":[5,1,8]},
+	  {"kind":"terminal","id":"t2","pos":[35,1,32]},
+	  {"kind":"radio","id":"r1","pos":[20,1,5],"radius":8},
+	  {"kind":"switch","id":"s1","pos":[5,1,15]},
+	  {"kind":"switch","id":"s2","pos":[35,1,25]},
+	  {"kind":"srv","id":"srv1","pos":[20,1,33]},
+	  {"kind":"safe","id":"netsafe","pos":[20,1,27]},
+	  {"kind":"physafe","id":"physafe","pos":[20,1,36]},
+	  {"kind":"door","id":"d1","pos":[20,1,20],"size":[4,3,0.3],"axis":"x","to":"s1"},
+	  {"kind":"cable","id":"c1","from":"t1","to":"s1"},
+	  {"kind":"cable","id":"c2","from":"t2","to":"s2"},
+	  {"kind":"cable","id":"c3","from":"s1","to":"s2","points":[[5,1.15,15],[5,1.15,28],[35,1.15,28],[35,1.15,25]]},
+	  {"kind":"cable","id":"c4","from":"s1","to":"d1"},
+	  {"kind":"cable","id":"c5","from":"s1","to":"srv1","bw":20},
+	  {"kind":"cable","id":"c6","from":"s1","to":"netsafe","bw":10}
+	 ]}`
+	m, err := parseGameMap([]byte(j))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	w := newWorld(m)
+	clock := time.UnixMilli(1_700_000_000_000)
+	w.now = func() time.Time { return clock }
+	h := w.addPlayer(1, "h1", "hacker", 0)
+	w.takeOut()
+	jackAt(w, h, "t1")
+	// Троян на SRV ставим напрямую (щит — механика vulnscan/trojan, здесь не
+	// тестируется); знания скана — напрямую (топология t1-s1-srv1 тривиальна).
+	w.cyber.devices["srv1"].owner = h.id
+	h.scanned = map[string]bool{"t1": true, "srv1": true}
+	w.takeOut()
+	return w, h, &clock
+}
+
+func hasWire(out []outMsg, to uint64, typ string) bool {
+	for _, m := range out {
+		if m.to == to && m.msg["t"] == typ {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDecryptSrvJob — §16.4: джоба на SRV (NPU ×3 = 6 МБ/с): 60 МБ = 10 с.
+// Результат enc:false + код поколения; codes команде; job-прогресс (старт +
+// 1 Гц); джоба живёт на хосте — переживает джек-аут; смена владельца SRV
+// mid-job джобу не отменяет (перехват).
+func TestDecryptSrvJob(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	srv := w.cyber.devices["srv1"]
+	if len(srv.items) == 0 || !srv.items[0].Enc {
+		t.Fatalf("seedData must leave an encrypted door_key on srv1")
+	}
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": srv.items[0].Name})
+	if len(srv.jobs) != 1 {
+		t.Fatalf("srv job not started")
+	}
+	if out := w.takeOut(); !hasWire(out, h.id, "job") {
+		t.Fatalf("job start must carry an immediate progress message")
+	}
+	// джек-аут запустившего: джоба живёт на хосте
+	w.handleMessage(h, message{"t": "jackout"})
+	if len(srv.jobs) != 1 {
+		t.Fatalf("job must survive jackout (lives on the host)")
+	}
+	// 2 с тика: job 1 Гц виден + смена владельца mid-job не отменяет джобу
+	for i := 0; i < 2*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	srv.owner = 999 // перехват: результат достанется новому владельцу хоста
+	if len(srv.jobs) != 1 {
+		t.Fatalf("owner change mid-job must NOT cancel the job")
+	}
+	for i := 0; i < 9*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	it := srv.items[0]
+	if it.Enc || it.Code == "" || it.Code != w.doorKeyCodeNow(it.Name) {
+		t.Fatalf("item must be decrypted with the generation code, got enc=%v code=%q", it.Enc, it.Code)
+	}
+	out := w.takeOut()
+	if !hasWire(out, h.id, "codes") {
+		t.Fatalf("finished decrypt must send codes to the initiator team")
+	}
+	foundCode := false
+	for _, m := range out {
+		if m.msg["t"] == "codes" && m.msg["door"] == it.Code {
+			foundCode = true
+		}
+	}
+	if !foundCode {
+		t.Fatalf("codes must carry the decrypted door code %q", it.Code)
+	}
+}
+
+// TestDecryptRmMidJob — POSIX-семантика rm (плейтест M5: «rm при летящем
+// decrypt — данные не появились»): джоба держит «открытый дескриптор» —
+// unlink не прерывает процесс, КОД доносится команде, хоть item'а уже нет.
+// TestJackinAlwaysSendsScan — плейтест-баг 2026-11-20: jackin при
+// scanned==nil (новый матч / реконнект) молчал — клиентский hackview
+// доживал со картой прошлой сессии до первого portscan («denied too_far,
+// а на карте srv1 есть»). §12.5: точка входа известна всегда → scan
+// обязан уйти при ЛЮБОМ jackin.
+func TestJackinAlwaysSendsScan(t *testing.T) {
+	w, h, _ := decryptWorld(t)
+	w.takeOut()
+	t1 := w.cyber.devices["t1"]
+	h.scanned = nil
+	w.jackin(h, t1)
+	got := false
+	for _, om := range w.takeOut() {
+		if om.to == h.id && om.msg["t"] == "scan" {
+			if devs, ok := om.msg["devices"].([]scanDevice); ok && len(devs) == 1 && devs[0].ID == "t1" {
+				got = true
+			}
+		}
+	}
+	if !got {
+		t.Fatalf("jackin with nil scanned must still send a scan with the entry point")
+	}
+	if len(h.scanned) != 1 || !h.scanned["t1"] {
+		t.Fatalf("entry point must become the seed of scanned, got %v", h.scanned)
+	}
+}
+
+func TestDecryptRmMidJob(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	srv := w.cyber.devices["srv1"]
+	name := srv.items[0].Name
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": name})
+	if len(srv.jobs) != 1 {
+		t.Fatalf("srv job not started")
+	}
+	w.takeOut()
+	// rm прямо во время джобы: имя исчезает, процесс продолжает работать
+	srv.items = nil
+	for i := 0; i < 12*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(srv.jobs) != 0 {
+		t.Fatalf("job must finish (rm does not cancel it)")
+	}
+	out := w.takeOut()
+	foundCode := false
+	for _, m := range out {
+		if m.msg["t"] == "codes" && m.msg["door"] == w.doorKeyCodeNow(name) {
+			foundCode = true
+		}
+	}
+	if !foundCode {
+		t.Fatalf("POSIX: team must still learn the code after mid-job rm")
+	}
+}
+
+// TestDecryptNpuDenied — §16.4: decrypt только на NPU-хостах (дека/SRV);
+// терминал — denied npu («НУЖЕН NPU»).
+func TestDecryptNpuDenied(t *testing.T) {
+	w, h, _ := decryptWorld(t)
+	t1 := w.cyber.devices["t1"]
+	t1.owner = h.id
+	t1.items = []dataItem{{Name: "junk", MB: 10, Enc: true}}
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "t1", "data": "junk"})
+	if !hasDenied(w.takeOut(), h.id, "npu") {
+		t.Fatalf("terminal must be denied npu")
+	}
+}
+
+// TestDecryptDeckJob — §16.4: джоба на деке — процесс деки (NPU ×1, 2 МБ/с:
+// 60 МБ = 30 с), отменяется джек-аутом; результат enc:false + код в MEM деки.
+func TestDecryptDeckJob(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	h.items = append(h.items, dataItem{Name: "door_key", MB: 60, Enc: true})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	p := findProg(h, "decrypt")
+	if p == nil {
+		t.Fatalf("deck decrypt not started")
+	}
+	if p.work != 30 {
+		t.Fatalf("deck decrypt work = %v, want 30 (60 МБ / 2 МБ/с)", p.work)
+	}
+	for i := 0; i < 31*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if len(h.progs) != 0 {
+		t.Fatalf("deck job must finish in 30 s")
+	}
+	if len(h.items) != 1 || h.items[0].Enc || h.items[0].Code == "" {
+		t.Fatalf("deck item must be decrypted with code, items=%v", h.items)
+	}
+	out := w.takeOut()
+	if !hasWire(out, h.id, "codes") {
+		t.Fatalf("deck decrypt must send codes to the team")
+	}
+	// уже расшифрованный item — decrypted (denied; owner: не смешивать
+	// «уже скопировано» и «уже расшифровано» в одном reason)
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	if !hasDenied(w.takeOut(), h.id, "decrypted") {
+		t.Fatalf("decrypt of a plain (enc:false) item must be denied decrypted")
+	}
+	// джек-аут отменяет дековую джобу (процесс деки, §16.4)
+	h.items[0].Enc = true
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	for i := 0; i < 2*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	w.handleMessage(h, message{"t": "jackout"})
+	if findProg(h, "decrypt") != nil {
+		t.Fatalf("deck job must die on jackout")
+	}
+}
+
+// TestDecryptNpuQueue — §16.4 честная NPU-очередь: две джобы на SRV = каждая
+// ×0.5 (3 МБ/с): на 10-й секунде ни одна не готова, к 21-й — обе.
+func TestDecryptNpuQueue(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	srv := w.cyber.devices["srv1"]
+	srv.items = append(srv.items, dataItem{Name: "door_key_2", MB: 60, Enc: true})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": srv.items[0].Name})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "srv1", "data": "door_key_2"})
+	if len(srv.jobs) != 2 {
+		t.Fatalf("two jobs must queue, got %d", len(srv.jobs))
+	}
+	for i := 0; i < 10*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if srv.items[0].Enc == false || srv.items[1].Enc == false {
+		t.Fatalf("fair queue: 10 s of two jobs (half rate) must not finish either")
+	}
+	for i := 0; i < 11*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if srv.items[0].Enc || srv.items[1].Enc {
+		t.Fatalf("both jobs must finish by 21 s at half rate")
+	}
+}
+
+// TestNetSafe — §16.6 (итерация 5): safe_key сеется на NETSAFE (MEM 128,
+// БЕЗ NPU — decrypt-станции только SRV/дека): decrypt на месте — denied npu;
+// путь — cp на деку (ветка 10: 120 МБ = 12 с) → decrypt → код сейфа команде
+// (codes.safe, HUD «КОД СЕЙФА»); safe-код фиксирован на матч и не равен
+// коду d3; новый матч пересеивает safe_key.
+func TestNetSafe(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	ns := w.cyber.devices["netsafe"]
+	if len(ns.items) != 1 || ns.items[0].Name != "safe_key" || ns.items[0].MB != 120 || !ns.items[0].Enc {
+		t.Fatalf("seedData must seed safe_key 120 enc on netsafe, got %v", ns.items)
+	}
+	if ns.npu > 0 {
+		t.Fatalf("NETSAFE must have no NPU (decrypt-stations are SRV/deck)")
+	}
+
+	// --- §16.6 итерация 5.5: экспоненциальный backoff на сетевые попытки ---
+	h.scanned["netsafe"] = true
+	// 1-й сетевой vulnscan — база сейфа 8 с (плейтест «слишком быстро»)
+	runAndWaitM2(w, h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	if ns.vulnedBy[h.id] != true {
+		t.Fatalf("first network vulnscan must finish")
+	}
+	// пеня за КАЖДЫЙ старт — «подряд» растёт сразу.
+	// trojan: база 10 с ×2 = 20 с
+	w.takeOut()
+	w.handleMessage(h, message{"t": "run", "prog": "trojan", "dev": "netsafe"})
+	p2 := findProg(h, "trojan")
+	if p2 == nil {
+		t.Fatalf("network trojan must start (slow, not denied)")
+	}
+	if p2.work != 20 {
+		t.Fatalf("network trojan right after vulnscan = %v, want 20 (10 x2)", p2.work)
+	}
+	slow := false
+	for _, m := range w.takeOut() {
+		if m.msg["t"] == "slow" && m.msg["mult"] == 2 {
+			slow = true
+		}
+	}
+	if !slow {
+		t.Fatalf("backed-off start must carry a slow message (x2)")
+	}
+	// следующая попытка vulnscan — база 8 ×4 = 32 с
+	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p3 := findProg(h, "vulnscan")
+	if p3 == nil || p3.work != 32 {
+		t.Fatalf("next vulnscan must be x4 (32 s), got work=%v", p3.work)
+	}
+	// очередь длинная (trojan 20 + vulnscan 32 при делении) — хвост доедаем
+	for i := 0; i < 90*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	// спад: −1 ступень/90 с; было 3 ступени → +5 мин = 0.
+	// Проверяем ВТОРЫМ хакером той же команды — заодно доказываем per-team
+	// (h после trojan — владелец, exempt)
+	h2 := w.addPlayer(3, "h2", "hacker", 0)
+	w.takeOut()
+	jackAt(w, h2, "t1")
+	h2.scanned = map[string]bool{"t1": true, "netsafe": true}
+	*clock = clock.Add(5 * time.Minute)
+	w.handleMessage(h2, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p4 := findProg(h2, "vulnscan")
+	if p4 == nil || p4.work != 8 {
+		t.Fatalf("after decay vulnscan must be back to base 8 s, got work=%v", p4.work)
+	}
+	w.takeOut()
+	// ЛОКАЛЬНЫЙ путь — без пени: джек-ин в сам сейф
+	w.handleMessage(h, message{"t": "jackout"})
+	jackAt(w, h, "netsafe")
+	// «дорогой вход»: 6 с установки канала у сейфа
+	for i := 0; i < 7*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if h.jackHost == nil || h.jackHost.id != "netsafe" {
+		t.Fatalf("hacker must jack into netsafe (expensive entry)")
+	}
+	w.handleMessage(h, message{"t": "run", "prog": "vulnscan", "dev": "netsafe"})
+	p5 := findProg(h, "vulnscan")
+	if p5 == nil || p5.work != 3 {
+		t.Fatalf("LOCAL vulnscan at the safe must have no penalty, got work=%v", p5.work)
+	}
+	// вернуться в t1 — дальше идёт исходный cp/decrypt сценарий
+	w.handleMessage(h, message{"t": "jackout"})
+	jackAt(w, h, "t1")
+	ns.owner = h.id
+	h.scanned["netsafe"] = true
+	// decrypt на месте — denied npu
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "netsafe", "data": "safe_key"})
+	if !hasDenied(w.takeOut(), h.id, "npu") {
+		t.Fatalf("NETSAFE must be denied npu")
+	}
+	// cp на деку: ветка 10 МБ/с (c6) — бутылочка маршрута; 120 МБ = 12 с
+	w.handleMessage(h, message{"t": "run", "prog": "cp", "dev": "netsafe", "dst": "deck", "data": "safe_key"})
+	p := findProg(h, "cp")
+	if p == nil {
+		t.Fatalf("cp netsafe->deck must start")
+	}
+	if p.mb != 120 || p.mbps != 10 {
+		t.Fatalf("cp mb/mbps = %d/%v, want 120/10 (branch cable c6)", p.mb, p.mbps)
+	}
+	for i := 0; i < 13*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !deckHasItem(h, "safe_key") {
+		t.Fatalf("deck must hold the safe_key copy")
+	}
+	if !hostHasItem(ns, "safe_key") {
+		t.Fatalf("cp must keep the source copy on netsafe")
+	}
+	// decrypt на деке (NPU ×1): 120 МБ / 2 = 60 с
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "safe_key"})
+	for i := 0; i < 61*30 && len(h.progs) > 0; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	it := h.items[0]
+	if it.Name != "safe_key" || it.Enc || it.Code == "" {
+		t.Fatalf("safe_key must be decrypted with the safe code, got %+v", it)
+	}
+	if it.Code == w.doorKeyCode {
+		t.Fatalf("safe code must differ from the d3 code")
+	}
+	out := w.takeOut()
+	found := false
+	for _, m := range out {
+		if m.msg["t"] == "codes" && m.msg["safe"] == it.Code {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("finished decrypt must send codes.safe to the team")
+	}
+	if w.safeCodes[h.team] != it.Code {
+		t.Fatalf("team must know the safe code permanently")
+	}
+	// новый матч: safe_key пересеян на NETSAFE, узнанные коды стёрты
+	w.doorCodes = map[int]string{}
+	w.safeCodes = map[int]string{}
+	w.resetDoorKey()
+	if !hostHasItem(ns, "safe_key") || ns.items[0].Enc == false {
+		t.Fatalf("new match must reseed an encrypted safe_key on netsafe")
+	}
+	if w.safeCodes[h.team] != "" {
+		t.Fatalf("known codes must be wiped on a new match")
+	}
+}
+
+// TestPhysafe — §16.6 (итерация 7): взятие space (любой класс), ввод кода
+// сейфа у PHYSAFE → канал «вскрываем 3 с», урон прерывает, рестарт не даёт
+// +10 повторно, успех — matchend reason=extract; смерть носителя роняет сейф;
+// доставка на базу стартует канал сама, отход из зоны прерывает.
+func TestPhysafe(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	if !w.physafePresent {
+		t.Fatalf("decryptWorld must carry a physafe prop")
+	}
+	w.takeOut()
+	// space у сейфа — берёт (любой класс; h — хакер, но джек-аут обязательный:
+	// джекнутый не двигается и ничего не берёт)
+	w.handleMessage(h, message{"t": "jackout"})
+	h.pos = vec3{20.5, 1, 36.5}
+	h.prevInteract = false // честный edge после jackAt
+	h.keys.interact = true
+	w.simulateTick()
+	h.keys.interact = false
+	if w.physafe.carrier == 0 {
+		t.Fatalf("space near the physafe must take it (any class)")
+	}
+	if !h.carry {
+		t.Fatalf("carrier flag must be set on the player")
+	}
+	// снап: physafe приезжает с id (без него клиентский парсер дропает проп
+	// — плейтест «бокс не двигается») и позицией носителя
+	w.simulateTick()
+	foundSnap := false
+	for _, p := range w.snapProps() {
+		if pm, ok := p.(message); ok && pm["kind"] == "physafe" && pm["id"] == "physafe" {
+			foundSnap = true
+		}
+	}
+	if !foundSnap {
+		t.Fatalf("snap.props must carry the physafe entry WITH id")
+	}
+	// несущий: ввод кода у сейфа невозможен (сейф уже у него)
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": w.safeCode})
+	if !hasDenied(w.takeOut(), h.id, "bad_target") {
+		t.Fatalf("carrier must be denied code entry")
+	}
+	// смерть носителя роняет сейф на месте
+	foe := w.addPlayer(2, "f", "assault", 1)
+	w.damage(foe, h, 999)
+	if w.physafe.carrier != 0 || w.physafe.pos[0] != h.pos[0] {
+		t.Fatalf("death must drop the physafe at the body")
+	}
+	w.takeOut()
+	// воскресим носителя для crack-сценария (тест не про респаун)
+	h.alive = true
+	h.hp = 100
+
+	// crack-канал: неверный код — N/4 (ok=false), верный — канал + +10 фрагов
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": "0000"})
+	out := w.takeOut()
+	hint := false
+	for _, m := range out {
+		if m.msg["t"] == "code" && m.msg["ok"] == false {
+			hint = true
+		}
+	}
+	if !hint {
+		t.Fatalf("wrong code must answer ok=false with an N/4 hint")
+	}
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": w.safeCode})
+	out = w.takeOut()
+	okMsg := false
+	for _, m := range out {
+		if m.msg["t"] == "code" && m.msg["ok"] == true {
+			okMsg = true
+		}
+	}
+	if !okMsg || w.physafe.chKind != "crack" {
+		t.Fatalf("valid code must start the crack channel")
+	}
+	if w.scores[h.team] != 10 {
+		t.Fatalf("first channel start must award +10 frags, scores=%v", w.scores)
+	}
+	// урон по вскрывающему прерывает канал
+	w.damage(foe, h, 1)
+	if w.physafe.chKind != "" {
+		t.Fatalf("damage to the cracker must break the channel")
+	}
+	// рестарт канала: +10 НЕ начисляются повторно
+	w.handleMessage(h, message{"t": "enter", "dev": "physafe", "code": w.safeCode})
+	w.takeOut()
+	if w.scores[h.team] != 10 {
+		t.Fatalf("channel restart must not re-award frags")
+	}
+	// успех: 3 с у сейфа → extract win + matchend reason=extract
+	for i := 0; i < 4*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	out = w.takeOut()
+	win, end := false, false
+	for _, m := range out {
+		if m.msg["t"] == "extract" && m.msg["stage"] == "win" {
+			win = true
+		}
+		if m.msg["t"] == "matchend" && m.msg["reason"] == "extract" {
+			end = true
+		}
+	}
+	if !win || !end {
+		t.Fatalf("3 s channel must win the match: win=%v end=%v", win, end)
+	}
+
+	// base-канал: другой класс у спавна — канал стартует сам
+	w.matchActive = true
+	w.physafe.pos = vec3{20, 1, 36}
+	w.physafe.carrier = 0
+	foe.pos = vec3{20.5, 1, 36.5}
+	foe.prevInteract = false
+	foe.keys.interact = true
+	w.simulateTick()
+	foe.keys.interact = false
+	if w.physafe.carrier != foe.id {
+		t.Fatalf("any class must be able to take the physafe")
+	}
+	foe.pos = vec3{35, 1, 35} // точка спавна команды 1
+	for i := 0; i < 2*30; i++ { // 2 с < канала: не даём врагу выиграть
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if w.physafe.chKind != "base" {
+		t.Fatalf("standing in the base zone must auto-start the base channel, kind=%q", w.physafe.chKind)
+	}
+	// отход из зоны прерывает
+	foe.pos = vec3{20, 1, 36}
+	*clock = clock.Add(time.Second / 30)
+	w.simulateTick()
+	if w.physafe.chKind != "" {
+		t.Fatalf("leaving the base zone must break the channel")
+	}
+}
+
+// TestLift — §16.12 (итерация 8.5): кнопка на 2F спускает платформу,
+// стоящий на ней игрок едет до 1F; использованный лифт отвечает used;
+// новый матч поднимает лифты.
+func TestLift(t *testing.T) {
+	w, clock := testWorldWithEmbeddedMap(t)
+	// decryptWorld-мир содержит лифты; testWorldWithEmbeddedMap — встроенная
+	// карта (тоже с лифтами после итерации 8.5). Найдём кнопку и лифт:
+	var btnProp, liftID string
+	for i := range w.m.props {
+		if w.m.props[i].Kind == "liftbtn" {
+			btnProp, liftID = w.m.props[i].ID, w.m.props[i].To
+			break
+		}
+	}
+	if btnProp == "" {
+		t.Fatalf("embedded map must carry a liftbtn")
+	}
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	var btn *mapProp
+	for i := range w.m.props {
+		if w.m.props[i].ID == btnProp {
+			btn = &w.m.props[i]
+		}
+	}
+	var lift *liftState
+	for i := range w.lifts {
+		if w.lifts[i].id == liftID {
+			lift = &w.lifts[i]
+		}
+	}
+	// игрок на платформе у кнопки
+	h.pos = vec3{btn.Pos[0] - 1.0, liftFloor2Y, btn.Pos[2]}
+	h.prevInteract = false
+	h.keys.interact = true
+	w.simulateTick()
+	h.keys.interact = false
+	if !lift.moving {
+		t.Fatalf("space at the button must start the descent")
+	}
+	// едет вниз, игрок прижат к платформе
+	for i := 0; i < 3*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if lift.top != liftFloor1Y || lift.moving {
+		t.Fatalf("lift must arrive at floor 1 in ~2.5 s, top=%v", lift.top)
+	}
+	if h.pos[1] != liftFloor1Y {
+		t.Fatalf("rider must be carried to floor 1, y=%v", h.pos[1])
+	}
+	// снап: лифт на F1 (плейтест «опустилась, а осталась на F2» — лифтов
+	// вообще не было в snap.props, клиентский меш стоял наверху)
+	snapLiftY := -1.0
+	for _, p := range w.snapProps() {
+		if pm, ok := p.(message); ok && pm["id"] == liftID && pm["kind"] == "lift" {
+			if y, ok := pm["y"].(float64); ok {
+				snapLiftY = y
+			}
+		}
+	}
+	if snapLiftY != liftFloor1Y {
+		t.Fatalf("snap.props must carry the lift at F1, y=%v", snapLiftY)
+	}
+	// повторный вызов — used (один спуск за матч)
+	w.takeOut()
+	h.keys.interact = true
+	h.prevInteract = false
+	w.simulateTick()
+	h.keys.interact = false
+	if !hasDenied(w.takeOut(), h.id, "used") {
+		t.Fatalf("second call of a spent lift must be denied used")
+	}
+	// новый матч — лифты наверх (матч не кончался — форсируем его конец)
+	w.matchActive = false
+	w.matchRestartAt = w.now().Add(matchRestartDelay)
+	*clock = clock.Add(matchRestartDelay + time.Second)
+	w.simulateTick()
+	if lift.top != liftFloor2Y {
+		t.Fatalf("new match must raise the lifts, top=%v", lift.top)
+	}
+}
+
+// TestMatchResetCyberState — плейтест 2026-11-20 «после нескольких раундов
+// старая мапа»: новый матч сбрасывает СЕТЬ — владельцев, vulned/firewall/
+// antivirus/watcher, открытые двери, запертость d3–d6, SRV-джобы; scanned
+// игроков пуст (туман войны заново), деке уходит пустой scan.
+func TestMatchResetCyberState(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	w.takeOut()
+	// насоздавали состояние прошлого матча
+	t1 := w.cyber.devices["t1"]
+	t1.owner = h.id
+	t1.vulnedBy[h.id] = true
+	t1.watcherBy[h.id] = true
+	t1.firewalled = h.id
+	t1.antivirused = h.id
+	d1 := w.cyber.devices["d1"]
+	d1.open = true
+	srv := w.cyber.devices["srv1"]
+	srv.jobs = append(srv.jobs, &devJob{id: 1, data: "x", mb: 10, by: h.id, team: h.team, progress: 5})
+	h.scanned["netsafe"] = true
+	w.matchActive = false
+	w.matchRestartAt = w.now().Add(matchRestartDelay)
+	*clock = clock.Add(matchRestartDelay + time.Second)
+	w.simulateTick() // новый матч
+	if t1.owner != 0 || len(t1.vulnedBy) != 0 || t1.watcherBy[h.id] || t1.firewalled != 0 || t1.antivirused != 0 {
+		t.Fatalf("new match must wipe owners/soft on devices")
+	}
+	if d1.open {
+		t.Fatalf("new match must close doors")
+	}
+	if len(srv.jobs) != 0 {
+		t.Fatalf("new match must kill leftover SRV jobs")
+	}
+	if len(h.scanned) != 1 || !h.scanned[h.jackHost.id] {
+		t.Fatalf("new match must reset scanned to the entry point only (§12.5), got %v", h.scanned)
+	}
+	devs := 0
+	for _, om := range w.takeOut() {
+		if om.to == h.id && om.msg["t"] == "scan" {
+			if d, ok := om.msg["devices"].([]scanDevice); ok {
+				devs = len(d)
+			}
+		}
+	}
+	if devs != 1 {
+		t.Fatalf("jacked player must receive a scan with just the entry point, got %d devices", devs)
 	}
 }

@@ -7,10 +7,12 @@ import type { Cls, NetStats, SnapPlayer } from './net'
 import { IS_TOUCH } from './mobile'
 import QRCode from 'qrcode'
 
-const TEAM_LABEL = ['ЦИАНОВЫЕ', 'МАДЖЕНТОВЫЕ'] as const
+const TEAM_END_LABEL = ['WHITEHAT', 'BLACKHAT'] as const // team 0 = WhiteHat (белая, §2)
+/** Лор извлечения (итерация 7, формулировка владельца): ЧТО мы вынесли. */
+export const EXTRACT_LORE = 'ИЗВЛЕЧЕНО: ПРОТОКОЛ «ГЕНЕАЛОГИЯ» — КОМПОНЕНТ ВИРУСА, УБИВАЮЩЕГО ПО ДНК НОСИТЕЛЯ И ВСЕХ ЕГО ДЕТЕЙ'
 const KILLFEED_ROWS = 5
 const KILLFEED_FADE_MS = 4000
-const END_RESTART_MS = 10000
+const END_RESTART_MS = 30000
 
 /** Текст приглашения (§15.5): три лозунга владельца — каркас текста
  *  (заголовок → разворот → финал), между ними — только реальные механики.
@@ -393,6 +395,15 @@ export class Hud {
     snaps: byId('snaps'),
     jackinHint: byId('jackinHint'),
     hudWarn: byId('hudWarn'),
+    hudCode: byId('hudCode'),
+    endReason: byId('endReason'),
+    hudNav: byId('hudNav'),
+    hudCarry: byId('hudCarry'),
+    hudChannel: byId('hudChannel'),
+    hudChannelTitle: byId('hudChannelTitle'),
+    hudChannelFill: byId('hudChannelFill'),
+    hudChannelPct: byId('hudChannelPct'),
+    endTable: byId('endTable'),
   }
 
   /** Vertical mouse inversion, persisted across sessions (client-side only). */
@@ -830,6 +841,80 @@ export class Hud {
     this.warnTimer = setTimeout(() => el.classList.add('hidden'), 3000)
   }
 
+  /** Канал «вскрываем сейф» (§16.6, плейтест «нужна анимация с процентами»):
+   *  янтарный бар для своей команды, красный — враг вскрывает. null — скрыть. */
+  setChannel(mine: boolean, text: string, prog: number): void {
+    const el = this.el.hudChannel
+    if (el === null) return
+    el.classList.remove('hidden')
+    el.classList.toggle('enemy', !mine)
+    this.el.hudChannelTitle.textContent = text
+    this.el.hudChannelFill.style.width = `${Math.round(Math.min(1, Math.max(0, prog)) * 100)}%`
+    this.el.hudChannelPct.textContent = `${Math.round(prog * 100)}%`
+  }
+
+  hideChannel(): void {
+    this.el.hudChannel?.classList.add('hidden')
+  }
+
+  /** Ноша PHYSAFE (§16.6): постоянная янтарная плашка, пока safe=true. */
+  setCarry(on: boolean): void {
+    const el = this.el.hudCarry
+    if (el === null) return
+    el.classList.toggle('hidden', !on)
+    if (on) el.textContent = 'СЕЙФ ПРИ ТЕБЕ — ВЕДИ НА БАЗУ · СКОРОСТЬ ×0.5'
+  }
+
+  /** Пул edge-индикаторов (§15.14, плейтест «треугольники по краям экрана
+   *  с подписями»): маленький цветной треугольник + подпись id на краю
+   *  экрана — направление на объект ВНЕ поля зрения. Пересоздания DOM нет:
+   *  пул переиспользуется, лишние скрываются. */
+  setNav(items: readonly { label: string; color: string; left: number; top: number; deg: number }[]): void {
+    const box = this.el.hudNav
+    if (box === null) return
+    for (let i = 0; i < items.length; i++) {
+      let el = this.navPool[i]
+      if (el === undefined) {
+        el = document.createElement('div')
+        el.className = 'nav-ind'
+        const tri = document.createElement('div')
+        tri.className = 'nav-tri'
+        const lab = document.createElement('div')
+        lab.className = 'nav-label'
+        el.append(tri, lab)
+        box.append(el)
+        this.navPool.push(el)
+      }
+      const it = items[i]
+      el.classList.remove('hidden')
+      el.style.left = `${it.left}px`
+      el.style.top = `${it.top}px`
+      const tri = el.firstElementChild as HTMLElement
+      tri.style.borderBottomColor = it.color
+      tri.style.transform = `rotate(${it.deg}deg)`
+      ;(el.lastElementChild as HTMLElement).textContent = it.label
+    }
+    for (let i = items.length; i < this.navPool.length; i++) this.navPool[i].classList.add('hidden')
+  }
+  private navPool: HTMLElement[] = []
+
+  /** Коды, узнанные командой (§16.4/§16.6/§16.9 codes → HUD «КОД D3: 4731
+   *  · СЕЙФ: 8241»): постоянная строка — команда знает код до конца матча.
+   *  Оба null — скрыть (новый матч: коды перегенерированы). */
+  setCodes(door: string | null, safe: string | null): void {
+    const el = this.el.hudCode
+    if (el === null) return
+    const parts: string[] = []
+    if (door !== null) parts.push(`КОД D3: ${door}`)
+    if (safe !== null) parts.push(`СЕЙФ: ${safe}`)
+    if (parts.length === 0) {
+      el.classList.add('hidden')
+      return
+    }
+    el.textContent = parts.join('  ·  ')
+    el.classList.remove('hidden')
+  }
+
   /** Текущее оружие (хакер: пистолет) — рядом с HP. */
   setWeapon(text: string | null): void {
     const el = this.el.weaponTag
@@ -984,12 +1069,35 @@ export class Hud {
     this.el.death.classList.add('hidden')
   }
 
-  showEnd(winner: number, scores: readonly [number, number], onDone: () => void): void {
+  showEnd(
+    winner: number,
+    scores: readonly [number, number],
+    onDone: () => void,
+    reason?: string | null,
+    players?: readonly { n: string; t: number; f: number }[],
+  ): void {
     this.endActive = true
     this.onEndDone = onDone
     this.endUntilMs = Date.now() + END_RESTART_MS
+    // плейтест: «Результат: Победа <команда> \ ничья» — явно, словом
     this.el.endTitle.textContent =
-      winner === 0 || winner === 1 ? `ПОБЕДА — ${TEAM_LABEL[winner]}` : 'НИЧЬЯ'
+      winner === 0 || winner === 1 ? `Результат: ПОБЕДА — ${TEAM_END_LABEL[winner]}` : 'Результат: НИЧЬЯ'
+    // ЧТО извлекли (extract) — лорная строка под счётом
+    this.el.endReason.textContent = reason ?? ''
+    this.el.endReason.classList.toggle('hidden', !reason)
+    // таблица фрагов по игрокам (плейтест: «раскрывается с таблицей»)
+    const rows = (players ?? []).map((p, i) => {
+      const row = document.createElement('div')
+      row.className = `end-row t${p.t}`
+      row.style.animationDelay = `${0.15 + i * 0.08}s`
+      row.append(
+        Object.assign(document.createElement('span'), { textContent: `${i + 1}. ${p.n}` }),
+        Object.assign(document.createElement('span'), { textContent: String(p.f) }),
+      )
+      return row
+    })
+    this.el.endTable.replaceChildren(...rows)
+    this.el.endTable.classList.toggle('hidden', rows.length === 0)
     this.el.endTitle.className =
       winner === 0 || winner === 1 ? `end-title t${winner}` : 'end-title'
     this.el.endScore.innerHTML = `<span class="t0">${scores[0]}</span> : <span class="t1">${scores[1]}</span>`
@@ -1032,7 +1140,18 @@ export class Hud {
     if (this.endActive) {
       const remain = Math.max(0, this.endUntilMs - Date.now())
       this.el.endCount.textContent = String(Math.ceil(remain / 1000))
+      // CRT-рестарт (плейтест «выключение экрана белый шум сжимается в
+      // точку… а потом бац»): за ~0.9 с до конца отрисовываем выключение —
+      // «бац» попадает ровно на старт нового матча
+      if (remain <= 900 && this.onCrtOff !== null) {
+        const cb = this.onCrtOff
+        this.onCrtOff = null // один раз
+        cb()
+      }
       if (remain <= 0) this.hideEnd()
     }
   }
+
+  /** CRT-выключение перед рестартом (§16.6 end-анимация), ставит main.ts. */
+  onCrtOff: (() => void) | null = null
 }

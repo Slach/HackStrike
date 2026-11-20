@@ -676,6 +676,57 @@
         margin: 12px 0 8px;
         color: var(--ink);
       }
+      /* конец матча — панель РАСКРЫВАЕТСЯ (плейтест: «анимация — UI элемент
+         со счетом раскрывается с таблицей фрагов по игрокам») */
+      #endOverlay .panel {
+        animation: endOpen 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+      }
+      @keyframes endOpen {
+        from {
+          transform: scale(0.7) translateY(24px);
+          opacity: 0;
+        }
+        to {
+          transform: none;
+          opacity: 1;
+        }
+      }
+      #endTable {
+        margin: 4px auto 10px;
+        max-width: 340px;
+        text-align: left;
+        font-size: 13px;
+      }
+      #endTable.hidden {
+        display: none;
+      }
+      .end-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 4px 10px;
+        border-bottom: 1px solid rgba(120, 255, 190, 0.12);
+        animation: endRow 0.35s ease-out both; /* stagger через animationDelay */
+      }
+      @keyframes endRow {
+        from {
+          opacity: 0;
+          transform: translateX(-14px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .end-row.t0 {
+        color: #eafff3;
+      }
+      .end-row.t1 {
+        color: #ffb3dd;
+      }
+      .end-row span:last-child {
+        font-weight: bold;
+      }
       #endScore .t0,
       #endScore .t1 {
         text-shadow: 0 0 12px currentColor;
@@ -786,6 +837,274 @@
         font-size: 11px;
         padding: 5px 12px;
         letter-spacing: 1px;
+      }
+
+      /* код, узнанный командой (§16.4 codes → HUD «КОД D3: 4731»): постоянная
+         зелёная строка над hudWarn — видна и в бою, и в деке до конца матча */
+      #hudCode {
+        position: absolute;
+        bottom: 92px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 6px 18px;
+        background: rgba(4, 26, 14, 0.85);
+        border: 1px solid rgba(55, 255, 155, 0.55);
+        border-radius: 6px;
+        color: #7dff9e;
+        font-size: 14px;
+        letter-spacing: 3px;
+        text-shadow: 0 0 10px rgba(55, 255, 155, 0.5);
+        box-shadow: 0 0 18px rgba(55, 255, 155, 0.2);
+        pointer-events: none;
+        z-index: 6;
+        white-space: nowrap;
+      }
+      body.touch #hudCode {
+        bottom: calc(196px + env(safe-area-inset-bottom));
+        font-size: 11px;
+        padding: 4px 10px;
+        letter-spacing: 1px;
+      }
+
+      /* edge-индикаторы навигации (§15.14, плейтест «треугольники по краям
+         экрана с подписями»): маленький цветной треугольник + подпись —
+         направление на объект ВНЕ поля зрения; позицию считает main.ts */
+      #hudNav {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+        z-index: 5;
+      }
+      .nav-ind {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1px;
+        filter: drop-shadow(0 0 6px rgba(120, 255, 190, 0.35));
+      }
+      .nav-ind.hidden {
+        display: none;
+      }
+      .nav-tri {
+        width: 0;
+        height: 0;
+        border-left: 8px solid transparent;
+        border-right: 8px solid transparent;
+        border-bottom: 12px solid #37ff9b;
+        transition: transform 0.12s linear;
+      }
+      .nav-label {
+        font-size: 9px;
+        letter-spacing: 1px;
+        color: #cfeeff;
+        text-shadow: 0 0 6px rgba(0, 0, 0, 0.9), 0 0 10px rgba(120, 255, 190, 0.4);
+        white-space: nowrap;
+      }
+      body.touch .nav-label {
+        font-size: 8px;
+      }
+      /* несёшь PHYSAFE (§16.6, плейтест «ничего не отображает что я взял»):
+         янтарная плашка вместо строки кодов — постоянная, пока несёшь */
+      #hudCarry {
+        position: absolute;
+        bottom: 128px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 7px 18px;
+        background: rgba(34, 22, 2, 0.88);
+        border: 1px solid rgba(255, 200, 55, 0.65);
+        border-radius: 6px;
+        color: #ffd770;
+        font-size: 13px;
+        letter-spacing: 2px;
+        text-shadow: 0 0 10px rgba(255, 200, 55, 0.55);
+        box-shadow: 0 0 18px rgba(255, 200, 55, 0.25);
+        pointer-events: none;
+        z-index: 6;
+        white-space: nowrap;
+        animation: carrypulse 1.6s ease-in-out infinite;
+      }
+      @keyframes carrypulse {
+        0%,
+        100% {
+          box-shadow: 0 0 14px rgba(255, 200, 55, 0.2);
+        }
+        50% {
+          box-shadow: 0 0 26px rgba(255, 200, 55, 0.45);
+        }
+      }
+      body.touch #hudCarry {
+        bottom: calc(228px + env(safe-area-inset-bottom));
+        font-size: 11px;
+        padding: 4px 10px;
+        letter-spacing: 1px;
+      }
+      #hudCarry.hidden {
+        display: none;
+      }
+
+      /* канал «вскрываем сейф» (§16.6, плейтест «нужна анимация с
+         процентами»): полоса с % под прицелом, янтарная — своя команда,
+         красная — враг; прогресс сглаживается CSS transition (job 1 Гц) */
+      #hudChannel {
+        position: absolute;
+        bottom: 172px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 320px;
+        padding: 8px 14px 10px;
+        background: rgba(4, 14, 9, 0.9);
+        border: 1px solid rgba(255, 200, 55, 0.6);
+        border-radius: 6px;
+        text-align: center;
+        pointer-events: none;
+        z-index: 6;
+      }
+      #hudChannel.enemy {
+        border-color: rgba(255, 77, 94, 0.7);
+      }
+      #hudChannelTitle {
+        font-size: 12px;
+        letter-spacing: 3px;
+        color: #ffd770;
+        text-shadow: 0 0 8px rgba(255, 200, 55, 0.5);
+        margin-bottom: 6px;
+      }
+      #hudChannel.enemy #hudChannelTitle {
+        color: #ff6d80;
+        text-shadow: 0 0 8px rgba(255, 77, 94, 0.5);
+      }
+      #hudChannelBar {
+        height: 10px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      #hudChannelFill {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #ffc837, #ff8a37);
+        transition: width 1s linear;
+        animation: chPulse 0.8s ease-in-out infinite;
+      }
+      #hudChannel.enemy #hudChannelFill {
+        background: linear-gradient(90deg, #ff4d5e, #ff7a37);
+      }
+      @keyframes chPulse {
+        0%,
+        100% {
+          filter: brightness(1);
+        }
+        50% {
+          filter: brightness(1.4);
+        }
+      }
+      #hudChannelPct {
+        margin-top: 4px;
+        font-size: 14px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        color: #ffd770;
+        text-shadow: 0 0 8px rgba(255, 200, 55, 0.6);
+      }
+      #hudChannel.enemy #hudChannelPct {
+        color: #ff6d80;
+        text-shadow: 0 0 8px rgba(255, 77, 94, 0.6);
+      }
+      body.touch #hudChannel {
+        bottom: calc(268px + env(safe-area-inset-bottom));
+        width: 260px;
+      }
+      #hudChannel.hidden {
+        display: none;
+      }
+
+      /* CRT-рестарт матча (плейтест «выключение экрана белый шум в телевизоре
+         сжимается в точку… а потом бац»): шум → картинка сжимается в строку →
+         в точку → темнота → вспышка и включение нового экрана */
+      #crt {
+        position: fixed;
+        inset: 0;
+        z-index: 50; /* поверх end-оверлея (12) и пада (30) */
+        pointer-events: none;
+        display: none;
+      }
+      #crt.on {
+        display: block;
+      }
+      #crtNoise {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        background-size: 192px 192px;
+        mix-blend-mode: screen;
+        transition: opacity 0.18s linear;
+      }
+      #crtNoise.on {
+        opacity: 0.85;
+        animation: crtJitter 0.12s steps(6) infinite;
+      }
+      @keyframes crtJitter {
+        0% { background-position: 0 0; }
+        50% { background-position: 96px 48px; }
+        100% { background-position: -64px 96px; }
+      }
+      #crtFlash {
+        position: absolute;
+        inset: 0;
+        background: #fff;
+        opacity: 0;
+        transition: opacity 0.1s linear;
+      }
+      #crtFlash.on {
+        opacity: 0.85;
+        transition: none;
+      }
+      body.crt-collapse #renderCanvas,
+      body.crt-collapse #endOverlay,
+      body.crt-collapse #hackview {
+        transform: scaleY(0.008) scaleX(1.12);
+        filter: brightness(2.6);
+        transition: transform 0.3s cubic-bezier(0.7, 0, 1, 1), filter 0.3s ease-in;
+      }
+      body.crt-dot #renderCanvas,
+      body.crt-dot #endOverlay,
+      body.crt-dot #hackview {
+        transform: scale(0.002);
+        filter: brightness(5);
+        transition: transform 0.24s ease-in, filter 0.24s;
+      }
+      body.crt-on #renderCanvas,
+      body.crt-on #hackview {
+        animation: crtOn 0.32s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+      }
+      @keyframes crtOn {
+        0% {
+          transform: scaleY(0.02);
+          filter: brightness(4);
+        }
+        55% {
+          transform: scaleY(1.04) scaleX(1.02);
+          filter: brightness(1.6);
+        }
+        100% {
+          transform: none;
+          filter: none;
+        }
+      }
+      #endReason.hidden {
+        display: none;
+      }
+      #endReason {
+        margin: 6px 0 2px;
+        font-size: 12px;
+        letter-spacing: 2px;
+        color: #ffd770;
+        text-shadow: 0 0 8px rgba(255, 200, 55, 0.5);
+        max-width: 520px;
       }
 
       /* FPS-элементы прячутся, пока хакер в деке (тело стоит, прицел не нужен) */
@@ -1359,6 +1678,24 @@
         padding: 3px 8px;
         border-radius: 3px;
         cursor: pointer;
+        /* Единая высота независимо от контента (плейтест: 🗑 в «RM» рендерится
+           fallback-емодзи-шрифтом с большим line-box — кнопка RM была выше
+           «→ ДЕКА»); inline-flex центрует и текст, и иконку. */
+        line-height: 1;
+        height: 22px;
+        display: inline-flex;
+        align-items: center;
+      }
+      /* Строка данных в табе устройства (§16.2): имя слева, кнопки справа. */
+      .dev-data-row {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+      }
+      .dev-data-row .dev-data-name {
+        margin-right: auto;
+        align-self: center;
       }
       .dev-link:hover {
         background: rgba(55, 255, 155, 0.25);
@@ -1417,6 +1754,17 @@
         stroke-dasharray: 6 3;
         stroke: rgba(95, 215, 255, 0.55);
         stroke-width: 1.4;
+      }
+      /* Канал активной операции (плейтест M5): тот же зелёный, но ярче и
+         с лёгким свечением; пульс «дыхания» — трафик идёт. */
+      .svg-link-hi {
+        stroke: rgba(120, 255, 190, 0.95);
+        filter: drop-shadow(0 0 3px rgba(90, 255, 170, 0.8));
+        animation: netmapPathPulse 1.2s ease-in-out infinite;
+      }
+      @keyframes netmapPathPulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.55; }
       }
       .svg-owned {
         opacity: 0.9;
@@ -1567,10 +1915,165 @@
         color: rgba(170, 255, 210, 0.5);
         padding-left: 8px;
       }
+      /* §16.2: шапка ls-листинга в палитре и строки items в touch-дереве */
+      .hv-pal-lshead {
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: rgba(170, 255, 210, 0.7);
+        padding: 4px 8px 2px;
+        border-bottom: 1px solid rgba(170, 255, 210, 0.2);
+      }
+      .hv-pal-item .dev-link {
+        font-size: 10px;
+        padding: 2px 6px;
+      }
+      /* §16.2: отказ доступа в ls-листинге — ошибка, красным */
+      .hv-pal-red {
+        font-size: 11px;
+        letter-spacing: 1px;
+        color: #ff4d5e;
+        padding: 4px 8px;
+      }
       .hv-pal-hint {
         font-size: 9px;
         letter-spacing: 1px;
         color: rgba(170, 255, 210, 0.45);
+      }
+      /* §16.7: клавиатура d3 — пад замка по центру, на уровне глаз:
+         10 кнопок (1-9, C, 0, ⌫, OK), крупные для тапа на мобиле. */
+      .codepad {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+        background: rgba(4, 14, 9, 0.96);
+        border: 1px solid rgba(55, 255, 155, 0.55);
+        border-radius: 8px;
+        box-shadow: 0 0 24px rgba(55, 255, 155, 0.15);
+        padding: 14px 18px;
+        font-family: inherit;
+        color: #baffdd;
+        letter-spacing: 1px;
+        z-index: 30;
+        touch-action: manipulation;
+      }
+      .codepad-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
+      }
+      .codepad-title {
+        font-size: 11px;
+        opacity: 0.8;
+      }
+      .codepad-x {
+        background: none;
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 3px;
+        color: #baffdd;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1;
+        padding: 2px 7px;
+        cursor: pointer;
+      }
+      .codepad-x:hover {
+        background: rgba(255, 77, 94, 0.2);
+        color: #ffb3dd;
+        border-color: rgba(255, 77, 94, 0.6);
+      }
+      .codepad-display {
+        font-size: 22px;
+        letter-spacing: 6px;
+        color: #eafff3;
+        background: rgba(55, 255, 155, 0.06);
+        border: 1px solid rgba(55, 255, 155, 0.35);
+        border-radius: 4px;
+        padding: 4px 12px;
+        min-width: 130px;
+        text-align: center;
+      }
+      .codepad-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+      .codepad-key {
+        width: 52px;
+        height: 42px;
+        background: rgba(55, 255, 155, 0.08);
+        border: 1px solid rgba(55, 255, 155, 0.45);
+        border-radius: 5px;
+        color: #baffdd;
+        font: inherit;
+        font-size: 16px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .codepad-key:active {
+        background: rgba(55, 255, 155, 0.3);
+      }
+      /* ВЗЯТЬ в паде PHYSAFE (§16.6): во всю ширину, как ОТКРЫТЬ,
+         янтарный акцент — цвет сейфа */
+      .codepad-key.wide {
+        grid-column: span 3;
+        justify-self: stretch;
+        width: auto;
+        color: #ffd770;
+        border-color: rgba(255, 200, 55, 0.65);
+        background: rgba(255, 200, 55, 0.14);
+      }
+      .codepad-key.clr {
+        color: #ffb3dd;
+        border-color: rgba(255, 77, 94, 0.45);
+        background: rgba(255, 77, 94, 0.08);
+      }
+      .codepad-key.ok {
+        grid-column: span 3;
+        justify-self: stretch;
+        width: auto;
+        color: #eafff3;
+        border-color: rgba(55, 255, 155, 0.7);
+        background: rgba(55, 255, 155, 0.16);
+      }
+      .codepad-status {
+        font-size: 10px;
+        opacity: 0.75;
+        max-width: 180px;
+        text-align: center;
+        min-height: 12px;
+      }
+      .codepad-timer {
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: rgba(170, 255, 210, 0.7);
+        min-height: 12px;
+      }
+      .codepad-timer.soon {
+        color: #ffcc55;
+      }
+      .codepad-status.bad {
+        color: #ff4d5e;
+        opacity: 1;
+      }
+      .codepad-status.ok {
+        color: #37ff9b;
+        opacity: 1;
+      }
+      /* Тап: кнопки крупнее — палец не промахивается (§15.2). */
+      body.touch .codepad-key {
+        width: 68px;
+        height: 54px;
+        font-size: 18px;
+      }
+      body.touch .codepad-display {
+        font-size: 26px;
       }
       .hv-menu-wrap {
         position: absolute;
@@ -1647,6 +2150,168 @@
       }
       .hv-toast.fade {
         opacity: 0;
+      }
+      /* §16.2: анимированный cp-тост — живой трансфер (плейтест «давай
+         анимацию в сообщении копирования»): полоса с бегущими полосками
+         (классика файл-копи), финиш зелёный «ГОТОВО ✓», отмена красная. */
+      .hv-cptoast {
+        border-color: rgba(90, 255, 170, 0.55);
+        color: #baffdd;
+        box-shadow: 0 0 16px rgba(90, 255, 170, 0.18);
+        min-width: 200px;
+      }
+      .hv-cptoast .cprow {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .hv-cptoast .cpdst {
+        opacity: 0.75;
+      }
+      .hv-cptoast .cpbar {
+        height: 5px;
+        background: rgba(170, 255, 210, 0.12);
+        border-radius: 2px;
+        margin-top: 6px;
+        overflow: hidden;
+      }
+      .hv-cptoast .cpbar-fill {
+        height: 100%;
+        width: 0%;
+        border-radius: 2px;
+        background: repeating-linear-gradient(
+          45deg,
+          #37ff9b 0 6px,
+          rgba(55, 255, 155, 0.45) 6px 12px
+        );
+        transition: width 0.45s linear;
+        animation: cpstripes 0.55s linear infinite;
+      }
+      @keyframes cpstripes {
+        from {
+          background-position: 0 0;
+        }
+        to {
+          background-position: 17px 0;
+        }
+      }
+      .hv-cptoast .cpstatus {
+        font-size: 10px;
+        opacity: 0.7;
+        margin-top: 4px;
+        letter-spacing: 1px;
+      }
+      /* Скан-карточка (portscan/vulnscan…): янтарная, чтобы отличалась от
+         зелёного трансфера и голубого NPU-декрипта. */
+      .hv-cptoast.scan {
+        border-color: rgba(255, 200, 90, 0.55);
+        color: #ffe9b8;
+        box-shadow: 0 0 16px rgba(255, 190, 80, 0.16);
+      }
+      .hv-cptoast.scan .cpbar {
+        background: rgba(255, 220, 150, 0.12);
+      }
+      .hv-cptoast.scan .cpbar-fill {
+        background: repeating-linear-gradient(
+          45deg,
+          #ffc355 0 6px,
+          rgba(255, 195, 85, 0.45) 6px 12px
+        );
+      }
+      .hv-cptoast.scan.ok {
+        border-color: rgba(255, 200, 90, 0.9);
+        box-shadow: 0 0 18px rgba(255, 190, 80, 0.4);
+      }
+      .hv-cptoast.scan.ok .cpbar-fill {
+        background: #ffc355;
+      }
+      .hv-cptoast.ok {
+        border-color: rgba(90, 255, 170, 0.9);
+        box-shadow: 0 0 18px rgba(90, 255, 170, 0.4);
+      }
+      .hv-cptoast.ok .cpbar-fill {
+        animation: none;
+        background: #37ff9b;
+      }
+      .hv-cptoast.fail {
+        border-color: rgba(255, 77, 94, 0.8);
+        box-shadow: 0 0 16px rgba(255, 77, 94, 0.3);
+        color: #ffb3dd;
+      }
+      /* Отказ (плейтест: «прогрессбар красным и мигающим — ой ой отказ»):
+         бар красный и мигает, пока карточка не погаснет. */
+      .hv-cptoast.fail .cpbar-fill {
+        background: #ff4d5e;
+        animation: cpblink 0.45s ease-in-out infinite;
+      }
+      @keyframes cpblink {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.2;
+        }
+      }
+
+      /* DECRYPT-карточка (§16.4, плейтест «другую анимацию, со %»): голубой
+         NPU-бар с медленным ходом (transition 1 с сглаживает job 1 Гц и deck
+         2 Гц), пульс яркости, крупный процент и бегущая hex-строка. */
+      .hv-cptoast.dec {
+        border-color: rgba(125, 215, 255, 0.55);
+        color: #cfeeff;
+        box-shadow: 0 0 16px rgba(95, 215, 255, 0.22);
+        min-width: 230px;
+      }
+      .hv-cptoast.dec .cpbar {
+        height: 9px;
+      }
+      .hv-cptoast.dec .cpbar-fill {
+        background: linear-gradient(90deg, #5fd7ff, #9d7bff);
+        transition: width 1s linear;
+        animation: decpulse 0.9s ease-in-out infinite;
+      }
+      @keyframes decpulse {
+        0%,
+        100% {
+          filter: brightness(1);
+        }
+        50% {
+          filter: brightness(1.45);
+        }
+      }
+      .hv-cptoast.dec .decmeta {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        margin-top: 4px;
+      }
+      .hv-cptoast.dec .decpct {
+        font-size: 15px;
+        font-weight: bold;
+        letter-spacing: 2px;
+        color: #8ee0ff;
+        text-shadow: 0 0 8px rgba(95, 215, 255, 0.65);
+      }
+      .hv-cptoast.dec .decscr {
+        font-size: 9px;
+        letter-spacing: 2px;
+        color: rgba(142, 224, 255, 0.5);
+        white-space: nowrap;
+        overflow: hidden;
+        max-width: 130px;
+      }
+      .hv-cptoast.dec.ok .cpbar-fill {
+        animation: none;
+        background: #37ff9b;
+      }
+      .hv-cptoast.dec.ok .decpct {
+        color: #7dff9e;
+        text-shadow: 0 0 8px rgba(55, 255, 155, 0.6);
+      }
+      .hv-cptoast.dec.ok .decscr {
+        color: rgba(125, 255, 158, 0.8);
       }
 
       /* ── Мобильная адаптация (ГДД §15): оверлей meatview + touch-слой деки.
@@ -2496,6 +3161,15 @@
     <canvas id="minimap" width="180" height="180"></canvas>
     <div id="jackinHint" class="hidden"></div>
     <div id="hudWarn" class="hidden"></div>
+    <div id="hudCode" class="hidden"></div>
+    <div id="hudCarry" class="hidden"></div>
+    <div id="crt" class="hidden"><div id="crtNoise"></div><div id="crtFlash"></div></div>
+    <div id="hudChannel" class="hidden">
+      <div id="hudChannelTitle"></div>
+      <div id="hudChannelBar"><div id="hudChannelFill"></div></div>
+      <div id="hudChannelPct">0%</div>
+    </div>
+    <div id="hudNav"></div>
 
     <div id="hackview" class="hidden"></div>
 
@@ -2623,7 +3297,9 @@
     <div id="endOverlay" class="overlay hidden">
       <div class="panel">
         <div id="endTitle" class="end-title">МАТЧ ОКОНЧЕН</div>
+        <div id="endReason" class="hidden"></div>
         <div id="endScore">0 : 0</div>
+        <div id="endTable" class="hidden"></div>
         <div id="endCount">10</div>
         <div class="dim">АВТО-РЕСТАРТ</div>
       </div>

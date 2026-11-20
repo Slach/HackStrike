@@ -20,11 +20,19 @@ type collider struct {
 }
 
 type gameMap struct {
-	Name      string                  `json:"name"`
-	Bounds    [3]float64              `json:"bounds"`
-	Colliders []collider              `json:"colliders"`
-	Spawns    map[string][][3]float64 `json:"spawns"` // "0"/"1" → точки спавна (у ног)
-	Props     []any                   `json:"props"`  // сырые M2-пропсы (§12.3)
+	// deviceBoxes — корпуса устройств как препятствия (строит buildCyber,
+	// проверяет staticBlocked/doorBlocker): сеть и физика обязаны сойтись.
+	deviceBoxes []aabb
+
+	// dynamic — коллайдеры, двигающиеся каждый тик (платформы лифтов,
+	// §16.12): applyPhysics приземляет игроков на них, как на пол.
+	// Пишет liftTick до движения игроков.
+	dynamic []collider
+	Name        string                  `json:"name"`
+	Bounds      [3]float64              `json:"bounds"`
+	Colliders   []collider              `json:"colliders"`
+	Spawns      map[string][][3]float64 `json:"spawns"` // "0"/"1" → точки спавна (у ног)
+	Props       []any                   `json:"props"`  // сырые M2-пропсы (§12.3)
 
 	// props — типизированные пропсы (заполняет parseProps до validate,
 	// чтобы validate проверял связи door.to / cable.from-to).
@@ -48,6 +56,8 @@ type mapProp struct {
 	BW     float64      `json:"bw"`     // cable: пропускная способность, МБ/с (§16.3; 0 → дефолт по kind)
 	// Backplane — switch: суммарная шина транзита, МБ/с (§16.3; 0 → дефолт).
 	Backplane float64 `json:"backplane"`
+	// Locked — door: код-замок (§16.7, d3). Только код с клавиатуры.
+	Locked bool `json:"locked"`
 }
 
 // parseGameMap — парсинг + валидация: карта встроенная, ошибка означает
@@ -79,7 +89,7 @@ func (m *gameMap) parseProps() error {
 			return fmt.Errorf("map: prop %d: %w", i, err)
 		}
 		switch p.Kind {
-		case "terminal", "radio", "switch", "door", "gas", "fire", "valve", "camera", "cable":
+		case "terminal", "radio", "switch", "door", "gas", "fire", "valve", "camera", "cable", "srv", "keypad", "safe", "physafe", "lift", "liftbtn":
 		default:
 			return fmt.Errorf("map: prop %d: unknown kind %q", i, p.Kind)
 		}

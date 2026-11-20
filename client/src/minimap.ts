@@ -16,10 +16,13 @@ export interface MiniAlly {
 export interface MiniSelf {
   x: number
   z: number
+  /** Высота — этаж для фильтра слоёв карты (§13.8, плейтест: карта 1 этажа
+   *  показывалась на втором). Необязательна: тесты/старые вызовы — 0. */
+  y?: number
   yaw: number
 }
 
-export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve'
+export type MiniPropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe' | 'liftbtn'
 
 export interface MiniProp {
   x: number
@@ -94,11 +97,17 @@ export class Minimap {
     props: readonly MiniProp[] = [],
     cyber: MiniCyber | null = null,
   ): void {
+    // Этаж игрока (плейтест: «миникарта показывает первый этаж хотя я уже
+    // ушёл на второй»): слой карты выше STAIR_TOP (1 этаж < 8 < 2 этаж).
+    const myY = me?.y ?? 0
+    const floorLo = myY >= 7.5 ? 7.5 : -1
     const ctx = this.ctx
     ctx.fillStyle = 'rgba(2,10,6,0.92)'
     ctx.fillRect(0, 0, this.w, this.h)
     ctx.lineWidth = 1
     for (const r of this.rects) {
+      if (r.stair ? false : r.y0 >= 7.5 && floorLo < 7.5) continue
+      if (r.stair ? false : r.y0 < 7.5 && floorLo >= 7.5) continue
       const x = this.px(r.x0)
       const y = this.pz(r.z0)
       const rw = (r.x1 - r.x0) * this.scale
@@ -232,6 +241,36 @@ export class Minimap {
         ctx.beginPath()
         ctx.arc(x, y, 1.4, 0, Math.PI * 2)
         ctx.fill()
+      } else if (p.kind === 'srv') {
+        // SRV (§16.5): двойной квадрат-стойка, голубовато-белый
+        ctx.fillStyle = 'rgba(230,245,255,0.25)'
+        ctx.strokeStyle = 'rgba(230,245,255,0.95)'
+        ctx.fillRect(x - 4, y - 5, 8, 10)
+        ctx.strokeRect(x - 4.5, y - 5.5, 9, 11)
+        ctx.strokeRect(x - 2, y - 3, 4, 6)
+      } else if (p.kind === 'safe') {
+        // NETSAFE (§16.6): квадрат с точкой-замком, приглушённый синий
+        ctx.strokeStyle = 'rgba(95,180,255,0.9)'
+        ctx.strokeRect(x - 4, y - 4, 8, 8)
+        ctx.fillStyle = 'rgba(95,180,255,0.9)'
+        ctx.beginPath()
+        ctx.arc(x, y, 1.4, 0, Math.PI * 2)
+        ctx.fill()
+      } else if (p.kind === 'liftbtn') {
+        // §16.12: кнопка лифта — белый треугольник вниз (спуск)
+        ctx.strokeStyle = 'rgba(240,244,248,0.9)'
+        ctx.beginPath()
+        ctx.moveTo(x - 3.5, y - 3.5)
+        ctx.lineTo(x + 3.5, y - 3.5)
+        ctx.lineTo(x, y + 4)
+        ctx.closePath()
+        ctx.stroke()
+      } else if (p.kind === 'physafe') {
+        // PHYSAFE (§16.6): янтарный квадрат — гонка за сейф видна всей команде
+        ctx.strokeStyle = 'rgba(255,200,55,0.95)'
+        ctx.strokeRect(x - 4, y - 4, 8, 8)
+        ctx.fillStyle = 'rgba(255,200,55,0.95)'
+        ctx.fillRect(x - 1.5, y - 1.5, 3, 3)
       } else {
         // switch: ромб
         ctx.strokeStyle = 'rgba(255,210,55,0.9)'

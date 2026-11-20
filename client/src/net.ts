@@ -14,7 +14,7 @@ export interface KeysState {
   interact: number
 }
 
-export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' // GDD §12.4, §13.1, §13.5, §13.6
+export type RunProg = 'portscan' | 'vulnscan' | 'trojan' | 'watcher' | 'firewall' | 'antivirus' | 'cp' | 'mv' | 'rm' | 'decrypt' // GDD §12.4, §13.1-13.6, §16.2 (cp=копия, mv=перенос), §16.4 decrypt
 
 export type ClientMessage =
   | { t: 'join'; name: string; cls: Cls; team: number } // team: -1 авто | 0 | 1
@@ -24,17 +24,19 @@ export type ClientMessage =
   | { t: 'ping'; c: number }
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
-  | { t: 'run'; prog: RunProg; dev?: string }
+  | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2/§16.4: cp/mv/rm — dst/data, decrypt — data (джоба на dev)
+  | { t: 'enter'; dev: string; code: string } // §16.7: код на клавиатуре d3 / §16.6: у PHYSAFE (dev=physafe)
+  | { t: 'takesafe' } // §16.6: кнопка ВЗЯТЬ в паде PHYSAFE (space занят падом)
   | { t: 'ctrl'; dev: string; action: 'toggle' }
 
 // 'fire' — урон-ландшафт (ГДД §14.6.1, ревизия v1): приезжает только из
 // /api/map props, никогда из snap.props и из scan (не сетевое устройство).
 // 'valve' — водяной клапан: сетевой кибер-контроллер огня (по образцу газа).
-export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve'
+export type PropKind = 'terminal' | 'radio' | 'switch' | 'door' | 'camera' | 'cable' | 'gas' | 'fire' | 'valve' | 'srv' | 'keypad' | 'safe' | 'physafe' | 'lift' | 'liftbtn'
 
 /** Сетевые устройства — всё, что бывает в scan/деке. Fire вычтен по построению:
  *  он не сканируется и не взламывается (§14.6.1) — управляют огнём через valve. */
-export type CyberKind = Exclude<PropKind, 'fire'>
+export type CyberKind = Exclude<PropKind, 'fire' | 'physafe' | 'lift' | 'liftbtn'> // fire/physafe/lift — не сетевые устройства
 
 /** Live prop state from snap.props (GDD §12.5); fields are only present when
  *  the server sent them, so an absent "open" means "keep the last
@@ -48,6 +50,7 @@ export interface SnapProp {
   open?: boolean // door / gas valve (M4 §14.3) / water valve (§14.6.1)
   radius?: number // radio
   owner?: number // camera (M3 §13.7): LED-индикатор владения; отсутствует = нейтральная
+  carriedBy?: number // physafe (§16.6): кто несёт; pos дублирует носителя
 }
 
 /** Link bandwidth of a scanned device (M5 §16.9, iter 1.5). */
@@ -74,6 +77,9 @@ export interface ScanDevice {
   firewalledBy?: number // firewall owner id (M3 §13.5: whose filter — for the own/ally/enemy badge; sent together with firewalled)
   antivirused?: boolean // someone's antivirus sits on this device (M3 §13.6, visible to everyone who scanned it)
   soft?: ScanSoft[] // resident software with owners (§9.2; ONLY to the device owner)
+  mem?: number // MEM capacity, MB (§16.1)
+  memFree?: number // free MEM including active cp reservations
+  data?: DataItem[] // data listing — ONLY to the trojan owner (§16.9)
 }
 
 /** Одна запись списка процессов устройства (панель «ПРОЦЕССЫ», §13.1). */
@@ -115,6 +121,20 @@ export interface DeckProg {
   prog: string
   dev: string | null
   etaMs: number
+  pct: number // доля выполнения 0..1 любой программы (сканы без МБ-прогресса)
+  path?: string[] // маршрут widest-path (§16.3): подсветка каналов операции на карте
+  dst?: string // cp/mv: приёмник ("deck" | hostId)
+  data?: string // cp/mv/rm/decrypt: имя item
+  mbLeft?: number // cp/mv/decrypt: остаток МБ
+  mbps?: number // cp/mv/decrypt: текущая скорость МБ/с
+}
+
+/** Один item данных в MEM (§16.1). */
+export interface DataItem {
+  n: string
+  mb: number
+  enc: boolean
+  code?: string
 }
 
 export interface DeckInfo {
@@ -149,7 +169,14 @@ export interface Snapshot {
   players: SnapPlayer[]
   scores: [number, number]
   timeLeft: number
+  keyLeft?: number // §16.5: мс до смены кода d3 (ротация door_key)
   props: readonly SnapProp[] // M2; empty for pre-M2 servers
+}
+
+export interface MatchPlayer {
+  n: string // ник
+  t: number // команда
+  f: number // фраги
 }
 
 export type ServerMessage =
@@ -159,15 +186,16 @@ export type ServerMessage =
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
   | { t: 'death'; by: number; respawnAt: number }
   | { t: 'envkill'; victim: number; owner: number } // M4 (GDD §14.3): broadcast; owner — trojan-владелец ловушки (0 = нейтрали)
-  | { t: 'matchend'; winner: number; scores: [number, number] }
+  | { t: 'matchend'; winner: number; scores: [number, number]; reason?: string; players?: MatchPlayer[] } // reason=extract|time|frags; players — таблица фрагов (§3.3)
   | { t: 'pong'; c: number; s: number; tick: number }
   // M2 (GDD §12.5)
   | { t: 'jackin'; host: string; deck: DeckInfo }
   | { t: 'jackprog'; dev: string; s: number } // установка канала «дорогого входа», 2 Гц (§12.1)
-  | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; progs: DeckProg[] } // ~2 Hz, only while jacked in
+  | { t: 'deck'; cpuLoad: number; npuLoad: number; ramUsed: number; netLoad: number; memUsed?: number; mem?: number; data?: DataItem[]; progs: DeckProg[] } // ~2 Hz, only while jacked in
   | { t: 'scan'; devices: ScanDevice[] }
   // dev (omitempty, §13.5) — где упёрся скан: firewall_scan
-  | { t: 'denied'; reason: string; dev?: string }
+  | { t: 'code'; dev: string; ok: boolean; match?: number; open?: boolean } // §16.7: итог ввода кода (match — N/4; open — итоговое состояние створки: код-тоггл, повторный ввод ЗАКРЫВАЕТ)
+  | { t: 'denied'; reason: string; dev?: string; prog?: string; data?: string } // §16.2: data-операции несут prog/data (красная карточка отказа)
   // M3 (GDD §13.2): trigger fired for me — src tells watcher (enemy jacked
   // into my watched device) from firewall (enemy portscan hit my filter,
   // one alert per scan run) or antivirus (enemy trojan repelled).
@@ -177,6 +205,19 @@ export type ServerMessage =
   | { t: 'cam'; dev: string; seen: CamSeen[] }
   // M3 (GDD §13.1 №3): radar sweep — 1 Hz, only to the living watcher owner.
   | { t: 'radar'; dev: string; who: RadarWho[] }
+  // M5 (GDD §16.9 job): прогресс SRV-decrypt команде запустившего, 1 Гц —
+  // в т.ч. после джек-аута/смерти запустившего (джоба живёт на хосте).
+  | { t: 'job'; dev: string; data: string; prog: number }
+  // M5 (GDD §16.9 codes): код, узнанный командой через decrypt, — навсегда
+  // в рамках матча (HUD «КОД D3»). Поля omitempty, по мере узнавания.
+  | { t: 'codes'; door?: string; safe?: string }
+  // M5 (GDD §16.9 extract, итерация 7): сейф взят / канал «вскрываем» (prog
+  // 0..1) / канал прерван / успех (следом matchend reason=extract).
+  | { t: 'extract'; team: number; by?: number; stage: 'taken' | 'channel' | 'broken' | 'win'; prog?: number }
+  // M5 (§16.6 итерация 5.5): сетевая попытка на сейф замедлена backoff'ом —
+  // НЕ отказ, программа пошла, но ×mult дольше. Игрок должен решить: ждать
+  // или джек-ин в сам сейф (без пени).
+  | { t: 'slow'; dev: string; prog: string; mult: number; eta: number }
 
 export interface NetStats {
   status: 'connecting' | 'open' | 'closed'
@@ -197,7 +238,7 @@ const CLS_KEYS: readonly Cls[] = ['sniper', 'assault', 'heavy', 'hacker']
 // Полный whitelist: map props парсятся через parseMapProps (props.ts);
 // fire в snap.props/scan по построению не появляется — parseProp просто
 // принимает kind, собственного состояния у него нет (ГДД §14.6.1).
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe', 'lift', 'liftbtn']
 
 function num(v: unknown, dflt: number): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt
@@ -266,6 +307,8 @@ function parseProp(v: unknown): SnapProp | null {
   if (Number.isFinite(radius) && radius > 0) prop.radius = radius
   const owner = num(p.owner, Number.NaN)
   if (Number.isFinite(owner) && owner > 0) prop.owner = owner
+  const carriedBy = num(p.carriedBy, 0)
+  if (carriedBy > 0) prop.carriedBy = carriedBy
   return prop
 }
 
@@ -276,7 +319,7 @@ function parseDevice(v: unknown): ScanDevice | null {
   // Fire не сканируется (§14.6.1): урон-ландшафт отсечён и типом, и здесь —
   // scan-протокол его никогда не несёт; valve — обычное устройство.
   const pk = PROP_KINDS.includes(p.kind as PropKind) ? (p.kind as PropKind) : null
-  const kind = pk !== null && pk !== 'fire' ? pk : null
+  const kind = pk !== null && pk !== 'fire' && pk !== 'physafe' && pk !== 'lift' && pk !== 'liftbtn' ? pk : null // fire/physafe/lift — не сетевые
   if (id === null || kind === null) return null
   const dev: ScanDevice = {
     id,
@@ -309,6 +352,23 @@ function parseDevice(v: unknown): ScanDevice | null {
   if (typeof p.bp === 'number' && Number.isFinite(p.bp) && p.bp > 0) dev.bp = p.bp
   // Список процессов (§9.2, панель «ПРОЦЕССЫ»): защитно, только владельцу
   // сервер и так его шлёт; битые записи выбрасываем.
+  if (typeof p.mem === 'number' && Number.isFinite(p.mem) && p.mem > 0) dev.mem = p.mem
+  if (typeof p.memFree === 'number' && Number.isFinite(p.memFree) && p.memFree >= 0) dev.memFree = p.memFree
+  if (Array.isArray(p.data)) {
+    const data: DataItem[] = []
+    for (const e of p.data) {
+      if (typeof e !== 'object' || e === null) continue
+      const r = e as Record<string, unknown>
+      const n = str(r.n)
+      const mb = num(r.mb, Number.NaN)
+      if (n === null || !Number.isFinite(mb)) continue
+      const item: DataItem = { n, mb, enc: r.enc === true }
+      const code = str(r.code)
+      if (code !== null) item.code = code
+      data.push(item)
+    }
+    if (data.length > 0) dev.data = data
+  }
   if (Array.isArray(p.soft)) {
     const soft: ScanSoft[] = []
     for (const e of p.soft) {
@@ -347,12 +407,30 @@ function parseDeckProg(v: unknown): DeckProg | null {
   const p = v as Record<string, unknown>
   const prog = str(p.prog)
   if (prog === null) return null
-  return {
+  const d: DeckProg = {
     id: num(p.id, 0),
     prog,
     dev: str(p.dev),
     etaMs: Math.max(0, num(p.etaMs, 0)),
+    pct: Math.min(1, Math.max(0, num(p.pct, 0))),
   }
+  if (Array.isArray(p.path)) {
+    const ids: string[] = []
+    for (const v of p.path) {
+      const s = str(v)
+      if (s !== null) ids.push(s)
+    }
+    if (ids.length > 1) d.path = ids
+  }
+  const dst = str(p.dst)
+  if (dst !== null) d.dst = dst
+  const data = str(p.data)
+  if (data !== null) d.data = data
+  const mbLeft = num(p.mbLeft, Number.NaN)
+  if (Number.isFinite(mbLeft) && mbLeft >= 0) d.mbLeft = mbLeft
+  const mbps = num(p.mbps, Number.NaN)
+  if (Number.isFinite(mbps) && mbps > 0) d.mbps = mbps
+  return d
 }
 
 export function parseServerMessage(raw: unknown): ServerMessage | null {
@@ -394,6 +472,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         players,
         scores,
         timeLeft: Math.max(0, num(m.timeLeft, 0)),
+        keyLeft: typeof m.keyLeft === 'number' ? m.keyLeft : undefined,
         props,
       }
     }
@@ -416,6 +495,23 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         t: 'matchend',
         winner: num(m.winner, -1),
         scores: scorePair(m.scores) ?? [0, 0],
+        reason: str(m.reason) ?? undefined,
+        players: Array.isArray(m.players)
+          ? m.players.filter((r): r is MatchPlayer => {
+              if (typeof r !== 'object' || r === null) return false
+              const q = r as Record<string, unknown>
+              return str(q.n) !== null && typeof q.t === 'number' && typeof q.f === 'number'
+            }).map((r) => ({ n: (r as { n: string }).n, t: (r as { t: number }).t, f: (r as { f: number }).f }))
+          : undefined,
+      }
+    case 'extract':
+      // §16.9 extract (итерация 7): события PHYSAFE.
+      return {
+        t: 'extract',
+        team: num(m.team, -1),
+        by: typeof m.by === 'number' && m.by > 0 ? m.by : undefined,
+        stage: m.stage === 'taken' || m.stage === 'channel' || m.stage === 'broken' || m.stage === 'win' ? m.stage : 'channel',
+        prog: typeof m.prog === 'number' ? m.prog : undefined,
       }
     case 'pong':
       return { t: 'pong', c: num(m.c, 0), s: num(m.s, 0), tick: num(m.tick, 0) }
@@ -439,12 +535,31 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
           if (parsed !== null) progs.push(parsed)
         }
       }
+      let data: DataItem[] | undefined
+      if (Array.isArray(m.data)) {
+        data = []
+        for (const e of m.data) {
+          if (typeof e !== 'object' || e === null) continue
+          const r = e as Record<string, unknown>
+          const n = str(r.n)
+          const mb = num(r.mb, Number.NaN)
+          if (n === null || !Number.isFinite(mb)) continue
+          const item: DataItem = { n, mb, enc: r.enc === true }
+          const code = str(r.code)
+          if (code !== null) item.code = code
+          data.push(item)
+        }
+        if (data.length === 0) data = undefined
+      }
       return {
         t: 'deck',
         cpuLoad: num(m.cpuLoad, 0),
         npuLoad: num(m.npuLoad, 0),
         ramUsed: num(m.ramUsed, 0),
         netLoad: num(m.netLoad, 0),
+        memUsed: typeof m.memUsed === 'number' ? m.memUsed : undefined,
+        mem: typeof m.mem === 'number' ? m.mem : undefined,
+        data,
         progs,
       }
     }
@@ -457,9 +572,57 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
       }
       return { t: 'scan', devices }
     }
+    case 'code': {
+      const dev = str(m.dev)
+      if (dev === null) return null
+      const match = num(m.match, Number.NaN)
+      return {
+        t: 'code',
+        dev,
+        ok: m.ok === true,
+        ...(Number.isFinite(match) ? { match } : {}),
+        // §16.7 (плейтест): итоговое состояние створки — код-ТОГГЛ, повторный
+        // ввод ЗАКРЫВАЕТ; без поля (старый сервер) — open undefined.
+        ...(typeof m.open === 'boolean' ? { open: m.open } : {}),
+      }
+    }
+    case 'job':
+      // §16.9 job 1 Гц: прогресс SRV-decrypt команде. Без кейса здесь
+      // защитный парсер дропал сообщение — проценты на карточке стояли на 0%
+      // (плейтест: «красиво, но проценты не увеличиваются»).
+      return {
+        t: 'job',
+        dev: str(m.dev) ?? '',
+        data: str(m.data) ?? '',
+        prog: num(m.prog, 0),
+      }
+    case 'slow':
+      // §16.6: backoff — программа стартовала замедленной; инфо, не отказ.
+      return {
+        t: 'slow',
+        dev: str(m.dev) ?? '',
+        prog: str(m.prog) ?? '',
+        mult: num(m.mult, 1),
+        eta: num(m.eta, 0),
+      }
+    case 'codes':
+      // §16.9 codes: код, узнанный командой через decrypt (HUD «КОД D3»).
+      return {
+        t: 'codes',
+        door: str(m.door) ?? undefined,
+        safe: str(m.safe) ?? undefined,
+      }
     case 'denied': {
       const dev = str(m.dev)
-      return { t: 'denied', reason: str(m.reason) ?? 'unknown', ...(dev !== null ? { dev } : {}) }
+      const prog = str(m.prog)
+      const data = str(m.data)
+      return {
+        t: 'denied',
+        reason: str(m.reason) ?? 'unknown',
+        ...(dev !== null ? { dev } : {}),
+        ...(prog !== null ? { prog } : {}),
+        ...(data !== null ? { data } : {}),
+      }
     }
     case 'alert': {
       const dev = str(m.dev)

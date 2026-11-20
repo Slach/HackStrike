@@ -71,6 +71,7 @@ type player struct {
 	hp        int
 	alive     bool
 	respawnAt time.Time
+	frags     int // личные фраги для таблицы конца матча (§3.3)
 
 	// posHist — недавние позиции ног (старая→новая), по одной за тик.
 	// Lag compensation выстрелов (ГДД §9.4): клиент видит цель ~100 мс в
@@ -92,7 +93,10 @@ type player struct {
 	jacking      *device // устройство, у которого ставится канал джек-ина (§12.1 «дорогой вход»; nil = нет)
 	jackT        float64 // прогресс установки канала, с
 	progs        []*program
+	items        []dataItem // MEM деки: скопированные данные (§16.1; смерть стирает)
 	nextProgID   int
 	scanned      map[string]bool
-	prevInteract bool // edge-детект space между тиками
+	prevInteract bool      // edge-детект space между тиками
+	enterAt      time.Time // §16.7: анти-флуд кода на клавиатуре d3 (1/2 с)
+	carry        bool      // §16.6: несёт PHYSAFE (×0.5 скорость, джек-ин нельзя)
 }

@@ -14,6 +14,7 @@ import { IS_TOUCH } from './mobile'
 import type {
   CamSeen,
   ClientMessage,
+  DataItem,
   DeckProg,
   LogEntry,
   CyberKind,
@@ -55,6 +56,13 @@ const DENIED_TEXT: Readonly<Record<string, string>> = {
   // §13.5 (плейтест M4): скан упёрся в чужой фильтр — скан не отменён,
   // но за хостом из dev ничего нового не открыто.
   firewall_scan: 'СКАН УПОРСЯ В FIREWALL',
+  // §16.4: decrypt требует нейромодуля — терминалы/свитчи/двери не умеют.
+  npu: 'НУЖЕН NPU — DECRYPT ТОЛЬКО НА ДЕКЕ ИЛИ SRV',
+  // плейтест «не смешивать»: dup = уже скопировано (cp/mv), decrypted =
+  // уже расшифровано (decrypt), in_progress = расшифровка уже летит
+  dup: 'УЖЕ СКОПИРОВАНО',
+  decrypted: 'УЖЕ РАСШИФРОВАНО',
+  in_progress: 'УЖЕ РАСШИФРОВЫВАЕТСЯ',
 }
 
 // Только сетевые устройства: fire (M4 §14.6.1) — не девайс, в деку не попадает
@@ -69,6 +77,9 @@ const KIND_LABEL: Readonly<Record<CyberKind, string>> = {
   cable: 'КАБЕЛЬ',
   gas: 'ГАЗ',
   valve: 'КЛАПАН',
+  srv: 'СЕРВЕР',
+  keypad: 'КЛАВИАТУРА',
+  safe: 'NETSAFE',
 }
 
 const PROG_LABEL: Readonly<Record<string, string>> = {
@@ -78,7 +89,14 @@ const PROG_LABEL: Readonly<Record<string, string>> = {
   watcher: 'WATCHER',
   firewall: 'FIREWALL',
   antivirus: 'ANTIVIRUS',
+  cp: 'CP',
+  mv: 'MV',
+  rm: 'RM',
+  decrypt: 'DECRYPT',
 }
+
+/** Скан-программы — у них живая карточка с % (deck.pct), не тост-«ЗАПУЩЕНО». */
+const SCAN_PROGS: ReadonlySet<string> = new Set(['portscan', 'vulnscan', 'trojan', 'watcher', 'firewall', 'antivirus'])
 
 /** Программы слэш-палитры (ГДД §13.3) — порядок = порядок ряда хоткеев 1..6. */
 const PALETTE_PROGS: readonly RunProg[] = [
@@ -89,6 +107,12 @@ const PALETTE_PROGS: readonly RunProg[] = [
   'firewall',
   'antivirus',
 ]
+
+/** Шелл-команда данных (§16.2): `data [host] ls|cp|rm …` — клиентский
+ *  парсер поверх wire-программ cp/rm; ls рендерится в палитре. */
+const DATA_CMD = 'data'
+type DataSub = 'ls' | 'cp' | 'mv' | 'rm' | 'decrypt'
+const DATA_SUBS: readonly DataSub[] = ['ls', 'cp', 'mv', 'rm', 'decrypt']
 
 /** Короткие алиасы kind для фильтра палитры: /term, /cam (ГДД §13.3). */
 const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
@@ -103,13 +127,15 @@ const KIND_ALIAS: Readonly<Record<string, PropKind>> = {
   клапан: 'valve',
 }
 
-/** Кандидат слэш-палитры: устройство или программа. */
+/** Кандидат слэш-палитры: устройство, программа, item данных (§16.2),
+ *  подкоманда data, сама команда data или decrypt (§16.4). */
 interface PalCand {
-  kind: 'dev' | 'prog'
+  kind: 'dev' | 'prog' | 'item' | 'sub' | 'datacmd' | 'decryptcmd'
   /** Что вставляется в токен при автодополнении. */
   text: string
   dev?: string
   prog?: RunProg
+  data?: string // item: имя данных
   label: string
   hint: string
 }
@@ -245,6 +271,54 @@ export class HackView {
   private netMbps = 0
   private deckRam = 4
   private progs: readonly DeckProg[] = []
+  private deckData: readonly DataItem[] = [] // §16.1: инвентарь MEM деки
+  /** Анимированные cp-тосты (§16.2, плейтест «давай анимацию»): живая полоса
+   *  трансфера из deck-сообщения 2 Гц; missed — тики без процесса (финиш). */
+  private cpToasts: {
+    key: string
+    prog: 'cp' | 'mv'
+    dev: string
+    dst: string
+    data: string
+    mb: number
+    wrap: HTMLElement
+    fill: HTMLElement
+    status: HTMLElement
+    missed: number
+    seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
+  }[] = []
+  /** Карточки сканов (плейтест M5: «бабл ушёл, а portscan идёт»): живой %
+   *  любой скан-программы из deck-сообщения 2 Гц (поле pct), финиш — как у
+   *  cp: «ГОТОВО ✓», не видевшая прогресса карточка — отказ на старте. */
+  private scanCards: {
+    prog: string
+    dev: string // "" у portscan без цели
+    wrap: HTMLElement
+    fill: HTMLElement
+    status: HTMLElement
+    missed: number
+    seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
+  }[] = []
+  /** DECRYPT-карточки (§16.4, плейтест «другую анимацию, со %»): голубой
+   *  NPU-бар, крупный процент, бегущая hex-строка. Прогресс из двух каналов:
+   *  job 1 Гц (SRV-джобы, всей команде) и deck-сообщение 2 Гц (джоба деки);
+   *  CSS transition сглаживает низкую частоту. timer — hex-скрэмбл-интервал. */
+  private jobCards: {
+    key: string
+    dev: string
+    data: string
+    wrap: HTMLElement
+    fill: HTMLElement
+    pct: HTMLElement
+    scr: HTMLElement
+    seen: boolean // карточка видела реальный прогресс (иначе — отказ на старте)
+    missed: number // дековые: тики deck-сообщения без процесса (финиш)
+    timer: number
+  }[] = []
+  private deckMemUsed = 0
+  private deckMemCap = 0
+  private deckDataBox: HTMLElement | null = null // живой список в табе ДЕКА
+  private deckMemLine: HTMLElement | null = null
   private readonly hist = {
     cpu: [] as number[],
     npu: [] as number[],
@@ -286,6 +360,14 @@ export class HackView {
   /** Палитра-дерево на тапе (§15.7): выбранный второй уровень (устройство)
    *  или null — ряд устройств. */
   private paletteDev: string | null = null
+  /** §16.2 ls-листинг в палитре («терминал»): host ('deck'|devId), чьи
+   *  данные показаны в списке кандидатов; null — обычные кандидаты.
+   *  Сбрасывается ручным вводом (input-событие) и закрытием палитры. */
+  private paletteLs: string | null = null
+  /** Touch-дерево §16.2: уровень items хоста ('deck'|devId) / уровень
+   *  приёмника cp (выбранный item). null — обычные уровни дерева. */
+  private paletteDataHost: string | null = null
+  private paletteDataItem: { host: string; key: string; prog: 'cp' | 'mv' } | null = null
 
   // Слэш-палитра (§13.3): командная строка запуска программ с клавиатуры.
   // input === null на тапе: дерево кнопок без поля ввода и без системной
@@ -293,8 +375,9 @@ export class HackView {
   private palette: { wrap: HTMLElement; input: HTMLInputElement | null; list: HTMLElement } | null = null
   private paletteCands: readonly PalCand[] = []
   private paletteSel = -1
-  /** Токен, который дополняет Tab: 0 = устройство, 1 = программа. */
-  private paletteTok: 0 | 1 = 0
+  /** Токен, который дополняет Tab: 0 = устройство, 1 = программа, у data
+   *  (§16.2) — дальше по грамматике (хост → подкоманда → ключ → приёмник). */
+  private paletteTok = 0
   private readonly cmdHistory: string[] = []
   private histIdx = 0
 
@@ -337,6 +420,18 @@ export class HackView {
     this.netMbps = msg.deck.net
     this.deckRam = msg.deck.ram > 0 ? msg.deck.ram : 4
     this.progs = []
+    // cp-тосты прошлой сессии деки мертвы вместе с ней (transfers отменены
+    // сервером при джек-ауте) — не оставляем висеть
+    this.cpToasts = []
+    // DECRYPT-карточки тоже: дековые джобы отменены джек-аутом, SRV живёт,
+    // но её карточка пересоздастся из job при новом джек-ине. Интервалы —
+    // остановить (утечка setInterval, §16.4). Контейнер — под ноль:
+    // никаких зомби-карточек прошлой сессии.
+    for (const r of this.jobCards) window.clearInterval(r.timer)
+    this.jobCards = []
+    this.cpToasts = []
+    this.scanCards = []
+    this.toasts.replaceChildren()
     // Дедупликаторы тостов-«находок» живут в синглтоне страницы и переживали
     // смерть/реконнект: повторный vulnscan той же цели приходил как «не новое»
     // и тост «УЯЗВИМОСТЬ НАЙДЕНА» глох — выглядело «vulnscan не находит»
@@ -373,6 +468,14 @@ export class HackView {
     }
     this.root.classList.add('hidden')
     this.main.replaceChildren()
+    // Тосты деки умирают с декой (плейтест: после смерти на экране навсегда
+    // висела DECRYPT-карточка «51%» — массивы чистились, DOM нет). Интервалы
+    // hex-скрэмбла DECRYPT-карточек — тоже.
+    for (const r of this.jobCards) window.clearInterval(r.timer)
+    this.jobCards = []
+    this.cpToasts = []
+    this.scanCards = []
+    this.toasts.replaceChildren()
     this.sparkRefs = []
     this.progLists = []
     this.netmapBoxes = []
@@ -387,7 +490,13 @@ export class HackView {
     this.push('ram', msg.ramUsed)
     this.push('net', msg.netLoad)
     this.progs = msg.progs
+    this.deckData = msg.data ?? []
+    this.deckMemUsed = msg.memUsed ?? this.deckMemUsed
+    this.deckMemCap = msg.mem ?? this.deckMemCap
+    this.updateCpToasts()
     this.schedule(() => this.updateDeckData())
+    // подсветка каналов активных операций (path в progs) — 2 Гц с deck-тиком
+    this.schedule(() => this.updateNetmaps())
   }
 
   onScan(msg: ScanMsg): void {
@@ -466,10 +575,64 @@ export class HackView {
 
   onDenied(msg: DeniedMsg): void {
     if (!this._active) return
+    // cp_cancel (§16.2): у активного cp/mv-тоста своя судьба — полоса
+    // краснеет и мигает («ой-ой отказ»), общий тост не нужен (дубль).
+    if (msg.reason === 'cp_cancel') {
+      this.failCpToasts(msg.dev ?? '')
+      return
+    }
+    // Отказ decrypt (§16.4): красим ТУ ЖЕ DECRYPT-карточку (плейтест «два
+    // прогрессбара» — вторую не плодим); нет карточки — готовая красная.
+    if (msg.prog === 'decrypt') {
+      const r = this.jobCards.find((x) => x.data === msg.data)
+      if (r !== undefined) {
+        this.jobCardFinish(r, false)
+      } else {
+        this.denyCard('decrypt', msg.data ?? '', msg.reason)
+      }
+      return
+    }
+    // Отказ data-операции (denied несёт prog/data, §16.2): красим ТУ ЖЕ
+    // оптимистичную карточку красным мигающим баром (плейтест: «два
+    // прогрессбара» — вторую не плодим); карточки нет (rm или рассинхрон) —
+    // создаём готовую красную.
+    if (msg.prog === 'cp' || msg.prog === 'mv' || msg.prog === 'rm') {
+      const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
+      const r =
+        msg.prog === 'rm'
+          ? undefined
+          : this.cpToasts.find((x) => x.prog === msg.prog && x.data === msg.data)
+      if (r !== undefined) {
+        this.cpToasts = this.cpToasts.filter((x) => x !== r)
+        this.failCard(r, base)
+      } else {
+        this.denyCard(msg.prog, msg.data ?? '', msg.reason)
+      }
+      return
+    }
     const base = DENIED_TEXT[msg.reason] ?? `ОТКАЗАНО: ${msg.reason}`
     // firewall_scan несёт хост с фильтром (§13.5) — показываем, ГДЕ упёрся
     // и что с этим делать (плейтест M4: тост без действия бесполезен).
     this.toast(msg.dev !== undefined ? `${base} (${msg.dev.toUpperCase()}) — НУЖЕН TROJAN НА ХОСТЕ` : base)
+  }
+
+  /** Карточка отказа data-операции: бар полный красный, мигает (§16.2). */
+  private denyCard(prog: 'cp' | 'mv' | 'rm' | 'decrypt', key: string, reason: string): void {
+    const wrap = el('div', 'hv-toast hv-cptoast fail')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `${prog.toUpperCase()} ${key.toUpperCase()} ✗`),
+      txt('span', 'cpdst', 'ОТКАЗ'),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    fill.style.width = '100%'
+    bar.append(fill)
+    const base = DENIED_TEXT[reason] ?? `ОТКАЗАНО: ${reason}`
+    const status = txt('div', 'cpstatus', base)
+    wrap.append(row, bar, status)
+    this.toasts.append(wrap)
+    this.fadeCard(wrap, 2600)
   }
 
   /** Сработал watcher (M3 §13.2): чужой джек-ин в устройство с моим триггером. */
@@ -661,6 +824,9 @@ export class HackView {
     } else if (e.code === 'Digit6') {
       e.preventDefault()
       this.runProgAt('antivirus', tabDev)
+    } else if (e.code === 'Digit7') {
+      e.preventDefault()
+      this.dataEntry()
     }
   }
 
@@ -728,11 +894,473 @@ export class HackView {
       return
     }
     if (dev !== null) this.target = dev
-    const devSuffix = needDev && target !== null ? ` → ${target.toUpperCase()}` : ''
     this.deps.send(
       needDev && target !== null ? { t: 'run', prog, dev: target } : { t: 'run', prog },
     )
+    // Сканы живут своей карточкой с % (плейтест: «бабл ушёл, а portscan
+    // идёт») — тост-«ЗАПУЩЕНО» у них только дубль.
+    if (SCAN_PROGS.has(prog)) {
+      this.scanCardStart(prog, needDev && target !== null ? target : '')
+      return
+    }
+    const devSuffix = needDev && target !== null ? ` → ${target.toUpperCase()}` : ''
     this.toast(`ЗАПУЩЕНО: ${PROG_LABEL[prog] ?? prog}${devSuffix}`)
+  }
+
+  /** Карточка скана: полоса с % (deck 2 Гц, поле pct) и ETA — portscan
+   *  без цели это «ПОИСК СЕТИ», у целевых сканов цель в заголовке. */
+  private scanCardStart(prog: string, dev: string): void {
+    const wrap = el('div', 'hv-toast hv-cptoast scan')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `${PROG_LABEL[prog as RunProg] ?? prog.toUpperCase()}${dev === '' ? '' : ` · ${dev.toUpperCase()}`}`),
+      txt('span', 'cpdst', dev === '' ? 'ПОИСК СЕТИ' : 'СКАНИРОВАНИЕ'),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    fill.style.width = '0%'
+    bar.append(fill)
+    const status = txt('div', 'cpstatus', '0%')
+    wrap.append(row, bar, status)
+    this.toasts.append(wrap)
+    this.scanCards.push({ prog, dev, wrap, fill, status, missed: 0, seen: false })
+  }
+
+  /** 2 Гц: прогресс скан-карточек из deck-сообщения; два тика без процесса —
+   *  финиш (как у cp-тостов: видевшая прогресс — «ГОТОВО ✓», не видевшая —
+   *  отказ сервера на старте). */
+  private updateScanCards(): void {
+    for (const r of [...this.scanCards]) {
+      const p = this.progs.find((q) => q.prog === r.prog && (q.dev ?? '') === r.dev)
+      if (p !== undefined) {
+        r.seen = true
+        r.missed = 0
+        r.fill.style.width = `${Math.round(p.pct * 100)}%`
+        const eta = Math.ceil(p.etaMs / 1000)
+        r.status.textContent = `${Math.round(p.pct * 100)}% · ${eta} С`
+        continue
+      }
+      r.missed += 1
+      if (r.missed < 2) continue
+      this.scanCards = this.scanCards.filter((x) => x !== r)
+      if (r.seen) {
+        r.wrap.classList.add('ok')
+        r.fill.style.width = '100%'
+        r.status.textContent = 'ГОТОВО ✓'
+        this.fadeCard(r.wrap, 1300)
+      } else {
+        r.wrap.classList.add('fail')
+        r.fill.style.width = '100%'
+        r.status.textContent = 'ОТКАЗ НА СТАРТЕ'
+        this.fadeCard(r.wrap, 2200)
+      }
+    }
+  }
+
+  // ── команда данных `data` (§16.2) ───────────────────────────────────────
+
+  /** Контекст данных (§16.2, плейтест: «жму data ls — а оно на деке, хотя
+   *  T1 затроянен»): устройство активного таба → выбранная на карте цель →
+   *  дека. Как у остального софта: цель — то, на что жал. */
+  private dataCtxHost(): string {
+    const pane = this.panes[this.activePane]
+    const dev = pane !== undefined ? (this.tabs.find((t) => t.key === pane.tabKey)?.dev ?? null) : null
+    if (dev !== null) return dev
+    if (this.target !== null) return this.target
+    return 'deck'
+  }
+
+  /** Токен — адресуемый хост data: 'deck' (алиас localhost, §16.2) или
+   *  устройство (префикс, уникальный). */
+  private dataHostAt(q: string): string | null {
+    if (q === 'deck' || q === 'localhost') return 'deck'
+    if (q === '') return null
+    const m = [...this.devices.values()].filter((d) => this.devMatch(d, q))
+    return m.length === 1 ? m[0].id : (m.find((d) => d.id === q)?.id ?? null)
+  }
+
+  /** Видимые items хоста: дека всегда, устройство — только своё (data
+   *  шлётся сервером лишь владельцу, §16.9). */
+  private dataHostItems(host: string): readonly DataItem[] {
+    if (host === 'deck') return this.deckData
+    const d = this.devices.get(host)
+    return d !== undefined && d.owner === this.myId ? (d.data ?? []) : []
+  }
+
+  private dataHostLabel(host: string): string {
+    if (host === 'deck') return 'ДЕКА'
+    const d = this.devices.get(host)
+    return `${host.toUpperCase()} ${d !== undefined ? KIND_LABEL[d.kind] : ''}`.trim()
+  }
+
+  private dataHostMem(host: string): string {
+    if (host === 'deck') return this.deckMemUsed > 0 || this.deckMemCap > 0 ? `${this.deckMemUsed}/${this.deckMemCap} МБ` : ''
+    const d = this.devices.get(host)
+    return d !== undefined && d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : ''
+  }
+
+  /** Все свои источники данных (для резолвции ключа без префикса): дека +
+   *  захваченные хосты с items. */
+  private dataSources(): { host: string; items: readonly DataItem[] }[] {
+    const out: { host: string; items: readonly DataItem[] }[] = []
+    for (const d of this.devices.values()) {
+      if (d.owner === null || d.owner !== this.myId || d.data === undefined || d.data.length === 0) continue
+      out.push({ host: d.id, items: d.data })
+    }
+    if (this.deckData.length > 0) out.push({ host: 'deck', items: this.deckData })
+    return out
+  }
+
+  /** Кнопка 7 DATA / хоткей 7 (§16.2): desktop — палитра сразу с листингом
+   *  активного таба, touch — дерево на уровне ДАННЫЕ (или корень). */
+  private dataEntry(): void {
+    this.openPalette('run')
+    if (IS_TOUCH) {
+      const host = this.dataCtxHost()
+      if (this.dataHostItems(host).length > 0) this.paletteDataHost = host
+      this.updatePalette()
+      return
+    }
+    const pal = this.palette
+    if (pal !== null && pal.input !== null) {
+      const host = this.dataCtxHost()
+      pal.input.value = host === 'deck' ? 'data ls' : `data ${host} ls`
+      this.execDataLs(host, pal.input.value)
+    }
+  }
+
+  /** Резолвция источника: явный хост → активный таб → дека → единственный
+   *  свой хост; неоднозначно — null + тост-подсказка (§16.2). */
+  private resolveDataSrc(name: string, host: string | null): { host: string; key: string } | null {
+    const find = (items: readonly DataItem[]): DataItem | undefined => items.find((it) => it.n === name)
+    if (host !== null) {
+      const it = find(this.dataHostItems(host))
+      if (it === undefined) {
+        this.toast(`НЕТ «${name.toUpperCase()}» НА ${host === 'deck' ? 'ДЕКЕ' : host.toUpperCase()}`)
+        return null
+      }
+      return { host, key: it.n }
+    }
+    const active = this.dataCtxHost()
+    const srcs = this.dataSources()
+    const hits = srcs.filter((s) => find(s.items) !== undefined)
+    const pick = hits.find((s) => s.host === active) ?? hits.find((s) => s.host === 'deck')
+    if (pick !== undefined) return { host: pick.host, key: name }
+    if (hits.length === 1) return { host: hits[0].host, key: name }
+    if (hits.length > 1) {
+      this.toast(`«${name.toUpperCase()}» НА НЕСКОЛЬКИХ ХОСТАХ — УТОЧНИ: DATA <HOST> CP ${name.toUpperCase()}`)
+      return null
+    }
+    this.toast(`НЕТ ТАКИХ ДАННЫХ — DATA LS ПОКАЖЕТ СПИСОК`)
+    return null
+  }
+
+  /** ls: листинг прямо в палитре (§16.2 «терминал») — палитра не закрывается.
+   *  Явный хост — переключение цели (плейтест: «data ls t1 — по сути это
+   *  переключение цели»): дальше софт 1–6 жал на тот же хост. */
+  private execDataLs(host: string, raw: string): void {
+    const pal = this.palette
+    if (pal === null) return
+    if (host !== 'deck') this.target = host
+    if (pal.input !== null && pal.input.value.trim() !== raw) pal.input.value = raw
+    if (this.cmdHistory[this.cmdHistory.length - 1] !== raw && raw !== '') {
+      this.cmdHistory.push(raw)
+      if (this.cmdHistory.length > 20) this.cmdHistory.shift()
+    }
+    this.histIdx = 0
+    this.paletteLs = host
+    this.paletteSel = -1
+    this.updatePalette()
+  }
+
+  /** Запуск `data …` (§16.2): [host] sub key [dst] после токена data;
+   *  prefixHost — хост из обратного порядка «t1 data …». */
+  private runDataCmd(args: string[], prefixHost: string | null): void {
+    const pal = this.palette
+    if (pal === null || pal.input === null) return
+    const a = args.map((t) => t.toLowerCase())
+    let host: string | null = prefixHost
+    let i = 0
+    if (host === null && a.length > 0 && this.dataHostAt(a[0]) !== null) {
+      host = this.dataHostAt(a[0])
+      i = 1
+    }
+    const sub = a[i] !== undefined && (DATA_SUBS as readonly string[]).includes(a[i]) ? (a[i] as DataSub) : undefined
+    if (sub === undefined) {
+      // `data [host]` без подкоманды = ls (кнопка 7 даёт ровно это)
+      if (a.length - i === 0) {
+        this.execDataLs(host ?? this.dataCtxHost(), pal.input.value.trim())
+        return
+      }
+      this.toast('ПОДКОМАНДА: LS / CP / MV / RM / DECRYPT — TAB ПОКАЖЕТ СПИСОК')
+      return
+    }
+    const keyTok = a[i + 1]
+    if (sub === 'ls') {
+      // data ls [host] — хост может стоять и ПОСЛЕ подкоманды (плейтест:
+      // «data ls localhost» молча валился в контекст активного таба)
+      const rest = a.slice(i + 1)
+      if (rest.length > 0) {
+        const dh = this.dataHostAt(rest[0])
+        if (dh === null) {
+          this.toast('НЕТ ТАКОГО ХОСТА — TAB ПОКАЖЕТ СПИСОК')
+          return
+        }
+        host = dh
+      }
+      this.execDataLs(host ?? this.dataCtxHost(), pal.input.value.trim())
+      return
+    }
+    if (keyTok === undefined) {
+      // fast-path: на источнике ровно один item — старт сразу (как кнопка)
+      const h = host ?? this.dataCtxHost()
+      const items = this.dataHostItems(h)
+      if ((sub === 'cp' || sub === 'mv') && h === 'deck') {
+        this.toast('С ДЕКИ — УКАЖИ ПРИЁМНИК: DATA CP/MV <KEY> <HOST>')
+        return
+      }
+      if (items.length === 1) {
+        this.sendData(sub, h, items[0].n, 'deck')
+        this.pushHistoryClose(pal.input.value.trim())
+      } else {
+        this.toast(`УКАЖИ КЛЮЧ — ${items.length === 0 ? 'ДАННЫХ НЕТ' : 'TAB ПОКАЖЕТ СПИСОК'}`)
+      }
+      return
+    }
+    const at = keyTok.indexOf('@')
+    const name = at >= 0 ? keyTok.slice(0, at) : keyTok
+    const src = this.resolveDataSrc(name, at >= 0 ? this.dataHostAt(keyTok.slice(at + 1)) : host)
+    if (src === null) return
+    if (sub === 'rm' || sub === 'decrypt') {
+      // rm и decrypt — одноаргументные: приёмника нет (§16.2/§16.4)
+      this.sendData(sub, src.host, src.key, null)
+      this.pushHistoryClose(pal.input.value.trim())
+      return
+    }
+    let dst = 'deck'
+    if (a[i + 2] !== undefined) {
+      const dh = this.dataHostAt(a[i + 2])
+      if (dh === null) {
+        this.toast('НЕТ ТАКОГО ПРИЁМНИКА — TAB ПОКАЖЕТ СПИСОК')
+        return
+      }
+      dst = dh
+    }
+    if (dst === src.host) {
+      this.toast('ИСТОЧНИК = ПРИЁМНИК')
+      return
+    }
+    this.sendData('cp', src.host, src.key, dst)
+    this.pushHistoryClose(pal.input.value.trim())
+  }
+
+  /** Отправка cp/mv/rm + тост (короткий путь для палитры, дерева и кнопок).
+   *  cp/mv — анимированный тост-прогресс (§16.2), живёт до финиша/отмены. */
+  private sendData(sub: 'cp' | 'mv' | 'rm' | 'decrypt', src: string, key: string, dst: string | null): void {
+    if (sub === 'rm') {
+      this.deps.send({ t: 'run', prog: 'rm', dev: src, data: key })
+      this.toast(`RM ${key.toUpperCase()}${src === 'deck' ? ' (ДЕКА)' : ` @${src.toUpperCase()}`}`)
+      return
+    }
+    if (sub === 'decrypt') {
+      // §16.4: джоба decrypt — тот же «хост данных»; тост внутри sendDecrypt
+      this.sendDecrypt(src, key)
+      return
+    }
+    const realDst = dst ?? 'deck'
+    this.deps.send({ t: 'run', prog: sub, dev: src, dst: realDst, data: key })
+    this.cpToastStart(sub, src, realDst, key, this.dataHostItems(src).find((it) => it.n === key)?.mb ?? 0)
+  }
+
+  /** Анимированный cp-тост: полоса с бегущими полосками, объём/скорость
+   *  обновляются из deck-сообщения (updateCpToasts), финиш — «ГОТОВО ✓»
+   *  (зелёный), отмена (denied cp_cancel) — «ПРЕРВАНО» (красный). */
+  private cpToastStart(prog: 'cp' | 'mv', src: string, dst: string, key: string, mb: number): void {
+    const wrap = el('div', 'hv-toast hv-cptoast')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `${prog.toUpperCase()} ${key.toUpperCase()}${src === 'deck' ? ' · ДЕКА' : ` · ${src.toUpperCase()}`}`),
+      txt('span', 'cpdst', dst === 'deck' ? '→ ДЕКА' : `→ ${dst.toUpperCase()}`),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    bar.append(fill)
+    const status = txt('div', 'cpstatus', mb > 0 ? `${mb} МБ` : 'ПЕРЕДАЧА…')
+    wrap.append(row, bar, status)
+    this.toasts.append(wrap)
+    this.cpToasts.push({ key: `${prog}:${src}>${dst}/${key}`, prog, dev: src, dst, data: key, mb, wrap, fill, status, missed: 0, seen: false })
+  }
+
+  /** 2 Гц: прогресс активных cp/mv-тостов из deck-сообщения. Два тика без
+   *  процесса: карточка, видевшая прогресс — завершена (зелёная «ГОТОВО ✓»);
+   *  ни разу не видевшая — сервер отказал на старте: ТА ЖЕ карточка краснеет
+   *  и мигает (плейтест: «два прогрессбара — зеленый 100% и красный ниже» —
+   *  отказ обязан красить существующую карточку, а не плодить вторую). */
+  private updateCpToasts(): void {
+    for (const r of [...this.cpToasts]) {
+      const p = this.progs.find(
+        (q) => q.prog === r.prog && q.dev === r.dev && q.dst === r.dst && q.data === r.data,
+      )
+      if (p !== undefined) {
+        r.seen = true
+        r.missed = 0
+        const left = p.mbLeft ?? r.mb
+        const mbps = p.mbps ?? 0
+        const done = r.mb > 0 ? Math.min(1, (r.mb - left) / r.mb) : 0.15
+        r.fill.style.width = `${Math.round(done * 100)}%`
+        r.status.textContent = `${left} МБ · ${Math.round(mbps)} МБ/С`
+        continue
+      }
+      r.missed += 1
+      if (r.missed < 2) continue
+      this.cpToasts = this.cpToasts.filter((x) => x !== r)
+      if (r.seen) {
+        r.wrap.classList.add('ok')
+        r.fill.style.width = '100%'
+        r.status.textContent = 'ГОТОВО ✓'
+        this.fadeCard(r.wrap, 1300)
+      } else {
+        this.failCard(r, 'НЕ ЗАПУЩЕНО СЕРВЕРОМ')
+      }
+    }
+    // DECRYPT-карточки (дека): прогресс из deck-сообщения — ВНЕ цикла по
+    // cp-тостам: внутри цикла вызывался только пока существуют cp-тосты,
+    // и дековый decrypt без cp висел на 0% (плейтест).
+    this.updateJobCards()
+    // Скан-карточки — тот же принцип (вне цикла, каждый deck-тик).
+    this.updateScanCards()
+  }
+
+  /** Покраснить карточку отказа: красный мигающий бар + причина (§16.2). */
+  private failCard(r: (typeof this.cpToasts)[number], text: string): void {
+    r.wrap.classList.add('fail')
+    r.fill.style.width = '100%'
+    r.status.textContent = `ОТКАЗ: ${text}`
+    this.fadeCard(r.wrap, 2200)
+  }
+
+  private fadeCard(wrap: HTMLElement, ms: number): void {
+    window.setTimeout(() => {
+      wrap.classList.add('fade')
+      window.setTimeout(() => wrap.remove(), 500)
+    }, ms)
+  }
+
+  /** denied cp_cancel (§16.2): активные cp-тосты источника — красным. */
+  private failCpToasts(dev: string): void {
+    for (const r of [...this.cpToasts]) {
+      if (r.dev !== dev) continue
+      r.wrap.classList.add('fail')
+      r.fill.style.width = '100%'
+      r.status.textContent = 'ОТКАЗ — ПРОГРЕСС ПОТЕРЯН'
+      this.cpToasts = this.cpToasts.filter((x) => x !== r)
+      this.fadeCard(r.wrap, 2200)
+    }
+  }
+
+  /** Отправка decrypt (§16.4): джоба на хосте, где лежат данные. Карточка
+   *  создаётся сразу (плеер видит, что стартовало); прогресс придёт из
+   *  deck-сообщения (дека, 2 Гц) или job 1 Гц (SRV, команде). */
+  private sendDecrypt(src: string, key: string): void {
+    this.deps.send({ t: 'run', prog: 'decrypt', dev: src, data: key })
+    this.jobCardStart(`decrypt:${src}/${key}`, src, key)
+  }
+
+  /** DECRYPT-карточка: голубой NPU-бар с плавным ходом (CSS transition
+   *  сглаживает 1 Гц job / 2 Гц deck), крупный процент и бегущая hex-строка —
+   *  визуально «расшифровка», а не полоска трансфера (плейтест: «скучно»). */
+  private jobCardStart(key: string, dev: string, data: string): (typeof this.jobCards)[number] {
+    const wrap = el('div', 'hv-toast hv-cptoast dec')
+    const row = el('div', 'cprow')
+    row.append(
+      txt('span', 'cptitle', `DECRYPT ${data.toUpperCase()}`),
+      txt('span', 'cpdst', `· ${dev === 'deck' ? 'ДЕКА · NPU ×1' : `${dev.toUpperCase()} · NPU ×3`}`),
+    )
+    const bar = el('div', 'cpbar')
+    const fill = el('div', 'cpbar-fill')
+    fill.style.width = '0%'
+    bar.append(fill)
+    const meta = el('div', 'decmeta')
+    const pct = txt('span', 'decpct', '0%')
+    const scr = txt('span', 'decscr', '')
+    meta.append(pct, scr)
+    wrap.append(row, bar, meta)
+    this.toasts.append(wrap)
+    const rec: (typeof this.jobCards)[number] = {
+      key, dev, data, wrap, fill, pct, scr, seen: false, missed: 0, timer: 0,
+    }
+    // hex-скрэмбл: «работа NPU» — интервал гасится только с карточкой
+    const HEX = '0123456789abcdef'
+    rec.timer = window.setInterval(() => {
+      let s = ''
+      for (let i = 0; i < 16; i++) s += HEX[Math.floor(Math.random() * 16)]
+      rec.scr.textContent = s
+    }, 70)
+    this.jobCards.push(rec)
+    return rec
+  }
+
+  private jobCardProgress(rec: (typeof this.jobCards)[number], p: number): void {
+    rec.seen = true
+    rec.missed = 0
+    const v = Math.min(1, Math.max(0, p))
+    rec.fill.style.width = `${Math.round(v * 100)}%`
+    rec.pct.textContent = `${Math.round(v * 100)}%`
+  }
+
+  private jobCardFinish(rec: (typeof this.jobCards)[number], ok: boolean): void {
+    window.clearInterval(rec.timer)
+    rec.wrap.classList.add(ok ? 'ok' : 'fail')
+    rec.fill.style.width = '100%'
+    if (ok) {
+      rec.pct.textContent = '100%'
+      rec.scr.textContent = '▸ ГОТОВО ✓ — КОД У КОМАНДЫ'
+    } else {
+      rec.scr.textContent = '▸ ОТКАЗ ✗'
+    }
+    this.jobCards = this.jobCards.filter((x) => x !== rec)
+    this.fadeCard(rec.wrap, ok ? 1600 : 2400)
+  }
+
+  /** job 1 Гц (§16.9): прогресс SRV-decrypt — та же DECRYPT-карточка.
+   *  Приходит КОМАНДЕ (и после джек-аута/смерти запустившего); prog=1 —
+   *  «ГОТОВО ✓» (код уже у команды — codes/HUD). */
+  onJob(msg: { dev: string; data: string; prog: number }): void {
+    if (!this._active) return
+    const key = `decrypt:${msg.dev}/${msg.data}`
+    let r = this.jobCards.find((x) => x.key === key)
+    if (r === undefined) r = this.jobCardStart(key, msg.dev, msg.data)
+    if (msg.prog >= 1) {
+      this.jobCardFinish(r, true)
+      return
+    }
+    this.jobCardProgress(r, msg.prog)
+  }
+
+  /** Дековые DECRYPT-джобы: МБ-прогресс из deck-сообщения 2 Гц; два тика
+   *  без процесса — джоба кончилась (финиш/отказ на старте — как у cp). */
+  private updateJobCards(): void {
+    for (const r of [...this.jobCards]) {
+      if (r.dev !== 'deck') continue // SRV-джобы идут через job 1 Гц
+      const mb = this.deckData.find((it) => it.n === r.data)?.mb ?? 0
+      const p = this.progs.find((q) => q.prog === 'decrypt' && q.data === r.data)
+      if (p !== undefined && mb > 0 && p.mbLeft !== undefined) {
+        this.jobCardProgress(r, 1 - p.mbLeft / mb)
+        continue
+      }
+      r.missed += 1
+      if (r.missed < 2) continue
+      this.jobCardFinish(r, r.seen)
+    }
+  }
+
+  private pushHistoryClose(raw: string): void {
+    if (this.cmdHistory[this.cmdHistory.length - 1] !== raw && raw !== '') {
+      this.cmdHistory.push(raw)
+      if (this.cmdHistory.length > 20) this.cmdHistory.shift()
+    }
+    this.histIdx = 0
+    this.closePalette()
   }
 
   private toast(text: string): void {
@@ -817,6 +1445,9 @@ export class HackView {
     if (this.palette !== null) return
     this.paletteMode = mode
     this.paletteDev = mode === 'run' ? seedDev : null
+    this.paletteLs = null
+    this.paletteDataHost = null
+    this.paletteDataItem = null
     const wrap = el('div', 'hv-palette')
     const list = el('div', 'hv-pal-list')
     if (IS_TOUCH) {
@@ -850,6 +1481,7 @@ export class HackView {
         : 'цель и/или программа — напр. cam1 port · portscan cam1'
     input.addEventListener('input', () => {
       this.paletteSel = -1
+      this.paletteLs = null // ручной ввод покидает ls-листинг (§16.2)
       this.updatePalette()
     })
     const hint = el('div', 'hv-pal-hint')
@@ -879,6 +1511,19 @@ export class HackView {
       )
       b.addEventListener('click', () => this.paletteTreeRun('portscan', null))
       list.append(b)
+      // §16.2: данные деки — уровень items прямо из корня
+      if (this.deckData.length > 0) {
+        const d = el('button', 'hv-pal-cand hv-pal-dev')
+        d.append(
+          txt('span', 'hv-pal-name', `ДЕКА: ДАННЫЕ (${this.deckData.length})`),
+          txt('span', 'hv-pal-hintc', `${this.deckMemUsed}/${this.deckMemCap} МБ`),
+        )
+        d.addEventListener('click', () => {
+          this.paletteDataHost = 'deck'
+          this.updatePalette()
+        })
+        list.append(d)
+      }
     }
     if (all.length === 0) {
       list.append(txt('div', 'hv-dim', 'СЕТЬ ПУСТА — НАЖМИ PORTSCAN ВЫШЕ'))
@@ -916,6 +1561,20 @@ export class HackView {
     })
     list.append(back)
     const d = this.devices.get(dev)
+    // §16.2: свои данные на устройстве — уровень items (CP → приёмник / RM)
+    const items = this.dataHostItems(dev)
+    if (items.length > 0) {
+      const dr = el('button', 'hv-pal-cand hv-pal-data')
+      dr.append(
+        txt('span', 'hv-pal-name', `ДАННЫЕ (${items.length})`),
+        txt('span', 'hv-pal-hintc', 'LS / CP / RM'),
+      )
+      dr.addEventListener('click', () => {
+        this.paletteDataHost = dev
+        this.updatePalette()
+      })
+      list.append(dr)
+    }
     for (const p of PALETTE_PROGS) {
       const b = el('button', 'hv-pal-cand')
       b.append(txt('span', 'hv-pal-name', PROG_LABEL[p]), txt('span', 'hv-pal-hintc', this.paletteProgHint(p, d)))
@@ -937,6 +1596,118 @@ export class HackView {
     this.runProgAt(prog, dev)
   }
 
+  /** Уровень items дерева (touch, §16.2): назад + шапка MEM + строки данных
+   *  с кнопками CP (→ приёмник) и 🗑 RM (сразу). */
+  private paletteTreeItems(pal: NonNullable<HackView['palette']>, host: string): void {
+    const { list } = pal
+    const back = el('button', 'hv-pal-cand hv-pal-back')
+    back.append(
+      txt('span', 'hv-pal-name', '← НАЗАД'),
+      txt('span', 'hv-pal-hintc', host === 'deck' ? 'КОРЕНЬ' : 'ПРОГРАММЫ'),
+    )
+    back.addEventListener('click', () => {
+      this.paletteDataHost = null
+      this.updatePalette()
+    })
+    list.append(back)
+    const mem = this.dataHostMem(host)
+    list.append(txt('div', 'hv-pal-lshead', `${this.dataHostLabel(host)}${mem !== '' ? ` · MEM ${mem}` : ''}`))
+    const items = this.dataHostItems(host)
+    if (items.length === 0) {
+      list.append(txt('div', 'hv-dim', 'ДАННЫХ НЕТ'))
+      return
+    }
+    for (const it of items) {
+      const row = el('div', 'hv-pal-cand hv-pal-item')
+      row.append(
+        txt(
+          'span',
+          'hv-pal-name',
+          `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code !== undefined ? ` код ${it.code}` : ''}`,
+        ),
+      )
+      const cp = el('button', 'dev-link')
+      cp.textContent = 'CP'
+      cp.title = 'копия (источник хранит свой экземпляр)'
+      cp.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.paletteDataItem = { host, key: it.n, prog: 'cp' }
+        this.updatePalette()
+      })
+      const mv = el('button', 'dev-link')
+      mv.textContent = 'MV'
+      mv.title = 'перенос (item уходит из источника)'
+      mv.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.paletteDataItem = { host, key: it.n, prog: 'mv' }
+        this.updatePalette()
+      })
+      const rm = el('button', 'dev-link')
+      rm.textContent = '🗑'
+      rm.addEventListener('click', (e) => {
+        e.stopPropagation()
+        this.closePalette()
+        this.sendData('rm', host, it.n, null)
+      })
+      if (it.enc) {
+        // §16.4: decrypt прямо из ls-строки (джоба на хосте данных)
+        const dc = el('button', 'dev-link')
+        dc.textContent = '🔓'
+        dc.title = `data decrypt ${it.n} (NPU)`
+        dc.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.closePalette()
+          this.sendDecrypt(host, it.n)
+        })
+        row.append(dc)
+      }
+      row.append(cp, mv, rm)
+      list.append(row)
+    }
+  }
+
+  /** Уровень приёмника cp дерева (touch, §16.2): назад + ДЕКА + свои хосты. */
+  private paletteTreeDst(pal: NonNullable<HackView['palette']>): void {
+    const item = this.paletteDataItem
+    if (item === null) return
+    const { list } = pal
+    const back = el('button', 'hv-pal-cand hv-pal-back')
+    back.append(txt('span', 'hv-pal-name', '← НАЗАД'), txt('span', 'hv-pal-hintc', 'ДАННЫЕ'))
+    back.addEventListener('click', () => {
+      this.paletteDataItem = null
+      this.updatePalette()
+    })
+    list.append(back)
+    list.append(txt('div', 'hv-pal-lshead', `${item.prog.toUpperCase()} ${item.key.toUpperCase()} → ?`))
+    if (item.host !== 'deck') {
+      const deck = el('button', 'hv-pal-cand hv-pal-dev')
+      deck.append(txt('span', 'hv-pal-name', 'ДЕКА'), txt('span', 'hv-pal-hintc', 'ЭКСФИЛЬТРАЦИЯ'))
+      deck.addEventListener('click', () => {
+        this.closePalette()
+        this.sendData(item.prog, item.host, item.key, 'deck')
+      })
+      list.append(deck)
+    }
+    const owned = [...this.devices.values()]
+      .filter((d) => d.owner === this.myId && d.id !== item.host)
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+    for (const d of owned) {
+      const b = el('button', 'hv-pal-cand hv-pal-dev')
+      b.append(
+        txt('span', 'hv-pal-name', `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`),
+        txt('span', 'hv-pal-hintc', d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : this.ownerLabel(d.owner)),
+      )
+      b.addEventListener('click', () => {
+        this.closePalette()
+        this.sendData(item.prog, item.host, item.key, d.id)
+      })
+      list.append(b)
+    }
+    if (item.host === 'deck' && owned.length === 0) {
+      list.append(txt('div', 'hv-dim', 'НЕТ СВОИХ ХОСТОВ — CP ТОЛЬКО С ДЕКИ НА ХОСТ'))
+    }
+  }
+
   private closePalette(): void {
     if (this.palette === null) return
     // Touch: снять фокус, иначе экранная клавиатура останется висеть (§15.2).
@@ -946,6 +1717,9 @@ export class HackView {
     this.palette = null
     this.paletteCands = []
     this.paletteSel = -1
+    this.paletteLs = null
+    this.paletteDataHost = null
+    this.paletteDataItem = null
   }
 
   /** Устройство подходит под токен: совпадение по НАЧАЛУ строки в id/kind
@@ -957,37 +1731,216 @@ export class HackView {
     return d.id.startsWith(q) || d.kind.startsWith(q) || (alias !== undefined && d.kind === alias)
   }
 
+  /** Кандидаты-подкоманды data (§16.2). */
+  private dataSubCands(q: string, subs: readonly DataSub[] = DATA_SUBS): PalCand[] {
+    const hints: Record<DataSub, string> = { ls: 'ЛИСТИНГ', cp: 'КОПИЯ', mv: 'ПЕРЕНОС', rm: 'УДАЛИТЬ', decrypt: 'NPU-РАСШИФРОВКА' }
+    return subs
+      .filter((s) => s.startsWith(q) || q === '')
+      .map((s) => ({ kind: 'sub' as const, text: s, label: s.toUpperCase(), hint: hints[s] }))
+  }
+
+  /** Кандидаты-хосты data (§16.2): дека + устройства; dst-режим — только
+   *  свои (приёмник cp должен быть под контролем). */
+  private dataHostCands(q: string, ownedOnly: boolean): PalCand[] {
+    const out: PalCand[] = []
+    if (q === '' || 'deck'.startsWith(q)) {
+      out.push({
+        kind: 'dev',
+        text: 'deck',
+        dev: 'deck',
+        label: 'ДЕКА',
+        hint: `${this.deckMemUsed}/${this.deckMemCap} МБ`,
+      })
+    }
+    // Алиас localhost (плейтест): в списке — только когда его явно пишут,
+    // чтобы не дублировать ДЕКУ на пустом запросе.
+    if (q !== '' && 'localhost'.startsWith(q)) {
+      out.push({
+        kind: 'dev',
+        text: 'localhost',
+        dev: 'deck',
+        label: 'ЛОКАЛХОСТ = ДЕКА',
+        hint: `${this.deckMemUsed}/${this.deckMemCap} МБ`,
+      })
+    }
+    const devs = [...this.devices.values()]
+      .filter((d) => this.devMatch(d, q) && (!ownedOnly || d.owner === this.myId))
+      .sort((a, b) => (a.id < b.id ? -1 : 1))
+    for (const d of devs) {
+      out.push({
+        kind: 'dev',
+        text: d.id,
+        dev: d.id,
+        label: `${d.id.toUpperCase()} ${KIND_LABEL[d.kind]}`,
+        hint: ownedOnly && d.mem !== undefined ? `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ` : this.ownerLabel(d.owner),
+      })
+    }
+    return out
+  }
+
+  /** Кандидаты-ключи (§16.2): свои источники; если один ключ лежит на
+   *  нескольких хостах — токен name@host (уточнение источника). */
+  private dataKeyCands(q: string, host: string | null): PalCand[] {
+    const out: PalCand[] = []
+    const seen = new Set<string>()
+    const srcs = host !== null ? [{ host, items: this.dataHostItems(host) }] : this.dataSources()
+    const names = new Map<string, number>()
+    for (const s of this.dataSources()) for (const it of s.items) names.set(it.n, (names.get(it.n) ?? 0) + 1)
+    for (const s of srcs) {
+      for (const it of s.items) {
+        const full = `${it.n}@${s.host}`
+        if (seen.has(full)) continue
+        if (q !== '' && !it.n.toLowerCase().startsWith(q) && !full.toLowerCase().startsWith(q)) continue
+        seen.add(full)
+        out.push({
+          kind: 'item',
+          text: (names.get(it.n) ?? 0) > 1 ? full : it.n,
+          dev: s.host,
+          data: it.n,
+          label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
+          hint: s.host === 'deck' ? '@ДЕКА' : `@${s.host.toUpperCase()}`,
+        })
+      }
+    }
+    return out.sort((a, b) => (a.text < b.text ? -1 : 1))
+  }
+
+  /** Тихая резолвция источника (для фильтров/подсказок, без тостов). */
+  private dataSrcOf(nameTok: string, host: string | null): string | null {
+    const at = nameTok.indexOf('@')
+    const name = at >= 0 ? nameTok.slice(0, at) : nameTok
+    const h = at >= 0 ? this.dataHostAt(nameTok.slice(at + 1)) : host
+    if (h !== null) return this.dataHostItems(h).some((it) => it.n === name) ? h : null
+    const active = this.dataCtxHost()
+    const srcs = this.dataSources().filter((s) => s.items.some((it) => it.n === name))
+    const pick = srcs.find((s) => s.host === active) ?? srcs.find((s) => s.host === 'deck')
+    if (pick !== undefined) return pick.host
+    return srcs.length === 1 ? srcs[0].host : null
+  }
+
+  /** Кандидаты аргументов `data …` (§16.2): [host] sub key [dst]. prev —
+   *  уже введённые токены после 'data', q — дописываемый; prefixHost — хост
+   *  из порядка «t1 data …». */
+  private dataCands(prev: string[], q: string, prefixHost: string | null): PalCand[] {
+    let host = prefixHost
+    let i = 0
+    if (host === null && prev.length > 0 && this.dataHostAt(prev[0]) !== null) {
+      host = this.dataHostAt(prev[0])
+      i = 1
+    }
+    const sub =
+      prev[i] !== undefined && (DATA_SUBS as readonly string[]).includes(prev[i]) ? (prev[i] as DataSub) : undefined
+    if (sub === undefined) {
+      if (host !== null) return this.dataSubCands(q)
+      return [...this.dataHostCands(q, false), ...this.dataSubCands(q)]
+    }
+    if (sub === 'ls') return this.dataHostCands(q, false) // data ls [host]
+    const keyTok = prev[i + 1]
+    if (keyTok === undefined) return this.dataKeyCands(q, host)
+    if (sub === 'rm' || sub === 'decrypt') return []
+    const src = this.dataSrcOf(keyTok, host)
+    return this.dataHostCands(q, true).filter((c) => c.dev !== src)
+  }
+
+  /** ls-листинг прямо в палитре (§16.2 «терминал», решение владельца):
+   *  шапка хоста/MEM + строки-кандидаты; Enter на строке — заготовка cp. */
+  private paletteLsRender(pal: NonNullable<HackView['palette']>): void {
+    const host = this.paletteLs
+    if (host === null) return
+    const d = host === 'deck' ? undefined : this.devices.get(host)
+    const owner = host === 'deck' || d?.owner === this.myId
+    const items = this.dataHostItems(host)
+    this.paletteCands = items.map((it) => ({
+      kind: 'item' as const,
+      text: it.n,
+      dev: host,
+      data: it.n,
+      label: `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code !== undefined ? ` код ${it.code}` : ''}`,
+      hint: 'CP/MV/RM' + (it.enc ? '/🔓' : ''),
+    }))
+    if (this.paletteSel >= items.length) this.paletteSel = items.length - 1
+    pal.list.replaceChildren()
+    const mem = this.dataHostMem(host)
+    pal.list.append(txt('div', 'hv-pal-lshead', `${this.dataHostLabel(host)}${mem !== '' ? ` · MEM ${mem}` : ''}`))
+    if (!owner) {
+      // Доступ — это ошибка, а не подсказка: красным (плейтест: «надо красным
+      // показать, что для данных нужен trojan на цели»)
+      pal.list.append(txt('div', 'hv-pal-red', 'ДОСТУП ЗАПРЕЩЁН — НУЖЕН TROJAN НА ЦЕЛИ'))
+      return
+    }
+    if (items.length === 0) {
+      pal.list.append(txt('div', 'hv-dim', 'ДАННЫХ НЕТ'))
+      return
+    }
+    this.paletteCands.forEach((c, i) => {
+      const row = el('div', 'hv-pal-cand' + (i === this.paletteSel ? ' sel' : ''))
+      row.append(txt('span', 'hv-pal-name', c.label), txt('span', 'hv-pal-hintc', c.hint))
+      // Клик/тап по строке = Enter (и на desktop: листинг — мышевый UX тоже)
+      row.addEventListener('click', () => {
+        this.paletteSel = i
+        this.paletteRun()
+      })
+      pal.list.append(row)
+    })
+    pal.list.append(txt('div', 'hv-pal-more', IS_TOUCH ? 'ТАП ПО СТРОКЕ — CP' : '↑↓ ВЫБОР · ENTER → CP · ESC ЗАКРЫТЬ'))
+  }
+
   private updatePalette(): void {
     const pal = this.palette
     if (pal === null) return
     if (pal.input === null) {
-      // Дерево на тапе (§15.7): два уровня — устройства → программы.
+      // Дерево на тапе (§15.7/§16.2): устройства → программы | ДАННЫЕ →
+      // items (CP/RM) → приёмник cp.
       pal.list.replaceChildren()
+      if (this.paletteDataItem !== null) {
+        this.paletteTreeDst(pal)
+        return
+      }
+      if (this.paletteDataHost !== null) {
+        this.paletteTreeItems(pal, this.paletteDataHost)
+        return
+      }
       if (this.paletteDev === null) this.paletteTreeDevs(pal)
       else this.paletteTreeProgs(pal, this.paletteDev)
       return
     }
+    // ls-листинг (§16.2): ручной ввод уже сбросил paletteLs (input-событие)
+    if (this.paletteLs !== null) {
+      this.paletteLsRender(pal)
+      return
+    }
     const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
+    const trailing = /\s$/.test(pal.input.value)
     const dq = (tokens[0] ?? '').toLowerCase()
     const pq = (tokens[1] ?? '').toLowerCase()
-    // Хвостовой пробел после первого токена = перешли ко второму
-    // (иначе «cam1␣» после Tab опять показывает список первого).
-    const secondTok = tokens.length > 1 || /\s$/.test(pal.input.value)
+    // Дописываемый токен: хвостовой пробел = следующий токен, иначе текущий
+    // (обобщение «cam1␣» из §13.3 на грамматику data из 4 токенов).
+    this.paletteTok = trailing ? tokens.length : Math.max(tokens.length - 1, 0)
     const cands: PalCand[] = []
     // Режим «таб» (T): только устройства, второго токена нет (§12.6).
     const isTabMode = this.paletteMode === 'tab'
     // Обратный порядок токенов (плейтест M4): первый токен совпадает с
-    // программой и НЕ совпадает ни с одним устройством → это «prog dev»
-    // («/portscan cam1»); второй токен тогда — список целей.
+    // программой (теперь и data, §16.2) и НЕ совпадает ни с устройством.
     const progFirst =
       !isTabMode &&
       dq !== '' &&
-      PALETTE_PROGS.some((p) => p.startsWith(dq)) &&
+      (PALETTE_PROGS.some((p) => p.startsWith(dq)) || DATA_CMD.startsWith(dq)) &&
       ![...this.devices.values()].some((d) => this.devMatch(d, dq))
-    this.paletteTok = secondTok ? 1 : 0
-    if (isTabMode || (!progFirst && this.paletteTok === 0)) {
-      // Первый токен (порядок «dev prog» / режим таба): устройства из
-      // текущего скана, потом подходящие программы.
+    // reverse-форма (§16.2): первый токен — item активного таба
+    // («door_key cp t2» из открытого таба с данными).
+    const activeHost = this.dataCtxHost()
+    const revItems = isTabMode
+      ? []
+      : this.dataHostItems(activeHost).filter((it) => dq === '' || it.n.toLowerCase().startsWith(dq))
+    const revMode =
+      !isTabMode && dq !== '' && !progFirst && revItems.length > 0 &&
+      ![...this.devices.values()].some((d) => this.devMatch(d, dq))
+    // Команда данных: 'data …' или '[host] data …' (обратный порядок).
+    const hostPrefix = pq === DATA_CMD && dq !== DATA_CMD ? this.dataHostAt(dq) : null
+    const dataMode = !isTabMode && (dq === DATA_CMD || (pq === DATA_CMD && hostPrefix !== null))
+    if (isTabMode || (!progFirst && !dataMode && !revMode && this.paletteTok === 0)) {
+      // Первый токен (порядок «dev prog» / режим таба): устройства, потом
+      // программы + DATA, в хвосте — items активного таба (reverse §16.2).
       const devs = [...this.devices.values()]
         .filter((d) => this.devMatch(d, dq))
         .sort((a, b) => (a.id < b.id ? -1 : 1))
@@ -1000,19 +1953,72 @@ export class HackView {
           hint: isTabMode ? this.tabHint(d) : this.ownerLabel(d.owner),
         })
       }
-      for (const p of PALETTE_PROGS) {
-        if (!isTabMode && p.startsWith(dq)) {
-          cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
+      if (!isTabMode) {
+        for (const p of PALETTE_PROGS) {
+          if (p.startsWith(dq)) cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint: 'ПРОГРАММА' })
+        }
+        if (dq === '' || DATA_CMD.startsWith(dq)) {
+          cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ДАННЫЕ LS/CP/MV/RM/🔓' })
+        }
+        if (dq === '' || 'decrypt'.startsWith(dq)) {
+          cands.push({ kind: 'decryptcmd', text: 'decrypt', label: 'DECRYPT', hint: 'КЛЮЧ — NPU-ДЖОБА' })
+        }
+        for (const it of revItems) {
+          cands.push({
+            kind: 'item',
+            text: it.n,
+            dev: activeHost,
+            data: it.n,
+            label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
+            hint: activeHost === 'deck' ? '@ДЕКА' : `@${activeHost.toUpperCase()}`,
+          })
         }
       }
     } else if (progFirst && this.paletteTok === 0) {
-      // Первый токен (порядок «prog dev»): программы; Enter уже сейчас
+      // Первый токен (порядок «prog dev»): программы + DATA; Enter уже сейчас
       // выполнит на текущей цели — говорим об этом в подсказке.
       for (const p of PALETTE_PROGS) {
         if (!p.startsWith(dq)) continue
         const hint =
           this.target !== null ? `ENTER → ${this.target.toUpperCase()}` : p === 'portscan' ? 'ENTER — ВСЯ СЕТЬ' : 'ENTER — ЦЕЛЬ НЕ ВЫБРАНА'
         cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint })
+      }
+      if (DATA_CMD.startsWith(dq)) {
+        cands.push({ kind: 'datacmd', text: DATA_CMD, label: 'DATA', hint: 'ENTER — ЛИСТИНГ ТАБА' })
+      }
+      if ('decrypt'.startsWith(dq)) {
+        cands.push({ kind: 'decryptcmd', text: 'decrypt', label: 'DECRYPT', hint: 'КЛЮЧ — NPU-ДЖОБА' })
+      }
+    } else if (dataMode) {
+      // Аргументы data (§16.2): [host] sub key [dst]. Последний токен 'data'
+      // без хвостового пробела — уже завершённая команда, а не запрос.
+      const start = dq === DATA_CMD ? 1 : 2
+      const prev = tokens.slice(start, tokens.length - (trailing ? 0 : 1)).map((t) => t.toLowerCase())
+      const q0 = trailing ? '' : (tokens[tokens.length - 1] ?? '').toLowerCase()
+      const q = q0 === DATA_CMD ? '' : q0
+      cands.push(...this.dataCands(prev, q, hostPrefix))
+    } else if (revMode) {
+      // reverse: item выбран → подкоманда → приёмник
+      if (this.paletteTok === 0) {
+        for (const it of revItems) {
+          cands.push({
+            kind: 'item',
+            text: it.n,
+            dev: activeHost,
+            data: it.n,
+            label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
+            hint: activeHost === 'deck' ? '@ДЕКА' : `@${activeHost.toUpperCase()}`,
+          })
+        }
+      } else if (this.paletteTok === 1) {
+        cands.push(...this.dataSubCands(pq, ['cp', 'mv', 'rm', 'decrypt']))
+      } else {
+        // decrypt — одноаргументная: приёмника нет, ключ уже дан
+        const qq = (tokens[2] ?? '').toLowerCase()
+        const src = this.dataSrcOf(dq, null)
+        if (tokens[1]?.toLowerCase() !== 'decrypt') {
+          cands.push(...this.dataHostCands(qq, true).filter((c) => c.dev !== src))
+        }
       }
     } else if (progFirst) {
       // Второй токен (порядок «prog dev»): список целей с владельцем.
@@ -1030,8 +2036,7 @@ export class HackView {
       }
     } else {
       // Второй токен (порядок «dev prog»): ВСЕ программы для выбранного
-      // устройства, с подсказкой готовности (плейтест M3: «нажал CAM1 +
-      // Tab — покажи что можно»).
+      // устройства (+ DATA = листинг его данных), с подсказкой готовности.
       const dev = [...this.devices.values()].find((d) => this.devMatch(d, dq))
       for (const p of PALETTE_PROGS) {
         if (!p.startsWith(pq)) continue
@@ -1039,6 +2044,10 @@ export class HackView {
         if (p === 'portscan') hint = 'БЕЗ ЦЕЛИ'
         else if (p === 'trojan' && dev !== undefined && !dev.vulned) hint = 'СНАЧАЛА VULNSCAN'
         cands.push({ kind: 'prog', text: p, prog: p, label: PROG_LABEL[p], hint })
+      }
+      if (pq === '' || DATA_CMD.startsWith(pq)) {
+        const n = dev !== undefined ? this.dataHostItems(dev.id).length : this.deckData.length
+        cands.push({ kind: 'datacmd', text: DATA_CMD, dev: dev?.id, label: 'DATA', hint: n > 0 ? `ДАННЫЕ (${n})` : 'ДАННЫЕ LS/CP/MV/RM/🔓' })
       }
     }
     this.paletteCands = cands
@@ -1060,27 +2069,39 @@ export class HackView {
       pal.list.append(row)
     })
     if (cands.length === 0) {
-      pal.list.append(txt('div', 'hv-dim', 'НЕТ КАНДИДАТОВ — PORTSCAN [1] РАСКРОЕТ СЕТЬ'))
+      pal.list.append(
+        txt(
+          'div',
+          'hv-dim',
+          dataMode ? 'ДАННЫХ НЕТ / НУЖЕН TROJAN — DATA LS' : 'НЕТ КАНДИДАТОВ — PORTSCAN [1] РАСКРОЕТ СЕТЬ',
+        ),
+      )
     } else if (cands.length > MAX_SHOWN) {
       pal.list.append(txt('div', 'hv-pal-more', `+${cands.length - MAX_SHOWN} …`))
     }
   }
 
-  /** Tab/↑↓: цикл по кандидатам; первый выбор дописывает токен в строку. */
+  /** Tab/↑↓: цикл по кандидатам; первый выбор дописывает токен в строку.
+   *  В ls-листинге (§16.2) двигаем только выделение — строку не трогаем. */
   private paletteCycle(dir: 1 | -1): void {
     const pal = this.palette
     if (pal === null || pal.input === null || this.paletteCands.length === 0) return
     const len = this.paletteCands.length
     this.paletteSel = this.paletteSel < 0 ? 0 : (this.paletteSel + dir + len) % len
     const c = this.paletteCands[this.paletteSel]
-    const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
     if (this.paletteMode === 'tab') {
       pal.input.value = c.text // без хвостового пробела: второго токена нет
-    } else if (this.paletteTok === 0) {
-      // устройство дополняем с пробелом — следующий Tab дополнит программу
-      pal.input.value = c.kind === 'dev' ? `${c.text} ` : c.text
+    } else if (this.paletteLs !== null) {
+      // ls: строка остаётся «data <host> ls», Esc/Enter работают как раньше
+      this.updatePalette()
+      return
     } else {
-      pal.input.value = `${tokens[0] ?? ''} ${c.text}`
+      // Дополняемый токен paletteTok заменяем кандидатом (+ пробел — следующий
+      // Tab дополнит следующий токен); грамматика data — та же схема (§16.2).
+      const tokens = pal.input.value.trim().split(/\s+/).filter((t) => t !== '')
+      const parts = tokens.slice(0, Math.min(this.paletteTok, tokens.length))
+      parts.push(c.text)
+      pal.input.value = `${parts.join(' ')} `
     }
     pal.input.setSelectionRange(pal.input.value.length, pal.input.value.length)
     // Программная правка строки не бросает input-событие, поэтому выделение
@@ -1107,10 +2128,26 @@ export class HackView {
 
   /** Enter: запуск программы с до-поленной целью; кандидат-устройство без
    *  программы — выбор цели, палитра остаётся (§13.3). В режиме «таб» —
-   *  открыть таб на устройство (§12.6). */
+   *  открыть таб на устройство (§12.6). Команда данных `data` (§16.2) и
+   *  reverse-форма item-первым-токеном перехватываются до программ. */
   private paletteRun(): void {
     const pal = this.palette
     if (pal === null || pal.input === null) return // на тапе — дерево (§15.7)
+    // ls-листинг (§16.2): Enter на строке — заготовка cp, пустой выбор — ничего
+    if (this.paletteLs !== null) {
+      const selLs =
+        this.paletteSel >= 0 && this.paletteSel < this.paletteCands.length
+          ? this.paletteCands[this.paletteSel]
+          : undefined
+      if (selLs !== undefined && selLs.kind === 'item' && selLs.data !== undefined) {
+        const host = this.paletteLs
+        this.paletteLs = null
+        pal.input.value = host === 'deck' ? `data cp ${selLs.data} ` : `data ${host} cp ${selLs.data} `
+        this.paletteSel = -1
+        this.updatePalette()
+      }
+      return
+    }
     const raw = pal.input.value.trim()
     const tokens = raw.split(/\s+/).filter((t) => t !== '')
     const sel =
@@ -1134,12 +2171,116 @@ export class HackView {
       this.schedule(() => this.render())
       return
     }
+    const t0 = (tokens[0] ?? '').toLowerCase()
+    const t1 = (tokens[1] ?? '').toLowerCase()
+    // Выделенный кандидат дописывает дополняемый токен (Enter по подсвеченному
+    // префиксу — как Tab, но сразу с запуском).
+    const finalTokens =
+      sel !== undefined && ['dev', 'item', 'sub', 'datacmd'].includes(sel.kind) && !/\s$/.test(pal.input.value)
+        ? tokens.slice(0, -1).concat([sel.text])
+        : tokens
+    // Команда данных (§16.2): 'data …' / '[host] data …'
+    if (t0 === DATA_CMD) {
+      this.runDataCmd(finalTokens.slice(1), null)
+      return
+    }
+    // §16.4: 'decrypt <key>[@host]' — джоба на хосте, где лежат данные
+    // (контекст-подсказка как у data: key@host или [key host]).
+    if (t0 === 'decrypt') {
+      const keyTok = (finalTokens[1] ?? '').toLowerCase()
+      if (keyTok === '') {
+        this.toast('УКАЖИ КЛЮЧ — DATA LS ПОКАЖЕТ СПИСОК')
+        return
+      }
+      const at = keyTok.indexOf('@')
+      const name = at >= 0 ? keyTok.slice(0, at) : keyTok
+      const hint =
+        at >= 0
+          ? this.dataHostAt(keyTok.slice(at + 1))
+          : finalTokens[2] !== undefined
+            ? this.dataHostAt(finalTokens[2].toLowerCase())
+            : null
+      const src = this.resolveDataSrc(name, hint)
+      if (src !== null) {
+        this.sendDecrypt(src.host, src.key)
+        this.pushHistoryClose(raw)
+      }
+      return
+    }
+    if (sel !== undefined && sel.kind === 'decryptcmd') {
+      pal.input.value = 'decrypt '
+      this.paletteSel = -1
+      this.updatePalette()
+      return
+    }
+    if (t1 === DATA_CMD) {
+      const host = this.dataHostAt(t0)
+      if (host !== null) {
+        this.runDataCmd(finalTokens.slice(2), host)
+        return
+      }
+    }
+    // reverse-форма (§16.2/§16.4): item активного таба + cp/rm/decrypt.
+    // Гвард — точное имя item, иначе «cam1 cp» даст тост про данные до тоста
+    // про программу.
+    if ((t1 === 'cp' || t1 === 'mv' || t1 === 'rm' || t1 === 'decrypt') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
+      const src = this.resolveDataSrc((finalTokens[0] ?? '').toLowerCase(), null)
+      if (src !== null) {
+        if (t1 === 'rm' || t1 === 'decrypt') {
+          this.sendData(t1, src.host, src.key, null)
+          this.pushHistoryClose(raw)
+          return
+        }
+        let dst = 'deck'
+        if (finalTokens.length > 2) {
+          const dh = this.dataHostAt((finalTokens[2] ?? '').toLowerCase())
+          if (dh === null) {
+            this.toast('НЕТ ТАКОГО ПРИЁМНИКА — TAB ПОКАЖЕТ СПИСОК')
+            return
+          }
+          dst = dh
+        }
+        if (dst === src.host) {
+          this.toast('ИСТОЧНИК = ПРИЁМНИК')
+          return
+        }
+        this.sendData(t1 as 'cp' | 'mv', src.host, src.key, dst)
+        this.pushHistoryClose(raw)
+        return
+      }
+    }
+    // Кандидат-item первого токена (reverse без подкоманды) — дописываем и
+    // ждём cp/rm; кандидат-datacmd — листинг цели.
+    if (sel !== undefined && sel.kind === 'item' && this.paletteTok === 0) {
+      pal.input.value = `${sel.text} `
+      this.paletteSel = -1
+      this.updatePalette()
+      return
+    }
+    if (sel === undefined && tokens.length === 1 && !/\s$/.test(pal.input.value)) {
+      // «/door⏎» без выбора — единственный вхождение-префикс item таба
+      const host = this.dataCtxHost()
+      const hit = this.dataHostItems(host).find((it) => it.n.toLowerCase().startsWith(t0))
+      if (
+        hit !== undefined &&
+        t0 !== '' &&
+        ![...this.devices.values()].some((d) => this.devMatch(d, t0))
+      ) {
+        pal.input.value = `${hit.n} `
+        this.paletteSel = -1
+        this.updatePalette()
+        return
+      }
+    }
+    if (sel !== undefined && sel.kind === 'datacmd') {
+      this.execDataLs(sel.dev ?? this.dataCtxHost(), raw)
+      return
+    }
     // Порядок токенов — тот же детектор, что в updatePalette: первый токен,
     // совпадающий с программой и не с устройством, — это «prog dev».
-    const t0 = (tokens[0] ?? '').toLowerCase()
     const progFirst =
       t0 !== '' &&
-      PALETTE_PROGS.some((p) => p.startsWith(t0)) &&
+      (PALETTE_PROGS.some((p) => p.startsWith(t0)) || DATA_CMD.startsWith(t0)) &&
       ![...this.devices.values()].some((d) => this.devMatch(d, t0))
     // Цель: выделенный кандидат-устройство; иначе — токен цели своего
     // порядка (второй в «prog dev», первый в «dev prog»).
@@ -1167,7 +2308,7 @@ export class HackView {
         this.target = dev
         this.panes[this.activePane].tabKey = 'deck'
         this.closePalette()
-        this.toast(`ЦЕЛЬ: ${dev.toUpperCase()} — ${IS_TOUCH ? 'КНОПКИ 1–6' : 'ХОТКЕИ 1–6'}`)
+        this.toast(`ЦЕЛЬ: ${dev.toUpperCase()} — ${IS_TOUCH ? 'КНОПКИ 1–6 / 7 DATA' : 'ХОТКЕИ 1–6 / 7 DATA'}`)
         this.schedule(() => this.render())
         return
       }
@@ -1358,6 +2499,17 @@ export class HackView {
     this.progLists.push(progsBox)
     left.append(progsBox)
 
+    // §16.1: MEM деки — занято/ёмкость + инвентарь данных (живой список)
+    const memBox = el('div', 'hv-progs')
+    memBox.append(txt('div', 'hv-dim', 'MEM ДЕКИ'))
+    const memLine = txt('div', 'prog-name', '0/0 МБ')
+    memBox.append(memLine)
+    const inv = el('div', 'hv-progs')
+    memBox.append(inv)
+    this.deckDataBox = inv
+    this.deckMemLine = memLine
+    left.append(memBox)
+
     const run = el('div', 'hv-run')
     for (const [label, prog] of [
       ['1 PORTSCAN', 'portscan'],
@@ -1372,6 +2524,11 @@ export class HackView {
       b.addEventListener('click', () => this.runProg(prog))
       run.append(b)
     }
+    // §16.2: одна кнопка данных — палитра с листингом активного таба
+    const dataBtn = el('button', 'hv-btn')
+    dataBtn.textContent = '7 DATA'
+    dataBtn.addEventListener('click', () => this.dataEntry())
+    run.append(dataBtn)
     // [ / ] — тап-эквивалент клавиши '/' (ГДД §15.2): на мобильнике хоткея нет.
     const slash = el('button', 'hv-btn hv-btn-slash')
     slash.textContent = '/ ПАЛИТРА'
@@ -1476,6 +2633,53 @@ export class HackView {
     // ШИНА (M5 §16.3, итерация 1.5 — плейтест: bw должен быть виден в табах):
     // backplane свитча — суммарная шина транзита, её делят все трансферы.
     if (d.bp !== undefined) row('ШИНА', `${Math.round(d.bp)} МБ/С`)
+    // MEM (M5 §16.1): ёмкость и свободно (резервации cp учтены сервером).
+    if (d.mem !== undefined) {
+      // MEM (M5 §16.1): занято/ёмкость — как в шапке ls и на деке (плейтест:
+      // «4/64» в формате свободно/всего читалось как «почти пусто», хотя
+      // door_key 60 МБ уже лежал там)
+      row('MEM', `${d.mem - (d.memFree ?? 0)}/${d.mem} МБ`)
+    }
+    // Данные (§16.9): листинг — только владельцу (сервер не шлёт чужим);
+    // рядом кнопки RSYNC → ДЕКА и RM (chaff-игра §16.2).
+    if (d.data !== undefined && d.data.length > 0) {
+      const dr = el('div', 'dev-row')
+      dr.append(txt('span', 'dev-k', 'ДАННЫЕ'))
+      const dv = el('span', 'dev-v')
+      for (const it of d.data) {
+        const line = el('div', 'dev-data-row')
+        line.append(txt('span', 'dev-data-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code !== undefined ? ` код ${it.code}` : ''}`))
+        if (it.enc) {
+          // §16.4: decrypt на хосте (SRV NPU ×3 — 6 МБ/с; без NPU сервер
+          // ответит denied npu «НУЖЕН NPU»)
+          const dc = el('button', 'dev-link')
+          dc.textContent = '🔓'
+          dc.title = `decrypt ${it.n} на хосте (NPU)`
+          dc.addEventListener('click', (e) => {
+            e.stopPropagation()
+            this.sendDecrypt(d.id, it.n)
+          })
+          line.append(dc)
+        }
+        const rs = el('button', 'dev-link')
+        rs.textContent = '→ ДЕКА'
+        rs.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.sendData('cp', d.id, it.n, 'deck')
+        })
+        line.append(rs)
+        const rm = el('button', 'dev-link')
+        rm.textContent = '🗑 RM'
+        rm.addEventListener('click', (e) => {
+          e.stopPropagation()
+          this.sendData('rm', d.id, it.n, null)
+        })
+        line.append(rm)
+        dv.append(line)
+      }
+      dr.append(dv)
+      info.append(dr)
+    }
     // Владелец узла, открытого по связи из SWITCH и т.п.: ник + цвет команды.
     const ownRow = el('div', 'dev-row')
     const ownVal = this.ownerSpan(d.owner)
@@ -1624,6 +2828,38 @@ export class HackView {
         r.key === 'ram' ? `${last(this.hist.ram)}/${this.deckRam}` : `${Math.round(last(this.hist[r.key]) * 100)}%`
     }
     for (const list of this.progLists) this.fillProgs(list)
+    // §16.1: MEM деки + инвентарь (точечно, 2 Гц)
+    if (this.deckMemLine !== null) {
+      this.deckMemLine.textContent = `${this.deckMemUsed}/${this.deckMemCap} МБ`
+    }
+    if (this.deckDataBox !== null) {
+      this.deckDataBox.replaceChildren()
+      if (this.deckData.length === 0) {
+        this.deckDataBox.append(txt('div', 'hv-dim', 'ДАННЫХ НЕТ — 7 DATA / ПАЛИТРА'))
+      }
+      for (const it of this.deckData) {
+        const row = el('div', 'hv-prog')
+        row.append(txt('span', 'prog-name', `${it.n} ${it.mb}МБ${it.enc ? ' 🔒' : ''}${it.code ? ` код ${it.code}` : ''}`))
+        if (it.enc) {
+          // §16.4: decrypt на деке (NPU ×1, 2 МБ/с) — джоба в списке процессов
+          const dc = el('button', 'dev-link')
+          dc.textContent = '🔓'
+          dc.title = `decrypt ${it.n} (дека, 2 МБ/с)`
+          dc.addEventListener('click', () => {
+            this.sendDecrypt('deck', it.n)
+          })
+          row.append(dc)
+        }
+        const rm = el('button', 'dev-link')
+        rm.textContent = '🗑'
+        rm.title = `data deck rm ${it.n}`
+        rm.addEventListener('click', () => {
+          this.sendData('rm', 'deck', it.n, null)
+        })
+        row.append(rm)
+        this.deckDataBox.append(row)
+      }
+    }
   }
 
   private fillProgs(list: HTMLElement): void {
@@ -1635,7 +2871,12 @@ export class HackView {
       const row = el('div', 'hv-prog')
       const name = `${PROG_LABEL[p.prog] ?? p.prog}${p.dev !== null ? ` → ${p.dev.toUpperCase()}` : ''}`
       row.append(txt('span', 'prog-name', `#${p.id} ${name}`))
-      row.append(txt('span', 'prog-eta', `${(p.etaMs / 1000).toFixed(1)}с`))
+      if ((p.prog === 'cp' || p.prog === 'mv' || p.prog === 'decrypt') && p.data !== undefined) {
+        // §16.9: остаток МБ и скорость трансфера (decrypt — NPU-доля)
+        row.append(txt('span', 'prog-eta', `${p.data} ${p.mbLeft ?? '?'}МБ · ${p.mbps ?? '?'}МБ/с`))
+      } else {
+        row.append(txt('span', 'prog-eta', `${(p.etaMs / 1000).toFixed(1)}с`))
+      }
       list.append(row)
     }
   }
@@ -2237,6 +3478,28 @@ export class HackView {
       for (const l of d.links) {
         const o = this.devices.get(l)
         if (o !== undefined) drawLink(d, o)
+      }
+    }
+
+    // Каналы активных операций (плейтест M5: «подсветить путь, по которому
+    // идёт операция»): маршрут widest-path из deck-сообщения 2 Гц (прислал
+    // сервер, зафиксирован на старте §16.3). Рисуем ПОВЕРХ обычных связей —
+    // тот же цвет, ярче и толще; несколько операций — каждая свой слой.
+    // Маршрут начинается с точки входа (deck→host не рисуем — это не канал).
+    const hiSeen = new Set<string>()
+    for (const pr of this.progs) {
+      if (pr.path === undefined) continue
+      for (let i = 0; i + 1 < pr.path.length; i++) {
+        const a = this.devices.get(pr.path[i])
+        const b = this.devices.get(pr.path[i + 1])
+        if (a === undefined || b === undefined) continue
+        const key = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`
+        if (hiSeen.has(key)) continue
+        hiSeen.add(key)
+        const pa = pos.get(a.id)
+        const pb = pos.get(b.id)
+        if (pa === undefined || pb === undefined) continue
+        line(pa.x, pa.y, pb.x, pb.y, 'svg-link svg-link-hi', bwWidth(linkMbps(a, b)) * 1.7)
       }
     }
 

@@ -64,8 +64,20 @@ func wishDir(yaw float64, k keysState) vec3 {
 // не мутировать карту при toggle.
 type blockFn func(aabb) bool
 
-// staticBlocked — только геометрия карты (мини-арены тестов, рейкасты).
-func (m *gameMap) staticBlocked(b aabb) bool { return m.overlapsAny(b) }
+// staticBlocked — геометрия карты + корпуса устройств (терминалы, камеры,
+// свитчи, SRV — тоже препятствия: сквозь них не проходим ни в игре, ни в
+// рейкастах мини-арен).
+func (m *gameMap) staticBlocked(b aabb) bool {
+	if m.overlapsAny(b) {
+		return true
+	}
+	for _, d := range m.deviceBoxes {
+		if boxesOverlap(b, d) {
+			return true
+		}
+	}
+	return false
+}
 
 // moveAxis — сдвиг по одной горизонтальной оси. При блоке: если игрок на
 // земле и препятствие не выше autostep (лестницы) — подняться на его верх.
@@ -117,9 +129,17 @@ func (m *gameMap) applyPhysics(pl *player, dt float64, blocked blockFn) {
 	}
 	if pl.vy < 0 {
 		// Встать на самый высокий бокс под ногами (top не выше старых ног).
+		// Динамические коллайдеры (платформы лифтов, §16.12) — наравне со
+		// статикой: стоящий на платформе приземляется на её текущий top.
 		best := math.Inf(-1)
 		for i := range m.Colliders {
 			c := &m.Colliders[i]
+			if boxesOverlap(box, aabb{vec3(c.Min), vec3(c.Max)}) && c.Max[1] <= pl.pos[1]+0.001 && c.Max[1] > best {
+				best = c.Max[1]
+			}
+		}
+		for i := range m.dynamic {
+			c := &m.dynamic[i]
 			if boxesOverlap(box, aabb{vec3(c.Min), vec3(c.Max)}) && c.Max[1] <= pl.pos[1]+0.001 && c.Max[1] > best {
 				best = c.Max[1]
 			}
@@ -141,9 +161,15 @@ func (m *gameMap) movePlayer(pl *player, dt float64) {
 }
 
 func (m *gameMap) movePlayerBlocked(pl *player, dt float64, blocked blockFn) {
+	m.movePlayerScaled(pl, dt, blocked, 1)
+}
+
+// movePlayerScaled — ходьба с множителем скорости (§16.6: несущий PHYSAFE —
+// ×0.5).
+func (m *gameMap) movePlayerScaled(pl *player, dt float64, blocked blockFn, mul float64) {
 	wish := wishDir(pl.yaw, pl.keys)
 	if wish != (vec3{}) {
-		speed := classes[pl.cls].speed
+		speed := classes[pl.cls].speed * mul
 		m.moveAxis(pl, 0, wish[0]*speed*dt, blocked)
 		m.moveAxis(pl, 2, wish[2]*speed*dt, blocked)
 	}

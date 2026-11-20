@@ -74,6 +74,10 @@ export class Controls {
   /** Мгновенный flush input при смене контрольного состояния (ГДД §15.13):
    *  main вешает sendInputNow; без коллбэка (тесты) — тихий noop. */
   onActivity: (() => void) | null = null
+  /** Перехват «ДЕЙСТВИЯ» до отправки на сервер (§16.7: space у клавиатуры
+   *  замка открывает пад кода, а не джек-ин). true = обработано, interact
+   *  не выставляется и на сервер не уходит. */
+  interactInterceptor: (() => boolean) | null = null
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
     if (this.setKey(e.code, 1) && this.locked) e.preventDefault()
@@ -110,6 +114,10 @@ export class Controls {
         this.keys.d = v
         return true
       case 'Space':
+        // rising edge у клавиатуры замка — отдаём UI, сервер джек-ина не видит.
+        if (v === 1 && this.interactInterceptor !== null && this.interactInterceptor()) {
+          return true
+        }
         this.keys.interact = v
         return true
       default:

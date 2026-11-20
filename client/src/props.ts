@@ -48,9 +48,10 @@ export interface MapProp {
   points: [number, number, number][]
   /** fire → id своего водяного клапана; valve → switch в сети (§14.6.1). */
   to: string | null
+  locked: boolean
 }
 
-const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve']
+const PROP_KINDS: readonly PropKind[] = ['terminal', 'radio', 'switch', 'door', 'camera', 'cable', 'gas', 'fire', 'valve', 'srv', 'keypad', 'safe', 'physafe', 'lift', 'liftbtn']
 
 function tuple3(v: unknown): [number, number, number] | null {
   if (!Array.isArray(v) || v.length !== 3) return null
@@ -80,6 +81,7 @@ function parseMapProps(raw: readonly unknown[]): MapProp[] {
       size: tuple3(r.size) ?? (kind === 'gas' ? [...GAS_DEFAULT_SIZE] : kind === 'fire' ? [...FIRE_DEFAULT_SIZE] : [...DOOR_DEFAULT_SIZE]),
       axis: r.axis === 'z' ? 'z' : 'x',
       to: typeof r.to === 'string' && r.to.length > 0 ? r.to : null,
+      locked: r.locked === true,
       points: Array.isArray(r.points)
         ? r.points.flatMap((p): [number, number, number][] => {
             const t = tuple3(p)
@@ -183,7 +185,27 @@ export class PropsView {
   private readonly terminals = new Map<string, SimpleProp>()
   private readonly radios = new Map<string, SimpleProp>()
   private readonly switches = new Map<string, SimpleProp>()
+  /** §16.6: NETSAFE-сейфы — отдельная карта: свой тултип/джек-лейбл
+   *  («NETSAFE», не «ТЕРМИНАЛ») и свой глиф на миникарте. */
+  private readonly safes = new Map<string, SimpleProp>()
+  /** §16.6: PHYSAFE — динамический проп (ездит с носителем), отдельные
+   *  меши и позиция; обновляется из snap.props каждый тик. */
+  private physafeParts: Mesh[] = []
+  private physafePos: { x: number; y: number; z: number; carrier: number } | null = null
+  /** §16.12: платформы лифтов — per-lift состояние: меши + лерп-Y
+   *  (снапы 20 Гц, платформа движется — без сглаживания дёргается). */
+  private lifts = new Map<
+    string,
+    { parts: Mesh[]; x: number; z: number; half: number; thick: number; curY: number; targetY: number; cap: Mesh }
+  >()
+  private readonly liftBtns = new Map<string, SimpleProp>()
+  /** Текущая отрисованная позиция меша — lerp к снап-цели (носитель
+   *  движется плавно, снапы 20 Гц — без lerp сейф дёргается). */
+  private physafeCur: { x: number; y: number; z: number } | null = null
   private readonly doors = new Map<string, DoorView>()
+  /** §16.7: двери с код-замком и клавиатуры (space у клавиатуры → пад). */
+  private readonly lockedDoors = new Set<string>()
+  private readonly codeDoors = new Map<string, SimpleProp & { door: string }>()
   private readonly cables = new Map<string, CableView>()
   private readonly cameras = new Map<string, CameraView>()
   private readonly gases = new Map<string, GasView>()
@@ -194,6 +216,9 @@ export class PropsView {
   /** Владелец камеры — своя команда или чужая (ставит main.ts: знает myId и
    *  ростер; null = неизвестно, LED остаётся нейтральным). */
   private ownerState: ((owner: number) => 'own' | 'foe') | null = null
+  /** Коллайдеры стен (kind 'wall') — propAt не показывает пропсы сквозь стены
+   *  (плейтест: наводка на клавиатуру за стеной отвечала «ОГОНЬ LV3 — ГОРИТ»). */
+  private walls: { min: [number, number, number]; max: [number, number, number] }[] = []
 
   private constructor(private scene: Scene) {
     const mk = (name: string, diffuse: [number, number, number], emissive: [number, number, number]): StandardMaterial => {
@@ -233,6 +258,24 @@ export class PropsView {
         case 'terminal':
           view.buildTerminal(prop.id, prop.pos)
           break
+        case 'srv':
+          view.buildSrv(prop.id, prop.pos)
+          break
+        case 'safe':
+          view.buildSafe(prop.id, prop.pos)
+          break
+        case 'physafe':
+          view.buildPhysafe(prop.id, prop.pos)
+          break
+        case 'lift':
+          view.buildLift(prop.id, prop.pos, prop.size ?? [2.7, 0.85, 2.7])
+          break
+        case 'liftbtn':
+          view.buildLiftBtn(prop.id, prop.pos)
+          break
+        case 'keypad':
+          view.buildKeypad(prop.id, prop.pos, prop.to)
+          break
         case 'radio':
           view.buildRadio(prop.id, prop.pos, prop.radius)
           break
@@ -240,7 +283,7 @@ export class PropsView {
           view.buildSwitch(prop.id, prop.pos)
           break
         case 'door':
-          view.buildDoor(prop.id, prop.pos, prop.axis, prop.size)
+          view.buildDoor(prop.id, prop.pos, prop.axis, prop.size, prop.locked)
           break
         case 'cable':
           view.buildCable(prop.id, prop.points)
@@ -259,6 +302,9 @@ export class PropsView {
           break
       }
     }
+    view.walls = map.colliders
+      .filter((c) => c.kind === 'wall')
+      .map((c) => ({ min: c.min, max: c.max }))
     view.rebuildMini()
     return view
   }
@@ -306,6 +352,180 @@ export class PropsView {
     this.radios.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius })
   }
 
+  /** SRV (§16.5): серверная стойка — выше и толще терминала. */
+  private buildSrv(id: string, pos: readonly [number, number, number]): void {
+    const tower = MeshBuilder.CreateBox(`prop.${id}`, { width: 1.2, height: 2.2, depth: 0.8 }, this.scene)
+    tower.position.set(pos[0], pos[1] + 1.1, pos[2])
+    tower.material = this.mats.body
+    tower.isPickable = false
+    const led = MeshBuilder.CreateBox(`prop.${id}.led`, { width: 0.9, height: 0.08, depth: 0.6 }, this.scene)
+    led.position.set(pos[0], pos[1] + 2.26, pos[2])
+    led.material = this.mats.led
+    led.isPickable = false
+    this.terminals.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
+  }
+
+  /** §16.6: NETSAFE — тумба-сейф у s3: корпус + дверца с ручкой. Хранит
+   *  safe_key; без щита (защита = дверь-код + лава + дистанция, §16.6). */
+  private buildSafe(id: string, pos: readonly [number, number, number]): void {
+    const body = MeshBuilder.CreateBox(`prop.${id}`, { width: 1.0, height: 1.1, depth: 1.0 }, this.scene)
+    body.position.set(pos[0], pos[1] + 0.55, pos[2])
+    body.material = this.mats.body
+    body.isPickable = false
+    const face = MeshBuilder.CreateBox(`prop.${id}.face`, { width: 0.7, height: 0.7, depth: 0.06 }, this.scene)
+    face.position.set(pos[0], pos[1] + 0.55, pos[2] + 0.51)
+    face.material = this.mats.pipe // приглушённый синий — отличим от терминала
+    face.isPickable = false
+    const handle = MeshBuilder.CreateCylinder(`prop.${id}.h`, { diameter: 0.08, height: 0.3 }, this.scene)
+    handle.position.set(pos[0] + 0.22, pos[1] + 0.55, pos[2] + 0.55)
+    handle.rotation.z = Math.PI / 2
+    handle.material = this.mats.led
+    handle.isPickable = false
+    this.safes.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
+  }
+
+  /** §16.6: PHYSAFE — янтарный сейф за код-дверьми (вне сети). Меши
+   *  переезжают из snap.props: на земле — на месте, carriedBy — у носителя. */
+  private buildPhysafe(id: string, pos: readonly [number, number, number]): void {
+    const body = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.9, height: 0.9, depth: 0.9 }, this.scene)
+    body.position.set(pos[0], pos[1] + 0.45, pos[2])
+    body.material = this.mats.body
+    body.isPickable = false
+    const face = MeshBuilder.CreateBox(`prop.${id}.face`, { width: 0.6, height: 0.6, depth: 0.06 }, this.scene)
+    face.position.set(pos[0], pos[1] + 0.45, pos[2] + 0.47)
+    face.material = this.mats.cable // янтарь — гонка за сейфом видна издалека
+    face.isPickable = false
+    const led = MeshBuilder.CreateBox(`prop.${id}.led`, { width: 0.2, height: 0.05, depth: 0.1 }, this.scene)
+    led.position.set(pos[0], pos[1] + 0.95, pos[2])
+    led.material = this.mats.cable
+    led.isPickable = false
+    this.physafeParts = [body, face, led]
+    this.physafePos = { x: pos[0], y: pos[1], z: pos[2], carrier: 0 }
+    this.physafeCur = { x: pos[0], y: pos[1], z: pos[2] }
+  }
+
+  /** §16.12: платформа лифта — едет между этажами по снапу (лерп в tick). */
+  private buildLift(id: string, pos: readonly [number, number, number], size: readonly [number, number, number]): void {
+    const [w, h, d] = size
+    const plat = MeshBuilder.CreateBox(`prop.${id}`, { width: w, height: h, depth: d }, this.scene)
+    plat.position.set(pos[0], pos[1] - h / 2, pos[2])
+    plat.material = this.mats.body
+    plat.isPickable = false
+    const edge = MeshBuilder.CreateBox(`prop.${id}.edge`, { width: w, height: 0.05, depth: d }, this.scene)
+    edge.position.set(pos[0], pos[1] - 0.02, pos[2])
+    edge.material = this.mats.cable // янтарная кромка — видно, где площадка
+    edge.isPickable = false
+    // крышка проёма 2F: появляется, когда платформа спустилась (плейтест
+    // «тупо дыра остаётся… проваливаешься»)
+    const cap = MeshBuilder.CreateBox(`prop.${id}.cap`, { width: w, height: h, depth: d }, this.scene)
+    cap.position.set(pos[0], 8 - h / 2, pos[2])
+    cap.material = this.mats.body
+    cap.isVisible = false
+    // окаймляющие грани проёма + направляющие шахты (плейтест «потолок
+    // вообще бездонный =)… надо потолок визуализировать»): янтарная рама
+    // по периметру дыры на НИЖНЕЙ грани плиты 2F (y=7) + 4 стойки-рельса
+    // до пола 1F — шахта читается и сверху, и при спуске
+    const rimY = 7 - 0.05
+    const rimD = d / 2 + 0.12
+    const rimMat = this.mats.cable
+    const rims: [number, number, number, number, number, number][] = [
+      // вдоль X (север/юг грани)
+      [pos[0], rimY, pos[2] - rimD, w + 0.24, 0.1, 0.12],
+      [pos[0], rimY, pos[2] + rimD, w + 0.24, 0.1, 0.12],
+      // вдоль Z (запад/восток грани)
+      [pos[0] - rimD, rimY, pos[2], 0.12, 0.1, d + 0.24],
+      [pos[0] + rimD, rimY, pos[2], 0.12, 0.1, d + 0.24],
+    ]
+    for (let i = 0; i < rims.length; i++) {
+      const [rx, ry, rz, rw, rh, rd] = rims[i]
+      const rim = MeshBuilder.CreateBox(`prop.${id}.rim${i}`, { width: rw, height: rh, depth: rd }, this.scene)
+      rim.position.set(rx, ry, rz)
+      rim.material = rimMat
+      rim.isPickable = false
+    }
+    // рельсы по углам: от пола 1F до плиты 2F
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const rail = MeshBuilder.CreateBox(`prop.${id}.rail${sx}${sz}`, { width: 0.08, height: 7, depth: 0.08 }, this.scene)
+        rail.position.set(pos[0] + sx * rimD, 4.5, pos[2] + sz * rimD)
+        rail.material = rimMat
+        rail.isPickable = false
+      }
+    }
+    this.lifts.set(id, {
+      parts: [plat, edge],
+      x: pos[0],
+      z: pos[2],
+      half: w / 2,
+      thick: h,
+      curY: pos[1],
+      targetY: pos[1],
+      cap,
+    })
+  }
+
+  /** §16.12: кнопка-пьедестал лифта на 2F — физика, space. */
+  private buildLiftBtn(id: string, pos: readonly [number, number, number]): void {
+    const ped = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.34, height: 1.1, depth: 0.34 }, this.scene)
+    ped.position.set(pos[0], pos[1] + 0.55, pos[2])
+    ped.material = this.mats.body
+    ped.isPickable = false
+    const lamp = MeshBuilder.CreateBox(`prop.${id}.lamp`, { width: 0.22, height: 0.16, depth: 0.08 }, this.scene)
+    lamp.position.set(pos[0], pos[1] + 1.1, pos[2])
+    lamp.material = this.mats.cable
+    lamp.isPickable = false
+    this.liftBtns.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
+  }
+
+  /** §16.7: маленькая клавиатура-пропс у запертой двери — точка space.
+   *  Решение владельца: «сама физическая клава пусть будет 10 точек» —
+   *  сетка 3×4 цифровых точек (1–9, 0), а не параллелепипед.
+   *  Плоскость клавиатуры — на стену: тонкая подложка разворачивается к
+   *  комнате по положению (стена z-плоскости или x-плоскости). */
+  private buildKeypad(id: string, pos: readonly [number, number, number], to: string | null): void {
+    if (to === null) return
+    // какая ось стены: далеко по z от центра — стена z-плоскости (k3/k4),
+    // далеко по x — x-плоскости (k5/k6)
+    const alongZ = Math.abs(pos[2] - 32) > Math.abs(pos[0] - 32)
+    const cx = pos[0]
+    const cy = pos[1] + 1.3
+    const cz = pos[2]
+    const backing = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.3, height: 0.4, depth: 0.05 }, this.scene)
+    backing.position.set(cx, cy, cz)
+    if (alongZ) backing.rotation.y = 0
+    else backing.rotation.y = Math.PI / 2
+    backing.material = this.mats.body
+    backing.isPickable = false
+    // 10 точек: 3 колонки × 3 ряда + нижняя «0», шаг 0.08/0.09
+    const dotR = 0.022
+    const cols = [-0.08, 0, 0.08]
+    const rows = [0.11, 0.02, -0.07, -0.16]
+    const keys: [number, number][] = [
+      [cols[0], rows[0]], [cols[1], rows[0]], [cols[2], rows[0]],
+      [cols[0], rows[1]], [cols[1], rows[1]], [cols[2], rows[1]],
+      [cols[0], rows[2]], [cols[1], rows[2]], [cols[2], rows[2]],
+      [cols[1], rows[3]],
+    ]
+    // Точки — ОТ центра карты (наружу): клавиатуры висят на внешних стенах,
+    // кнопки должны смотреть на игрока, идущего к комнате (плейтест:
+    // «кнопки в другую сторону разверни, не в центр, а от центра»).
+    const off = 0.05
+    for (let i = 0; i < keys.length; i++) {
+      const dot = MeshBuilder.CreateSphere(`prop.${id}.k${i}`, { diameter: dotR * 2, segments: 6 }, this.scene)
+      const [dx, dy] = keys[i]
+      if (alongZ) {
+        const dz = Math.sign(cz - 32) * off
+        dot.position.set(cx + dx, cy + dy, cz + dz)
+      } else {
+        const ddx = Math.sign(cx - 32) * off
+        dot.position.set(cx + ddx, cy + dy, cz + dx)
+      }
+      dot.material = this.mats.led
+      dot.isPickable = false
+    }
+    this.codeDoors.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0, door: to })
+  }
+
   private buildSwitch(id: string, pos: readonly [number, number, number]): void {
     const cab = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.5, height: 0.85, depth: 0.28 }, this.scene)
     cab.position.set(pos[0], pos[1] + 0.425, pos[2])
@@ -318,7 +538,14 @@ export class PropsView {
     this.switches.set(id, { id, x: pos[0], y: pos[1], z: pos[2], radius: 0 })
   }
 
-  private buildDoor(id: string, pos: readonly [number, number, number], axis: 'x' | 'z', size: readonly [number, number, number]): void {
+  private buildDoor(
+    id: string,
+    pos: readonly [number, number, number],
+    axis: 'x' | 'z',
+    size: readonly [number, number, number],
+    locked = false,
+  ): void {
+    if (locked) this.lockedDoors.add(id)
     const [w, h, depth] = size
     const pivot = new TransformNode(`prop.${id}.pivot`, this.scene)
     // Вертикальный выезд (решение владельца): полотно уезжает вверх на свою
@@ -594,6 +821,12 @@ export class PropsView {
           }
           break
         }
+        case 'srv':
+          if (p.x === undefined || p.y === undefined || p.z === undefined) break
+          if (this.known(p.id)) break
+          this.buildSrv(p.id, [p.x, p.y, p.z])
+          dirty = true
+          break
         case 'terminal':
         case 'radio':
         case 'switch': {
@@ -664,6 +897,30 @@ export class PropsView {
           }
           break
         }
+        case 'lift': {
+          // §16.12: платформа едет — пишем target-Y, меш догоняет лерпом
+          const l = this.lifts.get(p.id)
+          if (l !== undefined && p.y !== undefined && Math.abs(l.targetY - p.y) > 0.01) {
+            l.targetY = p.y
+          }
+          break
+        }
+        case 'physafe': {
+          // §16.6: позиция из снапа (на земле или у носителя); перенос меша
+          // + глиф миникарты (rebuildMini дёшев, карта маленькая)
+          if (p.x === undefined || p.y === undefined || p.z === undefined) break
+          const cur = this.physafePos
+          const moved =
+            cur === null ||
+            Math.abs(cur.x - p.x) > 0.01 ||
+            Math.abs(cur.y - p.y) > 0.01 ||
+            Math.abs(cur.z - p.z) > 0.01 ||
+            cur.carrier !== (p.carriedBy ?? 0)
+          if (!moved) break
+          this.physafePos = { x: p.x, y: p.y, z: p.z, carrier: p.carriedBy ?? 0 }
+          dirty = true // глиф миникарты сразу; меши догонят лерпом в tick()
+          break
+        }
       }
     }
     if (dirty) this.rebuildMini()
@@ -680,14 +937,20 @@ export class PropsView {
       const halfD = d.axis === 'z' ? d.len / 2 : 0.15
       boxes.push({ label: `ДВЕРЬ ${d.id.toUpperCase()} — ${d.open ? 'ОТКРЫТА' : 'ЗАКРЫТА'}`, min: [d.x - halfW, d.baseY, d.z - halfD], max: [d.x + halfW, d.baseY + d.h, d.z + halfD] })
     }
+    // Терминал/радио/switch: высота от реальной точки пропса (как у камер —
+    // плейтест). Жёсткие 1F-высоты (1..2.4) делали t3/s3 2 этажа ненаводимыми:
+    // луч ловил плиту лавы lv3, лежащую теперь по всему полу комнаты.
     for (const t of this.terminals.values()) {
-      boxes.push({ label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, min: [t.x - 0.6, 1, t.z - 0.6], max: [t.x + 0.6, 2.4, t.z + 0.6] })
+      boxes.push({ label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, min: [t.x - 0.6, t.y, t.z - 0.6], max: [t.x + 0.6, t.y + 1.4, t.z + 0.6] })
+    }
+    for (const sf of this.safes.values()) {
+      boxes.push({ label: `NETSAFE ${sf.id.toUpperCase()}`, min: [sf.x - 0.6, sf.y, sf.z - 0.6], max: [sf.x + 0.6, sf.y + 1.2, sf.z + 0.6] })
     }
     for (const r of this.radios.values()) {
-      boxes.push({ label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, min: [r.x - 0.7, 1, r.z - 0.7], max: [r.x + 0.7, 3, r.z + 0.7] })
+      boxes.push({ label: `РАДИО-ТОЧКА ${r.id.toUpperCase()}`, min: [r.x - 0.7, r.y, r.z - 0.7], max: [r.x + 0.7, r.y + 2, r.z + 0.7] })
     }
     for (const s of this.switches.values()) {
-      boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, 1, s.z - 0.5], max: [s.x + 0.5, 1.9, s.z + 0.5] })
+      boxes.push({ label: `SWITCH ${s.id.toUpperCase()}`, min: [s.x - 0.5, s.y, s.z - 0.5], max: [s.x + 0.5, s.y + 0.9, s.z + 0.5] })
     }
     for (const g of this.gases.values()) {
       boxes.push({ label: `ГАЗ ${g.id.toUpperCase()} — КЛАПАН ${g.open ? 'ОТКРЫТ' : 'ЗАКРЫТ'}`, min: [g.x - g.w / 2, g.y - g.h / 2, g.z - g.d / 2], max: [g.x + g.w / 2, g.y + g.h / 2, g.z + g.d / 2] })
@@ -707,7 +970,9 @@ export class PropsView {
               ? 'СВОЯ'
               : 'ЧУЖАЯ'
             : 'ЗАХВАЧЕНА'
-      boxes.push({ label: `КАМЕРА ${c.id.toUpperCase()} — ${state}`, min: [c.x - 0.5, 1.8, c.z - 0.5], max: [c.x + 0.5, 3.4, c.z + 0.5] })
+      // высота — от реальной точки пропса (первый этаж 2.6, второй 9.6):
+      // жёсткие 1.8..3.4 делали камеры 2 этажа ненаводимыми (плейтест)
+      boxes.push({ label: `КАМЕРА ${c.id.toUpperCase()} — ${state}`, min: [c.x - 0.5, c.fy - 0.8, c.z - 0.5], max: [c.x + 0.5, c.fy + 0.8, c.z + 0.5] })
     }
     // Кабели: наводка показывает id (топология — визуализация, §6).
     for (const c of this.cables.values()) {
@@ -720,14 +985,50 @@ export class PropsView {
         boxes.push({ label: `КАБЕЛЬ ${c.id.toUpperCase()}`, min, max })
       }
     }
+    // §16.12: платформы лифтов (динамические по Y) и кнопки
+    for (const l of this.lifts.values()) {
+      boxes.push({ label: 'ЛИФТ — SPACE: СПУСК (КНОПКА РЯДОМ)', min: [l.x - l.half, l.curY - 0.2, l.z - l.half], max: [l.x + l.half, l.curY + 0.2, l.z + l.half] })
+    }
+    for (const b of this.liftBtns.values()) {
+      boxes.push({ label: 'КНОПКА ЛИФТА — SPACE: СПУСК НА 1F', min: [b.x - 0.3, b.y, b.z - 0.3], max: [b.x + 0.3, b.y + 1.3, b.z + 0.3] })
+    }
+    // PHYSAFE (§16.6): динамический бокс — на земле или у носителя
+    if (this.physafePos !== null) {
+      const pf = this.physafePos
+      boxes.push({ label: `PHYSAFE — SPACE: ВЗЯТЬ${pf.carrier !== 0 ? ' (У НОСИТЕЛЯ)' : ''}`, min: [pf.x - 0.5, pf.y, pf.z - 0.5], max: [pf.x + 0.5, pf.y + 1, pf.z + 0.5] })
+    }
+    // Клавиатуры код-замков (§16.7): иначе наводка на панель ловила бокс
+    // огня за стеной — у клавиатур вообще не было AABB в этом списке.
+    for (const k of this.codeDoors.values()) {
+      boxes.push({
+        label: `ЗАМОК ${k.door.toUpperCase()} — КОДОВАЯ КЛАВИАТУРА`,
+        min: [k.x - 0.25, k.y + 1.0, k.z - 0.25],
+        max: [k.x + 0.25, k.y + 1.6, k.z + 0.25],
+      })
+    }
     for (const b of boxes) {
       const t = rayBoxAABB(origin, dir, b.min, b.max)
-      if (t !== null && t < bestT) {
-        bestT = t
-        best = b.label
-      }
+      if (t === null || t >= bestT) continue
+      if (this.wallBlocked(origin, dir, t)) continue
+      bestT = t
+      best = b.label
     }
     return best
+  }
+
+  /** Стена между глазом и точкой хита на дистанции tHit? Пропсы висят НА
+   *  стенах (клавиатура на поверхности, дверь в проёме), поэтому хит в толще
+   *  стены или глаз в ней — эта стена не считается заслоном. */
+  private wallBlocked(origin: { x: number; y: number; z: number }, dir: { x: number; y: number; z: number }, tHit: number): boolean {
+    const hit: [number, number, number] = [origin.x + dir.x * tHit, origin.y + dir.y * tHit, origin.z + dir.z * tHit]
+    const inside = (p: readonly number[], w: { min: [number, number, number]; max: [number, number, number] }): boolean =>
+      p[0] >= w.min[0] && p[0] <= w.max[0] && p[1] >= w.min[1] && p[1] <= w.max[1] && p[2] >= w.min[2] && p[2] <= w.max[2]
+    for (const w of this.walls) {
+      if (inside([origin.x, origin.y, origin.z], w) || inside(hit, w)) continue
+      const t = rayBoxAABB(origin, dir, w.min, w.max)
+      if (t !== null && t > 1e-3 && t < tHit - 1e-3) return true
+    }
+    return false
   }
 
   /** AABB закрытых дверей — автоогонь/LOS клиента не видят врагов за ними. */
@@ -752,6 +1053,34 @@ export class PropsView {
   }
 
   tick(dtSec: number): void {
+    // §16.12: платформы лифтов — плавный спуск к target-Y; крышка проёма
+    // закрывается, как только платформа ушла на 1F (targetY ≈ 1)
+    for (const l of this.lifts.values()) {
+      const dy = l.targetY - l.curY
+      if (Math.abs(dy) >= 0.005) {
+        const step = Math.sign(dy) * Math.min(Math.abs(dy), 3.2 * dtSec)
+        l.curY += step
+        for (const m of l.parts) m.position.y = l.curY
+      }
+      l.cap.isVisible = l.targetY <= 1.01
+    }
+    // PHYSAFE: меш плавно догоняет снап-цель (носитель ходит, сейф с ним)
+    const pf = this.physafePos
+    const cur = this.physafeCur
+    if (pf !== null && cur !== null && this.physafeParts.length > 0) {
+      const dx = pf.x - cur.x
+      const dy = pf.y - cur.y
+      const dz = pf.z - cur.z
+      const dist = Math.hypot(dx, dy, dz)
+      if (dist > 0.02) {
+        const k = Math.min(1, dist * 10 * dtSec)
+        cur.x += dx * k
+        cur.y += dy * k
+        cur.z += dz * k
+        for (const m of this.physafeParts) m.position.addInPlaceFromFloats(dx * k, dy * k, dz * k)
+        this.rebuildMini() // глиф миникарты движется вместе с сейфом
+      }
+    }
     const step = Math.min(1, dtSec / DOOR_SWING_S)
     for (const d of this.doors.values()) {
       const target = d.open ? 1 : 0
@@ -788,6 +1117,19 @@ export class PropsView {
    *  3) в конусе взгляда пусто — ближайшая по d/range (прежнее поведение);
    *  4) точек входа на карте нет вовсе — порт прочего устройства в 2 м
    *     (§12.1 «дорогой вход», канал 6 с). */
+  /** §16.7: ближайшая клавиатура замка в том же этаже — space у неё
+   *  открывает пад кода вместо джек-ина. */
+  nearestKeypad(x: number, z: number, playerY?: number): { door: string; id: string; dist: number } | null {
+    const eyeY = (playerY ?? 0) + 1.6
+    let best: { door: string; id: string; dist: number } | null = null
+    for (const k of this.codeDoors.values()) {
+      if (Math.abs(k.y + 1.3 - eyeY) > 2.6) continue
+      const dist = Math.hypot(k.x - x, k.z - z)
+      if (best === null || dist < best.dist) best = { door: k.door, id: k.id, dist }
+    }
+    return best
+  }
+
   nearestJackPoint(
     x: number,
     z: number,
@@ -801,10 +1143,21 @@ export class PropsView {
     const sameFloor = (ty: number): boolean => Math.abs(ty - eyeY) <= 2.6
     type P = { id: string; label: string; dist: number; range: number; dx: number; dz: number; ty: number }
     const pts: P[] = []
+    // §16.7: клавиатура запертой двери — физический ввод кода (любой класс).
+    for (const dc of this.codeDoors.values()) {
+      const ty = dc.y + 1.5
+      if (!sameFloor(ty)) continue
+      pts.push({ id: dc.id, label: `ЗАМОК ${dc.id.toUpperCase()}`, dist: Math.hypot(dc.x - x, dc.z - z), range: TERMINAL_RANGE, dx: dc.x - x, dz: dc.z - z, ty })
+    }
     for (const t of this.terminals.values()) {
       const ty = t.y + 1.5
       if (!sameFloor(ty)) continue
       pts.push({ id: t.id, label: `ТЕРМИНАЛ ${t.id.toUpperCase()}`, dist: Math.hypot(t.x - x, t.z - z), range: TERMINAL_RANGE, dx: t.x - x, dz: t.z - z, ty })
+    }
+    for (const sf of this.safes.values()) {
+      const ty = sf.y + 1.2
+      if (!sameFloor(ty)) continue
+      pts.push({ id: sf.id, label: `NETSAFE ${sf.id.toUpperCase()}`, dist: Math.hypot(sf.x - x, sf.z - z), range: TERMINAL_RANGE, dx: sf.x - x, dz: sf.z - z, ty })
     }
     for (const r of this.radios.values()) {
       const range = r.radius ?? DEFAULT_RADIO_RANGE
@@ -953,8 +1306,27 @@ export class PropsView {
     return best
   }
 
+  /** Навигационные точки (§15.14 edge-индикаторы): все сетевые пропсы +
+   *  PHYSAFE; y — центр объекта (проекция на экран в main.ts). */
+  navTargets(): { id: string; kind: string; x: number; y: number; z: number }[] {
+    const out: { id: string; kind: string; x: number; y: number; z: number }[] = []
+    for (const t of this.terminals.values()) out.push({ id: t.id, kind: 'terminal', x: t.x, y: t.y + 1, z: t.z })
+    for (const r of this.radios.values()) out.push({ id: r.id, kind: 'radio', x: r.x, y: r.y + 1, z: r.z })
+    for (const sw of this.switches.values()) out.push({ id: sw.id, kind: 'switch', x: sw.x, y: sw.y + 0.5, z: sw.z })
+    for (const d of this.doors.values()) out.push({ id: d.id, kind: 'door', x: d.x, y: d.baseY + d.h / 2, z: d.z })
+    for (const c of this.cameras.values()) out.push({ id: c.id, kind: 'camera', x: c.x, y: c.fy, z: c.z })
+    for (const g of this.gases.values()) out.push({ id: g.id, kind: 'gas', x: g.x, y: g.y, z: g.z })
+    for (const v of this.valves.values()) out.push({ id: v.id, kind: 'valve', x: v.x, y: v.y + 0.5, z: v.z })
+    for (const k of this.codeDoors.values()) out.push({ id: k.id, kind: 'keypad', x: k.x, y: k.y + 1.3, z: k.z })
+    for (const sf of this.safes.values()) out.push({ id: sf.id, kind: 'safe', x: sf.x, y: sf.y + 0.6, z: sf.z })
+    if (this.physafePos !== null) out.push({ id: 'phySafe', kind: 'physafe', x: this.physafePos.x, y: this.physafePos.y + 0.5, z: this.physafePos.z })
+    for (const b of this.liftBtns.values()) out.push({ id: b.id, kind: 'liftbtn', x: b.x, y: b.y + 1.1, z: b.z })
+    return out
+  }
+
   hostKind(id: string): CyberKind | null {
     if (this.terminals.has(id)) return 'terminal'
+    if (this.safes.has(id)) return 'safe'
     if (this.radios.has(id)) return 'radio'
     if (this.switches.has(id)) return 'switch'
     if (this.doors.has(id)) return 'door'
@@ -968,12 +1340,16 @@ export class PropsView {
 
   private known(id: string): boolean {
     return this.terminals.has(id) || this.radios.has(id) || this.switches.has(id) || this.doors.has(id) ||
-      this.cameras.has(id) || this.gases.has(id) || this.fires.has(id) || this.valves.has(id)
+      this.cameras.has(id) || this.gases.has(id) || this.fires.has(id) || this.valves.has(id) || this.safes.has(id) ||
+      (id === 'physafe' && this.physafePos !== null)
   }
 
   private rebuildMini(): void {
     const out: MiniProp[] = []
     for (const t of this.terminals.values()) out.push({ x: t.x, z: t.z, kind: 'terminal' })
+    for (const sf of this.safes.values()) out.push({ x: sf.x, z: sf.z, kind: 'safe' })
+    if (this.physafePos !== null) out.push({ x: this.physafePos.x, z: this.physafePos.z, kind: 'physafe' })
+    for (const b of this.liftBtns.values()) out.push({ x: b.x, z: b.z, kind: 'liftbtn' })
     for (const r of this.radios.values()) out.push({ x: r.x, z: r.z, kind: 'radio' })
     for (const s of this.switches.values()) out.push({ x: s.x, z: s.z, kind: 'switch' })
     for (const c of this.cameras.values()) out.push({ x: c.x, z: c.z, kind: 'camera' })

@@ -23,7 +23,7 @@ import {
 } from './players'
 import { Controls } from './controls'
 import { AutoFire, Effects, Scope, type TargetBox } from './combat'
-import { Hud } from './hud'
+import { EXTRACT_LORE, Hud } from './hud'
 import { Minimap } from './minimap'
 import type { MiniCyberDev } from './minimap'
 import { PropsView } from './props'
@@ -82,6 +82,201 @@ let jackChannel: { dev: string; s: number; at: number } | null = null
 // Не-хакер жмёт «действие» у устройства: красная вспышка тултипа до этого штампа
 let jackErrorUntil = 0
 let prevInteractUi = 0
+// §16.7: клавиатура d3 — оверлей ввода кода (space у запертой двери).
+let codePad: { dev: string; kp: string; wrap: HTMLElement; status: HTMLElement; timer: HTMLElement; showResult: (ok: boolean, match?: number, open?: boolean) => void } | null = null
+// закрытие пада извне (джек-ин/смерть/конец матча): локальная close()
+// внутри openCodePad регистрируется сюда — конфликт клавиатуры (§16.7:
+// пад держит window-capture keydown и глотает цифры/Enter/Esc деки)
+let codePadClose: (() => void) | null = null
+function closeCodePad(): void {
+  codePadClose?.()
+}
+let keyLeftMs = -1 // §16.5: последний keyLeft из снапшота
+let teamDoorCode: string | null = null // §16.4: код d3, узнанный командой (codes)
+let teamSafeCode: string | null = null // §16.6: код сейфа, узнанный командой (codes)
+
+/** Цвет edge-индикаторов по типу объекта (§15.14) — палитра миникарты. */
+const NAV_COLOR: Readonly<Record<string, string>> = {
+  terminal: '#37ff9b',
+  radio: '#ff4dd2',
+  switch: '#ffd237',
+  door: '#eafff3',
+  camera: '#78e6ff',
+  gas: '#a8ff60',
+  valve: '#5fd7ff',
+  keypad: '#ff9f43',
+  srv: '#e6f5ff',
+  safe: '#5fb4ff',
+  physafe: '#ffc837',
+  liftbtn: '#f0f4f8',
+  base: '#ffffff',
+}
+let lastSnapAt = 0 // performance.now() последнего снапшота (для локального отсчёта таймеров)
+
+/** §16.7: клавиатура d3 — пад из 10 кнопок (как настоящий кодовый замок).
+ *  Под pointer-lock фокус полю ввода не отдашь, поэтому ввод слушает window:
+ *  цифры/Backspace/Enter/Esc, пока пад открыт; кнопки кликаются и тапаются.
+ *  Ответ сервера `code` рисует ОК/НЕВЕРНО + «N/4 цифр на месте» — подсказка:
+ *  N цифр из 4 стоят на СВОИХ местах (Fallout-style). */
+function openCodePad(dev: string, kp: string): void {
+  if (codePad !== null) return
+  const wrap = document.createElement('div')
+  wrap.className = 'codepad'
+  const title = document.createElement('div')
+  title.className = 'codepad-title'
+  // двухстрочная шапка (плейтест: «таймера не видно»):
+  //   ЗАМОК D3
+  //   ДО СМЕНЫ КОДА 01:59
+  title.textContent = dev === 'physafe' ? 'СЕЙФ // ВВОД КОДА' : `ЗАМОК ${dev.toUpperCase()}`
+  const timer = document.createElement('div')
+  timer.className = 'codepad-timer'
+  title.append(timer)
+  const x = document.createElement('button')
+  x.className = 'codepad-x'
+  x.textContent = '×'
+  x.addEventListener('click', () => close())
+  const disp = document.createElement('div')
+  disp.className = 'codepad-display'
+  const status = document.createElement('div')
+  status.className = 'codepad-status'
+  status.textContent = 'ЦИФРЫ ИЛИ КЛИК · ENTER — ВВОД · ESC — ЗАКРЫТЬ'
+  const grid = document.createElement('div')
+  grid.className = 'codepad-grid'
+  let digits = ''
+  const draw = (): void => {
+    const t = digits.padEnd(4, '·')
+    disp.textContent = `${t[0]} ${t[1]} ${t[2]} ${t[3]}`
+  }
+  const close = (): void => {
+    window.removeEventListener('keydown', onKey, true)
+    wrap.remove()
+    codePad = null
+    codePadClose = null
+    // вернуть пиксельный захват мыши — пад был модальным окном над игрой
+    canvas.requestPointerLock?.()
+  }
+  // под pointer-lock Esc выходит из захвата и до страницы не доходит —
+  // отпускаем lock на время пада, чтобы Esc/×/клики работали честно
+  document.exitPointerLock?.()
+  const submit = (): void => {
+    if (digits.length !== 4) {
+      status.textContent = 'НУЖНО 4 ЦИФРЫ'
+      status.className = 'codepad-status bad'
+      return
+    }
+    sock.send({ t: 'enter', dev: kp, code: digits } as never)
+    digits = ''
+    draw()
+    status.textContent = 'ПРОВЕРКА…'
+    status.className = 'codepad-status'
+    // сторожевой таймаут: ответ потерялся — не вешаем панель навсегда
+    window.setTimeout(() => {
+      if (codePad !== null && codePad.dev === dev && status.textContent === 'ПРОВЕРКА…') {
+        status.textContent = 'НЕТ ОТВЕТА — ПОВТОРИ'
+        status.className = 'codepad-status bad'
+      }
+    }, 4000)
+  }
+  const press = (k: string): void => {
+    if (k === 'ВЗЯТЬ') {
+      // §16.6: PAD-кнопка взятия (space занят открытием пада, когда команда
+      // знает код сейфа); сервер меряет дистанцию сам
+      sock.send({ t: 'takesafe' })
+      close()
+      return
+    }
+    if (k === 'C') {
+      digits = ''
+      draw()
+      status.textContent = 'СБРОС'
+      status.className = 'codepad-status'
+      return
+    }
+    if (k === '⌫') {
+      digits = digits.slice(0, -1)
+      draw()
+      return
+    }
+    if (k === 'ОТКРЫТЬ') {
+      submit()
+      return
+    }
+    if (digits.length >= 4) return
+    digits += k
+    draw()
+    if (digits.length === 4) submit() // как у настоящего замка: 4-я цифра = ввод
+  }
+  const onKey = (e: KeyboardEvent): void => {
+    if (codePad === null) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      close()
+      return
+    }
+    const k = /^\d$/.test(e.key) ? e.key : e.key === 'Backspace' ? '⌫' : e.key === 'Enter' ? 'ОТКРЫТЬ' : e.key === 'Delete' ? 'C' : null
+    if (k === null) return
+    e.preventDefault()
+    e.stopPropagation() // цифры не уходят в хоткеи деки/игру
+    if (digits.length === 5) digits = digits.slice(0, 4) // защита от гонки submit
+    press(k)
+  }
+  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', '⌫', 'ОТКРЫТЬ']) {
+    const b = document.createElement('button')
+    b.className = 'codepad-key' + (k === 'ОТКРЫТЬ' ? ' ok' : k === 'C' || k === '⌫' ? ' clr' : '')
+    b.textContent = k
+    b.addEventListener('click', () => press(k))
+    grid.append(b)
+  }
+  if (dev === 'physafe') {
+    // §16.6: у сейфа обе стратегии в одном паде — ввод кода (вскрытие на
+    // месте) или забрать и нести на базу
+    const take = document.createElement('button')
+    take.className = 'codepad-key wide'
+    take.textContent = 'ВЗЯТЬ'
+    take.addEventListener('click', () => press('ВЗЯТЬ'))
+    grid.append(take)
+  }
+  const head = document.createElement('div')
+  head.className = 'codepad-head'
+  head.append(title, x)
+  wrap.append(head, disp, grid, status)
+  document.body.append(wrap)
+  draw()
+  window.addEventListener('keydown', onKey, true)
+  codePadClose = close
+  codePad = {
+    dev,
+    kp,
+    wrap,
+    status,
+    timer,
+    showResult: (ok, match, open) => {
+      if (ok) {
+        if (dev === 'physafe') {
+          // §16.6: верный код сейфа — канал «вскрываем 3 с» стартовал
+          status.textContent = 'ПРАВИЛЬНО — ВСКРЫВАЕМ, СТОЙ НА МЕСТЕ'
+          status.className = 'codepad-status ok'
+        } else {
+          // §16.7 (плейтест): код-ТОГГЛ — повторный ввод ЗАКРЫВАЕТ и запирает
+          // дверь. «ОТКРЫТО» только когда створка реально открылась, иначе
+          // «ПРАВИЛЬНО» (сервер шлёт итоговое open; старый сервер — без поля).
+          status.textContent = open === false ? 'ПРАВИЛЬНО — ДВЕРЬ ЗАКРЫТА И ЗАПЕРТА' : 'ОТКРЫТО ✓'
+        }
+        status.className = 'codepad-status ok'
+        window.setTimeout(() => {
+          if (codePad !== null && codePad.dev === dev) close()
+        }, 900)
+      } else {
+        status.textContent = `НЕВЕРНО — ${match ?? 0}/4 ЦИФР НА МЕСТЕ`
+        status.className = 'codepad-status bad'
+        digits = ''
+        draw()
+      }
+    },
+  }
+}
+
 let myId: number | null = null
 let myTeam = -1
 let myCls: Cls = 'assault'
@@ -104,6 +299,7 @@ let lastMyHp = -1
 const envKillAt = new Map<number, number>()
 
 function resetSession(): void {
+  closeCodePad() // обрыв сокета (не F5-перезагрузка): пад не должен выжить
   playing = false
   myId = null
   envKillAt.clear()
@@ -186,8 +382,11 @@ function handleSnap(snap: SnapMsg): void {
     if (me.cls !== myCls) myCls = me.cls // сервер скорректировал класс
     hud.setWeapon(myCls === 'hacker' ? 'ПИСТОЛЕТ' : null)
   }
+  hud.setCarry(me?.safe === true) // §16.6: ноша PHYSAFE — постоянная плашка
   hud.setVitals(me !== undefined ? me.hp : 0, CLASS_BY_KEY[myCls].hp, CLASS_BY_KEY[myCls].label)
   hud.setScores(snap.scores, snap.timeLeft / 1000) // hud expects seconds, wire has ms
+  if (snap.keyLeft !== undefined) keyLeftMs = snap.keyLeft
+  lastSnapAt = performance.now()
 
   // Killfeed from observed alive→dead transitions, attributed to the most
   // recent shot with a hit (raw shot spam at 8-12 shots/s would flood it).
@@ -247,16 +446,85 @@ function handleDeath(msg: DeathMsg): void {
     hud.showDeath(killer, msg.respawnAt, myCls)
   }
   autofire.reset()
+  closeCodePad() // мёртвый код не вводит
   hackviewOff(false) // сервер джек-аутит сам; оверлей гасим сразу (ГДД §12.1)
   touch?.reset() // мёртвое тело не должно «бежать» через удержанную крестину (§15.1)
 }
 
+// CRT-рестарт матча (плейтест «выключение экрана белый шум в телевизоре
+// сжимается в точку… а потом бац… и новый экран»): шум → строка → точка →
+// «бац» (вспышка) → включение. Тайминг: старта нового матча ждём ~0.9 с.
+let crtBusy = false
+function playCrtRestart(): void {
+  if (crtBusy) return
+  crtBusy = true
+  const crt = document.getElementById('crt')
+  const noise = document.getElementById('crtNoise')
+  const flash = document.getElementById('crtFlash')
+  if (crt === null || noise === null || flash === null) {
+    crtBusy = false
+    return
+  }
+  // текстура шума генерится один раз за сессию
+  if (noise.style.backgroundImage === '') {
+    const nc = document.createElement('canvas')
+    nc.width = 160
+    nc.height = 160
+    const nctx = nc.getContext('2d')
+    if (nctx !== null) {
+      const img = nctx.createImageData(160, 160)
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = (Math.random() * 255) | 0
+        img.data[i] = v
+        img.data[i + 1] = v
+        img.data[i + 2] = v
+        img.data[i + 3] = 255
+      }
+      nctx.putImageData(img, 0, 0)
+      noise.style.backgroundImage = `url(${nc.toDataURL()})`
+    }
+  }
+  crt.classList.add('on')
+  noise.classList.add('on') // белый шум
+  document.body.classList.add('crt-collapse') // картинка → строка
+  window.setTimeout(() => {
+    document.body.classList.remove('crt-collapse')
+    document.body.classList.add('crt-dot') // строка → точка
+  }, 300)
+  window.setTimeout(() => {
+    document.body.classList.remove('crt-dot')
+    noise.classList.remove('on') // темнота
+  }, 620)
+  // «БАЦ» — новый матч уже стартовал: вспышка + включение экрана
+  window.setTimeout(() => {
+    document.body.classList.add('crt-on')
+    flash.classList.add('on')
+    window.setTimeout(() => flash.classList.remove('on'), 120)
+    window.setTimeout(() => {
+      document.body.classList.remove('crt-on')
+      crt.classList.remove('on')
+      crtBusy = false
+    }, 340)
+  }, 900)
+}
+
 function handleEnd(msg: EndMsg): void {
   matchOver = true
+  hud.onCrtOff = playCrtRestart // конец отсчёта → CRT-выключение → бац
+  closeCodePad()
   hackviewOff(false)
+  hud.setNav([])
+  hud.hideChannel()
+  // reason: extract — лор ЧТО извлекли; time/frags — почему матч кончился
+  // (плейтест: конец по таймеру посреди decrypt выглядел «выбросило из
+  // коннекта»; напомнить, что матч-специфичный лут стёрт)
+  let reason: string | null = null
+  if (msg.reason === 'extract') reason = EXTRACT_LORE
+  else if (msg.reason === 'time') reason = 'ВРЕМЯ МАТЧА ВЫШЛО · МАТЧ-СПЕЦИФИЧНЫЙ ЛУТ (КЛЮЧИ) СТЁРТ'
+  else if (msg.reason === 'frags') reason = 'ЛИМИТ ФРАГОВ · МАТЧ-СПЕЦИФИЧНЫЙ ЛУТ (КЛЮЧИ) СТЁРТ'
   hud.showEnd(msg.winner, msg.scores, () => {
     matchOver = false
-  })
+  }, reason, msg.players)
 }
 
 const sock = new GameSocket({
@@ -293,7 +561,55 @@ const sock = new GameSocket({
         break
       case 'matchend':
         handleEnd(msg)
+        teamDoorCode = null // новый матч — коды перегенерированы (§16.4/§16.6)
+        teamSafeCode = null
+        hud.setCodes(null, null)
         break
+      case 'job':
+        // §16.9 job: прогресс SRV-decrypt команде (1 Гц, в т.ч. после
+        // джек-аута/смерти запустившего) — карточка прогресса в hackview.
+        hackview.onJob(msg)
+        break
+      case 'slow':
+        // §16.6: backoff на сейфе — явное «ждать или идти ногами» (плейтест:
+        // «надо показывать в ответе чтобы чувак запомнил что надо ждать»)
+        {
+          const text = `BACKOFF ×${msg.mult} — ${msg.prog.toUpperCase()} ${msg.eta} С · ЖДИ ИЛИ JACK-ИН В ${msg.dev.toUpperCase()}`
+          if (hackview.active) hackview.onAlert(text)
+          else hud.warn(text)
+        }
+        break
+      case 'extract':
+        // §16.9 extract (итерация 7): события PHYSAFE — общий телеграф.
+        switch (msg.stage) {
+          case 'taken':
+            hud.warn(`СЕЙФ ВЗЯТ — КОМАНДА ${msg.team === 0 ? 'WHITEHAT' : 'BLACKHAT'}`)
+            hud.hideChannel()
+            break
+          case 'channel': {
+            // плейтест «нужна анимация с процентами»: постоянный бар с %
+            // (1 Гц от сервера, сглаживается CSS transition)
+            const mine = msg.team === myTeam
+            hud.setChannel(mine, mine ? 'ВСКРЫВАЕМ СЕЙФ — СТОЙ НА МЕСТЕ' : 'ВРАГ ВСКРЫВАЕТ СЕЙФ!', msg.prog ?? 0)
+            break
+          }
+          case 'broken':
+            hud.warn('КАНАЛ ПРЕРВАН — ПРОГРЕСС ПОТЕРЯН')
+            hud.hideChannel()
+            break
+          case 'win':
+            hud.hideChannel()
+            break // следом matchend reason=extract
+        }
+        break
+      case 'codes': {
+        // §16.9 codes: коды, узнанные командой через decrypt (door_key и
+        // safe_key), — навсегда в рамках матча. HUD «КОД D3 · СЕЙФ».
+        if (msg.door !== undefined) teamDoorCode = msg.door
+        if (msg.safe !== undefined) teamSafeCode = msg.safe
+        hud.setCodes(teamDoorCode, teamSafeCode)
+        break
+      }
       case 'jackin':
         hackviewOn(msg)
         jackChannel = null // канал установлен — подсказку прогресса гасим
@@ -328,7 +644,31 @@ const sock = new GameSocket({
           ]),
         )
         break
+      case 'code': {
+        // §16.7: итог ввода кода на клавиатуре d3; match=-1 — анти-флуд.
+        if (codePad !== null && (msg.dev === codePad.kp || msg.dev === codePad.dev)) {
+          if (msg.match === -1) {
+            codePad.status.textContent = 'СЛИШКОМ ЧАСТО — ПОДОЖДИ 2 С'
+            codePad.status.className = 'codepad-status bad'
+          } else {
+            codePad.showResult(msg.ok, msg.match, msg.open)
+          }
+        }
+        break
+      }
       case 'denied':
+        // §16.7: отказ ввода кода (too_far и пр.) — в пад, а не в никуда.
+        if (codePad !== null && msg.prog === 'enter') {
+          codePad.status.textContent = msg.reason === 'too_far' ? 'СЛИШКОМ ДАЛЕКО ОТ КЛАВИАТУРЫ' : `ОТКАЗ: ${msg.reason}`
+          codePad.status.className = 'codepad-status bad'
+          break
+        }
+        // §16.6: space у PHYSAFE вне радиуса взятия — «ПОДОЙДИ БЛИЖЕ» на HUD
+        // (в мире, hackview молчит)
+        if (msg.prog === 'physafe' && msg.reason === 'too_far') {
+          hud.warn('ПОДОЙДИ БЛИЖЕ К СЕЙФУ')
+          break
+        }
         // enemy_team (§12.5, ред. 2026-11-17) приходит ДО джек-ина — деки ещё
         // нет, hackview.onDenied молчит; предупреждение — на HUD.
         if (msg.reason === 'enemy_team') {
@@ -404,6 +744,9 @@ const hackview = new HackView({
 })
 
 function hackviewOn(msg: JackinMsg): void {
+  // §16.7 (плейтест: конфликт PIN-пада и деки): пад держит window-capture
+  // keydown и глотает цифры/Enter/Esc деки — при джек-ине закрываем его.
+  closeCodePad()
   hackview.activate(msg, propsView?.hostKind(msg.host) ?? null)
   document.body.classList.add('hackmode') // прячет FPS-HUD (CSS)
   controls.frozen = true // взгляд и клавиши не меняют состояние тела
@@ -603,6 +946,32 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
   (map) => {
     world = MapWorld.build(scene, map)
     propsView = PropsView.build(scene, map) // M2: терминалы/радио/switch/двери/кабели
+    // §16.7: space у клавиатуры замка = пад кода (перехват ДО отправки на
+    // сервер — иначе тот же space уходил бы в джек-ин). Позиция — камера
+    // (рендер-луп держит её в интерполированной позе моего тела).
+    {
+      const pv = propsView
+      controls.interactInterceptor = () => {
+        if (codePad !== null || !playing || hackview.active) return false
+        const feetY = camera.position.y - EYE_HEIGHT
+        const kp = pv.nearestKeypad(camera.position.x, camera.position.z, feetY)
+        if (kp !== null && kp.dist <= 2) {
+          openCodePad(kp.door, kp.id)
+          return true
+        }
+        // §16.6 (плейтест «конфликт space с netsafe/physafe/s3»): пад — по
+        // ПРИЦЕЛУ, как серверный выбор цели: ray из глаз; рядом могут стоять
+        // s3 и netsafe — пад открываем только если луч ловит PHYSAFE
+        const me = latestMeta.get(myId ?? -1)
+        const fwd = camera.getDirection(Vector3.Forward())
+        const hit = pv.propAt({ x: camera.position.x, y: camera.position.y, z: camera.position.z }, { x: fwd.x, y: fwd.y, z: fwd.z }, 3)
+        if (teamSafeCode !== null && me?.safe !== true && hit !== null && hit.startsWith('PHYSAFE')) {
+          openCodePad('physafe', 'physafe')
+          return true
+        }
+        return false
+      }
+    }
     window.__hs = window.__hs ?? undefined // noop-guard
     if (window.__hs) window.__hs.propsView = propsView
     minimap = new Minimap(document.getElementById('minimap') as HTMLCanvasElement, world)
@@ -665,6 +1034,68 @@ engine.runRenderLoop(() => {
     hud.propLabel(null)
   }
 
+  // Edge-индикаторы навигации (§15.14, плейтест: «треугольники по краям
+  // экрана с подписями… если на объект смотрим — не показывать»): ближайшие
+  // объекты ВНЕ поля зрения — маленький цветной треугольник на краю экрана
+  // с подписью id (CAM1, V1, D1… NETSAFE). Цвет — по типу объекта.
+  // PHYSAFE — всегда (гонка за сейфом); несущему — БАЗА его команды.
+  {
+    const items: { label: string; color: string; left: number; top: number; deg: number }[] = []
+    if (playing && propsView !== null && !hackview.active) {
+      const targets = propsView.navTargets()
+      const carrying = latestMeta.get(myId ?? -1)?.safe === true
+      if (carrying) {
+        const b = world?.baseOf(myTeam)
+        if (b !== undefined && b !== null) targets.push({ id: 'БАЗА', kind: 'base', x: b.x, y: camera.position.y, z: b.z })
+      }
+      const fwd = camera.getDirection(Vector3.Forward())
+      const right = camera.getDirection(Vector3.Right())
+      const up = camera.getDirection(Vector3.Up())
+      const tanHalf = Math.tan(camera.fov / 2)
+      const aspect = engine.getRenderWidth() / engine.getRenderHeight()
+      const W = engine.getRenderWidth()
+      const H = engine.getRenderHeight()
+      const margin = 30
+      const cand: { t: (typeof targets)[number]; r: number; u: number; d2: number }[] = []
+      for (const t of targets) {
+        const dx = t.x - camera.position.x
+        const dy = t.y - camera.position.y
+        const dz = t.z - camera.position.z
+        const f = dx * fwd.x + dy * fwd.y + dz * fwd.z
+        const r = dx * right.x + dy * right.y + dz * right.z
+        const u = dx * up.x + dy * up.y + dz * up.z
+        // В поле зрения (и перед носом, не за спиной) — не показываем
+        if (f > 0.5 && Math.abs(r / f / (tanHalf * aspect)) < 0.98 && Math.abs(u / f / tanHalf) < 0.92) continue
+        cand.push({ t, r, u, d2: dx * dx + dy * dy + dz * dz })
+      }
+      cand.sort((a, b) => a.d2 - b.d2)
+      const shown: typeof cand = []
+      for (const c of cand) {
+        const always = c.t.kind === 'physafe' || c.t.id === 'БАЗА'
+        if (shown.length < 6 || always) shown.push(c)
+      }
+      for (const c of shown.slice(0, 8)) {
+        // направление на краю экрана: (rightDot, -upDot) — экранная Y вниз
+        const nx = c.r
+        const ny = -c.u
+        const len = Math.hypot(nx, ny)
+        if (len < 1e-6) continue
+        const dirX = nx / len
+        const dirY = ny / len
+        const t = Math.min((W / 2 - margin) / Math.max(Math.abs(dirX), 1e-6), (H / 2 - margin) / Math.max(Math.abs(dirY), 1e-6))
+        const deg = (Math.atan2(dirX, -dirY) * 180) / Math.PI
+        items.push({
+          label: c.t.kind === 'safe' ? 'NETSAFE' : c.t.id.toUpperCase(),
+          color: NAV_COLOR[c.t.kind] ?? '#cfeeff',
+          left: W / 2 + dirX * t,
+          top: H / 2 + dirY * t,
+          deg,
+        })
+      }
+    }
+    hud.setNav(items)
+  }
+
   let hint: string | null = null
   let hintError = false
   if (playing && alive && !matchOver && !hackview.active && propsView !== null && me !== undefined) {
@@ -675,19 +1106,27 @@ engine.runRenderLoop(() => {
     // Не-хакер жмёт «действие» у устройства — тултип мигает красным, чтобы
     // было видно, в чём косяк (плейтест 2026-11-17). Edge по interact покрывает
     // и SPACE, и мобильную кнопку (обе идут через controls.keys.interact).
-    const it = controls.keys.interact
+      const it = controls.keys.interact
+    // §16.7: space у клавиатуры замка перехвачен ДО отправки (interceptor,
+    // см. ниже) — здесь только подсказка; у двери — обычный джек-ин.
+    const kp = propsView.nearestKeypad(me.x, me.z, me.y)
     if (it === 1 && prevInteractUi === 0 && myCls !== 'hacker' && near !== null && near.dist <= 2) {
       jackErrorUntil = performance.now() + 1200
     }
     prevInteractUi = it
-    if (near !== null) {
+    const kpHint = kp !== null && kp.dist <= 2 ? kp : null
+    if (kpHint !== null) {
+      hint = `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — КЛАВИАТУРА // ЗАМОК ${kpHint.door.toUpperCase()}`
+    } else if (near !== null) {
       const label = near.label
       if (myCls !== 'hacker') {
         // «Только хакер» — вплотную (2 м), издалека подсказка не нужна
         // (плейтест M2-2), чтобы не засорять HUD чужим классом.
         if (near.dist <= 2) hint = `ДЖЕК-ИН // ${label} — ТОЛЬКО ХАКЕР`
       } else if (near.dist <= near.range) {
-        hint = `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — ДЖЕК-ИН // ${label}`
+        hint = near.label.startsWith('ЗАМОК ')
+          ? `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — КЛАВИАТУРА // ${label}`
+          : `${IS_TOUCH ? 'ДЕЙСТВИЕ' : 'SPACE'} — ДЖЕК-ИН // ${label}`
       } else {
         hint = `${label} — ${Math.round(near.dist)} м (РАДИУС ${Math.round(near.range)} М)`
       }
@@ -709,6 +1148,16 @@ engine.runRenderLoop(() => {
     }
   }
   hud.jackinHint(hint, channelProgress, hintError)
+  // §16.5: таймер «до смены кода» в паде — из последнего keyLeft снапшота,
+  // локально вычитаем прошедшее, чтобы он шёл секундами без 30 Гц пересылки.
+  if (codePad !== null && keyLeftMs >= 0 && lastSnapAt > 0) {
+    const msAge = performance.now() - lastSnapAt
+    const left = Math.max(0, keyLeftMs - msAge)
+    const mm = Math.floor(left / 60000)
+    const ss = Math.floor((left % 60000) / 1000)
+    codePad.timer.textContent = `ДО СМЕНЫ КОДА ${mm}:${String(ss).padStart(2, '0')}`
+    codePad.timer.classList.toggle('soon', left < 20000)
+  }
 
   let fired = false
   // Авто-зум снайпера: враг в конусе ~25°, ближе 20 м и в прямой видимости
@@ -773,7 +1222,7 @@ engine.runRenderLoop(() => {
       allies.push({ x: p.x, z: p.z })
     }
     minimap.draw(
-      me !== undefined ? { x: me.x, z: me.z, yaw: controls.yaw } : null,
+      me !== undefined ? { x: me.x, z: me.z, y: me.y, yaw: controls.yaw } : null,
       allies,
       myTeam,
       propsView?.miniProps() ?? [],
