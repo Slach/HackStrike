@@ -2275,12 +2275,18 @@ export class HackView {
     }
     const t0 = (tokens[0] ?? '').toLowerCase()
     const t1 = (tokens[1] ?? '').toLowerCase()
-    // Выделенный кандидат дописывает дополняемый токен (Enter по подсвеченному
-    // префиксу — как Tab, но сразу с запуском).
-    const finalTokens =
-      sel !== undefined && ['dev', 'item', 'sub', 'datacmd'].includes(sel.kind) && !/\s$/.test(pal.input.value)
-        ? tokens.slice(0, -1).concat([sel.text])
-        : tokens
+    // Enter по подсвеченному кандидату — ДОПИСАТЬ токен в строку (как Tab),
+    // не запускать (плейтест M5: «Enter на ключе — а оно сразу „укажи
+    // приёмник“»; запуск — повторный Enter, когда дописывать нечего).
+    if (sel !== undefined && ['dev', 'item', 'sub', 'datacmd'].includes(sel.kind) && !/\s$/.test(pal.input.value)) {
+      const parts = tokens.slice(0, Math.min(this.paletteTok, tokens.length))
+      parts.push(sel.text)
+      pal.input.value = `${parts.join(' ')} `
+      this.paletteSel = -1
+      this.updatePalette()
+      return
+    }
+    const finalTokens = tokens
     // Команда данных (§16.2): 'data …' / '[host] data …'
     if (t0 === DATA_CMD) {
       this.runDataCmd(finalTokens.slice(1), null)
