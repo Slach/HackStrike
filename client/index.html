@@ -548,6 +548,22 @@
         gap: 10px;
         margin-bottom: 20px;
       }
+      /* Меню паузы живого игрока: класс применяется только на респауне —
+         карточки глушим (клик-ловушка «тыкаю, ничего не меняется»). */
+      .cards.locked .card {
+        opacity: 0.35;
+        pointer-events: none;
+      }
+      .cards.locked::after {
+        content: 'КЛАСС МЕНЯЕТСЯ ПРИ РЕСПАВНЕ';
+        display: block;
+        grid-column: 1 / -1;
+        text-align: center;
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: rgba(255, 200, 90, 0.85);
+        margin: -12px 0 6px;
+      }
       .card {
         position: relative;
         background: rgba(2, 18, 10, 0.92);

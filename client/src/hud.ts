@@ -315,6 +315,8 @@ export class Hud {
   onSensScale: (k: number) => void = () => {}
 
   private joinCls: Cls = 'assault'
+  /** Меню паузы: карточки классов залочены — живой класс не меняется. */
+  private joinCardsLocked = false
   private joinTeam = -1 // -1 = авто-баланс; выбор хранится в localStorage
   private deathCls: Cls = 'assault'
   private mapReady = false
@@ -508,7 +510,13 @@ export class Hud {
   }
 
   constructor() {
-    buildCards(this.el.joinCards, this.joinCls, (c) => (this.joinCls = c))
+    // Меню паузы (§15.5) — то же join-окно, но живой игрок класс сменить не
+    // может (сервер применяет cls только на респауне); карточки блокируем,
+    // чтобы «тыкаю, а ничего не меняется» не вводило в заблуждение.
+    buildCards(this.el.joinCards, this.joinCls, (c) => {
+      if (this.joinCardsLocked) return
+      this.joinCls = c
+    })
     buildCards(this.el.deathCards, this.deathCls, (c) => (this.deathCls = c))
     this.el.invertY.checked = localStorage.getItem('hs.invertY') === '1'
     this.reapplySens()
@@ -720,11 +728,15 @@ export class Hud {
     this.showJoin()
     this.el.deploy.classList.add('hidden')
     this.el.resume.classList.remove('hidden')
+    this.joinCardsLocked = true
+    this.el.joinCards.classList.add('locked')
   }
 
   hideMenu(): void {
     this.el.deploy.classList.remove('hidden')
     this.el.resume.classList.add('hidden')
+    this.joinCardsLocked = false
+    this.el.joinCards.classList.remove('locked')
     this.hideJoin()
   }
 
