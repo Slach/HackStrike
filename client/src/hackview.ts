@@ -2100,7 +2100,7 @@ export class HackView {
     // Дописываемый токен: хвостовой пробел = следующий токен, иначе текущий
     // (обобщение «cam1␣» из §13.3 на грамматику data из 4 токенов).
     this.paletteTok = trailing ? tokens.length : Math.max(tokens.length - 1, 0)
-    const cands: PalCand[] = []
+    let cands: PalCand[] = []
     // Режим «таб» (T): только устройства, второго токена нет (§12.6).
     const isTabMode = this.paletteMode === 'tab'
     // Обратный порядок токенов (плейтест M4): первый токен совпадает с
@@ -2213,14 +2213,12 @@ export class HackView {
       } else if (this.paletteTok === 1) {
         cands.push(...this.dataSubCands(pq, ['cp', 'mv', 'rm', 'decrypt']))
       } else {
-        // decrypt — одноаргументная: приёмника нет, ключ уже дан
-        // Приёмник уже указан (плейтест 2026-11-20: «door_key cp deck» + Enter
-        // вставлял deck бесконечно вместо исполнения): кандидатов нет,
-        // Enter = запуск — то же правило, что в dataMode (фикс 3bd91dd).
+        // Приёмник указан точно («door_key cp deck») → универсальный guard
+        // ниже снимет кандидата и Enter исполнит (плейтест-регреба deck deck…,
+        // раньше здесь был локальный dstDone-костыль d0406c3).
         const qq = (tokens[2] ?? '').toLowerCase()
-        const dstDone = trailing ? tokens.length > 2 : this.dataHostAt(qq) !== null
         const src = this.dataSrcOf(dq, null)
-        if (tokens[1]?.toLowerCase() !== 'decrypt' && !dstDone) {
+        if (tokens[1]?.toLowerCase() !== 'decrypt') {
           cands.push(...this.dataHostCands(qq, true).filter((c) => c.dev !== src))
         }
       }
@@ -2276,6 +2274,18 @@ export class HackView {
         cands.push({ kind: 'datacmd', text: DATA_CMD, dev: dev?.id, label: 'DATA', hint: n > 0 ? `ДАННЫЕ (${n})` : 'ДАННЫЕ LS/CP/MV/RM/🔓' })
       }
     }
+    // Плейтест 2026-11-20 («vulnscan cam2 cam2 cam2 cam2…», тот же класс, что
+    // «door_key cp deck deck…» и чиненный в 3bd91dd для data-формы): токен уже
+    // набран ТОЧНО — он не кандидат, иначе правило «единственный кандидат —
+    // вставить» дописывает его по кругу вместо Enter = исполнение. Guard —
+    // позиции ЗА первым токеном (paletteTok >= 1): там точное совпадение =
+    // аргумент завершён (кейсы «rm dk», «cp dk srv1» — тот же класс, что
+    // «vulnscan cam2 cam2…», вскрыт юнит-тестом). Первый токен не трогаем:
+    // там Enter по кандидату = принять дополнение (кейсы «cam → cam2 ␣», «cp → ключ»).
+    const lastTok = (tokens[tokens.length - 1] ?? '').toLowerCase()
+    const hadCands = cands.length
+    if (lastTok !== '' && this.paletteTok >= 1) cands = cands.filter((c) => c.text !== lastTok)
+    const complete = lastTok !== '' && hadCands > 0 && cands.length === 0
     this.paletteCands = cands
     if (this.paletteSel >= cands.length) this.paletteSel = cands.length - 1
     pal.list.replaceChildren()
@@ -2301,7 +2311,11 @@ export class HackView {
         txt(
           'div',
           'hv-dim',
-          dataMode ? 'ДАННЫХ НЕТ / НУЖЕН TROJAN — DATA LS' : 'НЕТ КАНДИДАТОВ — PORTSCAN [1] РАСКРОЕТ СЕТЬ',
+          complete
+            ? 'КОМАНДА ГОТОВА — ENTER ИСПОЛНИТЬ'
+            : dataMode
+              ? 'ДАННЫХ НЕТ / НУЖЕН TROJAN — DATA LS'
+              : 'НЕТ КАНДИДАТОВ — PORTSCAN [1] РАСКРОЕТ СЕТЬ',
         ),
       )
     } else if (cands.length > MAX_SHOWN) {

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "@babylonjs/core": "^9.36.0",
@@ -14,7 +15,9 @@
   },
   "devDependencies": {
     "@types/qrcode": "^1.5.6",
+    "jsdom": "^31.0.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.8"
+    "vite": "^8.3.8",
+    "vitest": "^2.1.9"
   }
 }
