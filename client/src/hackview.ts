@@ -1959,6 +1959,9 @@ export class HackView {
     const keyTok = prev[i + 1]
     if (keyTok === undefined) return this.dataKeyCands(q, host)
     if (sub === 'rm' || sub === 'decrypt') return []
+    // Приёмник уже указан — подставлять нечего (плейтест M5: был выбран
+    // localhost, а Enter ещё раз вставил deck — дубль приёмника).
+    if (prev[i + 2] !== undefined) return []
     const src = this.dataSrcOf(keyTok, host)
     return this.dataHostCands(q, true).filter((c) => c.dev !== src)
   }
