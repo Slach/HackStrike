@@ -2852,7 +2852,7 @@ export class HackView {
       body.append(wrap)
       this.doorRefs.push({ dev, kind: d.kind, status, btn })
       this.appendWatchPanel(body, dev, d)
-      if (IS_TOUCH) body.append(this.buildRunDock(dev)) // §15.31
+      if (IS_TOUCH) this.attachPaneDock(body, dev) // §15.31/§15.33
       return
     }
     if (d.kind === 'camera') {
@@ -2883,7 +2883,7 @@ export class HackView {
       }
       body.append(wrap)
       this.appendWatchPanel(body, dev, d)
-      if (IS_TOUCH) body.append(this.buildRunDock(dev)) // §15.31
+      if (IS_TOUCH) this.attachPaneDock(body, dev) // §15.31/§15.33
       return
     }
     const info = el('div', 'dev-info')
@@ -3008,7 +3008,25 @@ export class HackView {
     // ряд кнопок пристыкован к табам (door/cam/generic). ЦЕЛЬ = это
     // устройство (контекст, не глобальный this.target), палитра открывается
     // сразу на уровне его программ.
-    if (IS_TOUCH) body.append(this.buildRunDock(dev))
+    if (IS_TOUCH) this.attachPaneDock(body, dev)
+  }
+
+  /** §15.33 (ревебр owner: «надо вертикальный скролл более явно показывать»):
+   *  sticky-футер таба = пилюля «⌄ ПРОКРУТИТЬ» над доком (один sticky-блок —
+   *  не привязываемся к высоте дока, landscape 2 ряда/44 px vs portrait).
+   *  Тап по пилюле скроллит таб вниз; на дне (и когда скролла нет) гаснет. */
+  private attachPaneDock(body: HTMLElement, dev: string): void {
+    const foot = el('div', 'pane-foot')
+    const cue = el('button', 'pane-cue')
+    cue.textContent = '⌄ ПРОКРУТИТЬ'
+    cue.addEventListener('click', () => body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' }))
+    const update = (): void => {
+      cue.classList.toggle('cue-hidden', body.scrollHeight - body.clientHeight - body.scrollTop < 8)
+    }
+    body.addEventListener('scroll', update, { passive: true })
+    foot.append(cue, this.buildRunDock(dev))
+    body.append(foot)
+    update()
   }
 
   /** Панель «ПРОЦЕССЫ» (§13.1, ред. 2026-11-17 — бывш. «РАДАР СЕГМЕНТА»):

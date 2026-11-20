@@ -2611,7 +2611,9 @@
          покрыты открытой палитрой — прогресс виден в строке статуса. */
       body.touch .hv-palette:not(:has(.hv-pal-input)) {
         top: calc(env(safe-area-inset-top, 0px) + 116px); /* под tab-чипами */
-        bottom: calc(env(safe-area-inset-bottom) + 212px);
+        /* §15.33: база bubble = sticky-футер целиком (док 164 + cue 25 +
+           паддинги) — на 15% ниже прошлого, cue не под палитрой */
+        bottom: calc(env(safe-area-inset-bottom) + 210px);
         padding: 8px 10px; /* §15.30: «отступы на 15% меньше» */
         gap: 5px;
       }
@@ -2621,7 +2623,7 @@
         min-height: 0;
       }
       @media (orientation: landscape) and (min-width: 600px) {
-        body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 108px); }
+        body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 126px); } /* §15.33: футер = док 80 + cue */
       }
       body.touch button.hv-pal-cand {
         width: 100%;
@@ -2748,18 +2750,27 @@
       body.touch .deck-status .hv-progs > * { flex: none; }
       body.touch .deck-memlabel { display: none; } /* MEM понятен из «0/256 МБ» */
       /* док: кнопки-плитки сеткой, 44px-таргеты (§15.27) */
+      /* §15.33 (ревебр owner: «ещё на 15% меньше отступы по командам, а то
+         не влезает»): плитки дока 44→38px по высоте (осознанный откат от
+         touch-minimum §15.27 — по прямой просьбе владельца; на фоне 30px
+         кнопок-линков это всё ещё крупные мишени), паддинг 8→6, gap 6→4.
+         Портретный док 194→164px, ландшафтный 94→80px — ~15%. */
       body.touch .hv-run {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
-        gap: 6px;
+        gap: 4px;
         flex: none;
       }
       body.touch .hv-run .hv-btn {
-        min-height: 44px;
-        padding: 8px 6px;
+        min-height: 38px;
+        padding: 6px 5px;
         font-size: 13px;
         letter-spacing: 1px;
         text-align: center;
+      }
+      /* §15.33: dev-строки таба — подпунктирная линия вплотную (−12px на таб) */
+      body.touch .dev-row {
+        padding-bottom: 2px;
       }
       @media (orientation: landscape) and (min-width: 600px) {
         body.touch .hv-run { grid-template-columns: repeat(4, 1fr); }
@@ -2793,16 +2804,38 @@
         min-width: 36px; min-height: 30px;
       }
       /* §15.31 (ревебр owner: «как тут мне теперь сделать vulnscan,
-         portscan?»): в табе устройства на тапе док с кнопками был только на
-         ДЕКА — здесь же pane-head/floor скрыты, док пристыкован к контенту
-         (buildRunDock(dev)): цели = устройство таба, sticky по низу скролла
-         контента, фон плотный чтобы инфо-строки не просвечивали. */
-      body.touch .pane-run {
+         portscan?»): на тапе док с кнопками пристыкован к табам устройств
+         (buildRunDock(dev)): цели = устройство таба. §15.33: sticky-футер
+         содержит и пилюлю «⌄ ПРОКРУТИТЬ» над доком — один блок, отвязка от
+         высоты дока (2 ряда landscape vs 4 portrait); плотный фон, чтобы
+         инфо-строки не просвечивали; пилюля мигает пока скролл возможен. */
+      body.touch .pane-foot {
         position: sticky;
         bottom: 0;
         background: rgba(2, 16, 9, 0.96);
         padding-top: 4px;
         z-index: 2;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      body.touch .pane-cue {
+        align-self: center;
+        font: inherit;
+        font-size: 10px;
+        letter-spacing: 2px;
+        color: #ffd237;
+        background: rgba(255, 210, 55, 0.08);
+        border: 1px solid rgba(255, 210, 55, 0.5);
+        border-radius: 12px;
+        padding: 4px 14px;
+        cursor: pointer;
+        animation: cueBlink 1.6s ease-in-out infinite;
+      }
+      body.touch .pane-cue.cue-hidden { display: none; }
+      @keyframes cueBlink {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.45; }
       }
       /* §15.30 (ревебр owner: «баблы справа загораживают палитру команд»):
          job-карточки на тапе уходят из нижнего угла (там док и bubble
