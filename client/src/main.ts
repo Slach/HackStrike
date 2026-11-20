@@ -901,6 +901,43 @@ window.addEventListener('wheel', (e) => {
   camView.zoomBy((camView.currentId ?? ''), e.deltaY < 0 ? 1.15 : 1 / 1.15)
 }, { passive: false })
 
+// §15.36 (ревебр owner «в режиме камеры надо увеличивать картинку на жест
+// zoom, а не только кнопки + и −»): pinch двумя пальцами по кадру в
+// V-fullscreen — ГДД §13.7 M6 обещал этот жест, но живой он был только на
+// тачпаде (wheel+ctrlKey). Абсолютная формула как в пинче деки (hackview):
+// z = z₀·d/d₀, кламп 1..3 внутри camview; база пинча обнуляется при любом
+// <2 пальцев, в т.ч. touchcancel. Касания идут поверх canvas (touch-action:
+// none), браузерный pinch-zoom страницы глушит user-scalable=no.
+let camPinchBase = 0
+let camPinchZoom0 = 1
+const camPinchDist = (t: TouchList): number =>
+  Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+window.addEventListener(
+  'touchstart',
+  (e) => {
+    if (camView.active && e.touches.length === 2) {
+      const d = camPinchDist(e.touches)
+      camPinchBase = d > 16 ? d : 0 // слишком близко — стартовый мусор, не пинчуем
+      camPinchZoom0 = camView.zoomOf(camView.currentId ?? '')
+    } else camPinchBase = 0
+  },
+  { passive: true },
+)
+window.addEventListener(
+  'touchmove',
+  (e) => {
+    if (!camView.active || camPinchBase === 0 || e.touches.length !== 2) return
+    e.preventDefault()
+    camView.zoomSet(camView.currentId ?? '', (camPinchZoom0 * camPinchDist(e.touches)) / camPinchBase)
+  },
+  { passive: false },
+)
+const camPinchEnd = (e: TouchEvent): void => {
+  if (e.touches.length < 2) camPinchBase = 0
+}
+window.addEventListener('touchend', camPinchEnd, { passive: true })
+window.addEventListener('touchcancel', camPinchEnd, { passive: true })
+
 // §13.7 REC: какие камеры Я сейчас смотрю (V-fullscreen + панели деки) —
 // heartbeat на сервер (LED пульсирует у всех клиентов через snap.props rec).
 const camWatching = new Set<string>()
@@ -949,7 +986,7 @@ function syncCamOverlay(): void {
     const hint = document.createElement('div')
     hint.className = 'camhud-hint'
     hint.textContent = IS_TOUCH
-      ? 'МЫШЬ/КРУГ — ПОВОРОТ · × — ВЫЙТИ'
+      ? 'ПИНЧ — ЗУМ · КРУГ — ПОВОРОТ · СТИК — ВЫЙТИ' // §15.36
       : 'МЫШЬ — ПОВОРОТ · ←→ — КАМЕРА · ESC — ВЫЙТИ'
     const x = document.createElement('button')
     x.className = 'camhud-x'
@@ -993,7 +1030,9 @@ function syncCamOverlay(): void {
 // ←/→ — цикл по камерам. Без V — false, look обычным путём.
 controls.lookOverride = (dx, dy) => {
   if (!camView.active) return false
-  camView.rotate(dx, dy)
+  // §15.36: два пальца в пинче — дельта не в поворот (иначе второй палец
+  // на круге прицела крутил бы камеру во время зума)
+  if (camPinchBase === 0) camView.rotate(dx, dy)
   return true
 }
 window.addEventListener('keydown', (e) => {
@@ -1207,8 +1246,18 @@ void fetchMap((attempt) => hud.setMapStatus(`КАРТА НЕДОСТУПНА (П
 // таймеру — fallback keepalive; серверный кламп 60/с (§15.4) не страдает:
 // флешей не больше одного на изменение.
 let lastInputSentAt = 0
+/** §15.36 (ревебр owner «ходить по уровню и при этом смотреть из камеры —
+ *  шиза»): любое ДВИЖЕНИЕ мгновенно выбрасывает из V-вида в meatview.
+ *  Центральный чокпойнт — этот флош: сюда приходят и WASD-keydown, и смена
+ *  сектора стика (§15.13), поэтому правило симметрично десктопу и тачу.
+ *  Rising-edge: клавиши, удержанные ДО открытия вида (открыл КАМЕРЫ на ходу)
+ *  не выбрасывают — выброс на следующем нажатии после нейтрали. */
+let camMoveWas = false
 function sendInputNow(): void {
   if (!playing || hackview.active) return
+  const mv = controls.keys.w + controls.keys.a + controls.keys.s + controls.keys.d > 0
+  if (camView.active && mv && !camMoveWas) camView.close()
+  camMoveWas = mv
   lastInputSentAt = performance.now()
   // Touch ДЕЙСТВИЕ — edge как у Space: 1 в ближайший тик (сервер видит rising
   // edge interact); controls.keys.interact при этом остаётся 0 (§15.1).
