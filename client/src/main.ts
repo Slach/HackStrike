@@ -757,10 +757,18 @@ const hackview = new HackView({
     hackviewOff(true)
   },
   // §13.7: живой кадр камеры в табе деки — рендерим camCam и блитим в canvas
-  // панели (рендер-канвас с preserveDrawingBuffer, §15.5).
+  // панели (рендер-канвас с preserveDrawingBuffer, §15.5). pose — поза точки
+  // рендера для проекции тегов целей; openFullscreen — тап по кадру на touch:
+  // джек-аут + meatview-вид этой камеры крупно.
   camLive: {
     attach: (cv, camId) => camView.attachPanel(cv, camId),
     detach: () => camView.detachPanel(),
+    pose: () => camView.pose(),
+    openFullscreen: (camId) => {
+      sock.sendJackout()
+      hackviewOff(true)
+      camView.openFor(camId)
+    },
   },
 })
 

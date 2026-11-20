@@ -1492,17 +1492,66 @@
         font-size: 15px;
         padding: 12px;
       }
-      /* рапорт камеры (M3 §13.7, плейтест M3): карточка-кадр — шапка + профили
-         целей; пустой кадр — стейт «СЕКТОР ЧИСТ» с последним контактом */
+      /* кадр-герой (§13.7, ревебр владельца 2026-11-20): живой 16:9 canvas —
+         главный элемент таба, статус — полосой на верхней грани, цели — тегами
+         поверх; лента-профили — подпись снизу; пустой кадр — «СЕКТОР ЧИСТ» */
       .cam-ui {
         display: flex;
         flex-direction: column;
         gap: 10px;
-        flex: 1;
-        justify-content: center;
-        max-width: 420px;
-        margin: 0 auto;
         width: 100%;
+      }
+      .cam-stage {
+        position: relative;
+        width: 100%;
+        max-width: 720px;
+        margin: 0 auto;
+        border: 1px solid rgba(55, 255, 155, 0.45);
+        border-radius: 4px;
+        background: #020a05;
+        overflow: hidden;
+      }
+      .cam-hud {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        padding: 4px 10px;
+        font-size: 11px;
+        letter-spacing: 2px;
+        background: linear-gradient(rgba(2, 10, 5, 0.85), rgba(2, 10, 5, 0));
+        pointer-events: none;
+      }
+      .cam-tags {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .cam-tag {
+        position: absolute;
+        transform: translate(-50%, -120%);
+        font-size: 10px;
+        letter-spacing: 1px;
+        color: #d8ffe9;
+        border: 1px solid #fff;
+        border-radius: 3px;
+        padding: 0 5px;
+        background: rgba(2, 10, 5, 0.62);
+        white-space: nowrap;
+      }
+      .cam-scanline {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: rgba(170, 255, 210, 0.55);
+        letter-spacing: 6px;
+        font-size: 13px;
+        background: repeating-linear-gradient(0deg, rgba(55, 255, 155, 0.03) 0 2px, transparent 2px 4px);
       }
       .cam-owner {
         font-size: 11px;
@@ -1557,15 +1606,16 @@
         max-height: 240px;
         overflow-y: auto;
       }
-      /* §13.7: живой кадр камеры в табе деки — 16:9, как монитор наблюдения */
+      /* §13.7: живой кадр — 16:9 монитор наблюдения (canvas рендерит блитом) */
       .cam-live {
+        display: block;
         width: 100%;
         aspect-ratio: 16 / 9;
-        border: 1px solid rgba(55, 255, 155, 0.45);
-        border-radius: 4px;
         background: #020a05;
         image-rendering: auto;
       }
+      .cam-stage.tap { cursor: pointer; }
+      .cam-owner-chip { color: rgba(170, 255, 210, 0.75); }
       .cam-row {
         display: grid;
         grid-template-columns: minmax(90px, 1fr) auto auto auto 1.2em;
@@ -2585,6 +2635,15 @@
         letter-spacing: 1px;
       }
       .tc-cam:active { background: rgba(120, 230, 255, 0.25); }
+      /* §13.7 mobile (ревебр): кадр-герой sticky к верху pane-body — картинка
+         не уезжает при скролле/watch-аккордеонах, тап по кадру = fullscreen */
+      body.touch .cam-stage {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        margin: 0;
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+      }
       /* §13.7 живой вид камер в meatview: рамка-подпись поверх сцены */
       .camhud {
         position: fixed;

@@ -6,6 +6,7 @@
 import { FreeCamera } from '@babylonjs/core/Cameras/freeCamera'
 import { Vector3 } from '@babylonjs/core/Maths/math.vector'
 import type { Scene } from '@babylonjs/core/scene'
+import { CAM_PROP_LAYER } from './props'
 
 export interface CamInfo {
   id: string
@@ -17,8 +18,12 @@ export interface CamInfo {
   owner: number | null
 }
 
-/** Высота глаз камеры-наблюдателя: чуть ниже корпуса — вид «из объектива». */
-const CAM_EYE = 0
+/** Точка рендера — не в креплении, а вынесена вдоль взгляда (плейтест
+ *  2026-11-20 «картинка с камеры — красное полотно и зелёный купол»: из
+ *  точки крепления объектив упирался в стену и собственный корпус). 0.9 м —
+ *  за габарит корпуса (0.42 м) с запасом; +0.12 вверх — над корпусом. */
+const CAM_OFFSET = 0.9
+const CAM_LIFT = 0.12
 
 export class CamView {
   readonly camera: FreeCamera
@@ -34,10 +39,14 @@ export class CamView {
 
   constructor(scene: Scene) {
     this.camera = new FreeCamera('camview', new Vector3(0, 2, 0), scene)
-    this.camera.minZ = 0.05
+    // minZ за габарит корпуса: ближняя геометрия не «в лицо» (стена после
+    // выноса всё ещё в 0.1 м — был бы занавес, плейтест 2026-11-20)
+    this.camera.minZ = 0.2
     this.camera.maxZ = 400
     this.camera.fov = 1.0 // уже, чем у игрока: камера — «телевик» наблюдения
     this.camera.rotation.set(0, 0, 0)
+    // кулинг собственного корпуса: слой CAM_PROP вырезан из вида
+    this.camera.layerMask = 0x0fffffff & ~CAM_PROP_LAYER
   }
 
   /** Текущая камера (для подписи оверлея) или null. */
@@ -124,9 +133,48 @@ export class CamView {
   apply(): void {
     const c = this.current()
     if (c === null) return
-    this.camera.position.set(c.x, c.y + CAM_EYE, c.z)
+    // Вынос точки рендера вдоль взгляда (см. CAM_OFFSET): из самого крепления
+    // кадр — стена/корпус, плейтест 2026-11-20.
+    const fx = Math.sin(c.yaw)
+    const fz = Math.cos(c.yaw)
+    this.camera.position.set(c.x + fx * CAM_OFFSET, c.y + CAM_LIFT, c.z + fz * CAM_OFFSET)
     // Babylon rotation.x — вниз-положительный; pitch карты — вверх-положительный.
     this.camera.rotation.set(-c.pitch, c.yaw, 0)
+  }
+
+  /** Поза точки рендера — та же, что ставит apply(): нужна hackview для
+   *  проекции меток целей на кадр (тег рисуем поверх canvas, §13.7). id —
+   *  какой именно камеры поза (в таб идёт только она, сверяться с ref.dev). */
+  pose(): { id: string; x: number; y: number; z: number; yaw: number; pitch: number; fov: number } | null {
+    const c = this.current()
+    if (c === null) return null
+    const fx = Math.sin(c.yaw)
+    const fz = Math.cos(c.yaw)
+    return {
+      id: c.id,
+      x: c.x + fx * CAM_OFFSET,
+      y: c.y + CAM_LIFT,
+      z: c.z + fz * CAM_OFFSET,
+      yaw: c.yaw,
+      pitch: c.pitch,
+      fov: this.camera.fov,
+    }
+  }
+
+  /** Тап по живому кадру в деке → meatview-подмена этим кадром (mobile). */
+  openFullscreen(): void {
+    if (this.list.length === 0) return
+    this.active = true
+    this.apply()
+    this.onChange?.()
+  }
+
+  /** Открыть fullscreen-вид КОНКРЕТНОЙ камеры (тап по кадру таба деки). */
+  openFor(camId: string): void {
+    const i = this.list.findIndex((c) => c.id === camId)
+    if (i < 0) return
+    this.idx = i
+    this.openFullscreen()
   }
 
   /** Какая камера рендерится сейчас — id или null. */

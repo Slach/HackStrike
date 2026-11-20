@@ -42,8 +42,15 @@ export interface HackViewDeps {
    *  физически недоступен, кнопка ВЫХОД в шапке дека — его touch-эквивалент. */
   jackout: () => void
   /** §13.7 живой вид камеры: таб камеры показывает реальный кадр. attach —
-   *  рендерить камеру camId в canvas панели; detach — панель закрыта. */
-  camLive?: { attach: (canvas: HTMLCanvasElement, camId: string) => void; detach: () => void }
+   *  рендерить камеру camId в canvas панели; detach — панель закрыта; pose —
+   *  точка рендера для проекции тегов целей; openFullscreen — тап по кадру на
+   *  touch (джек-аут + meatview крупно, ГДД §13.7 mobile). */
+  camLive?: {
+    attach: (canvas: HTMLCanvasElement, camId: string) => void
+    detach: () => void
+    pose: () => { id: string; x: number; y: number; z: number; yaw: number; pitch: number; fov: number } | null
+    openFullscreen: (camId: string) => void
+  }
 }
 
 const DENIED_TEXT: Readonly<Record<string, string>> = {
@@ -422,7 +429,19 @@ export class HackView {
   /** Табы управляемых устройств (двери + газ/вода клапаны): точечное обновление
    *  статуса/кнопки без перестройки DOM. kind нужен для подписи статуса. */
   private doorRefs: { dev: string; kind: 'door' | 'gas' | 'valve'; status: HTMLElement; btn: HTMLButtonElement }[] = []
-  private camRefs: { dev: string; list: HTMLElement; time: HTMLElement; count: HTMLElement }[] = []
+  /** §13.7 (ревебр): стадия кадра — canvas + полоса статуса + слой тегов
+   *  целей + плашка «СЕКТОР ЧИСТ»; теги проектируются в updateCamFeeds по
+   *  позе camLive (pose) — hackview не знает про Babylon. */
+  private camRefs: {
+    dev: string
+    list: HTMLElement
+    time: HTMLElement
+    count: HTMLElement
+    stage: HTMLElement
+    live: HTMLCanvasElement
+    tags: HTMLElement
+    empty: HTMLElement
+  }[] = []
   /** §13.7: canvas живого кадра в табе камеры (одна панель за раз). */
   private camLiveCanvas: HTMLCanvasElement | null = null
   private radarRefs: { dev: string; list: HTMLElement; count: HTMLElement }[] = []
@@ -2903,41 +2922,54 @@ export class HackView {
       return
     }
     if (d.kind === 'camera') {
-      // §13.7: сенсор — «картинка в UI» теперь ЖИВОЙ КАДР (ревебр владельца
-      // 2026-11-20: «в hackview тоже должна быть картинка с камеры, а не
-      // тупо журнал»). Лента-«рапорт» остаётся подпись под кадром: шапка
-      // (id/статус/T+/цели) + строки-профили; пустой кадр — «СЕКТОР ЧИСТ».
+      // §13.7 (ревебр владельца 2026-11-20): кадр-герой. Живой 16:9 canvas —
+      // главный элемент таба: полоса статуса (id/захвачена/T+/цели) лежит НА
+      // верхней грани кадра, цели — ТЕГАМИ поверх кадра (проекция по позе
+      // camCam), лента-профили — подпись снизу, watch-секции — аккордеонами.
+      // На touch стадия sticky к верху pane-body — кадр не уезжает при
+      // скролле, тап по нему = meatview крупно (openFullscreen).
       const wrap = el('div', 'cam-ui')
-      const camOwn = el('div', 'cam-owner')
-      camOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner), ' · РАДИУС 12 М + LOS')
-      wrap.append(camOwn)
       if (d.owner === this.myId) {
-        // Живой кадр: canvas 16:9, рендер camCam и блит из рендер-канваса
-        // (deps.camLive из main — hackview не знает про Babylon).
+        const stage = el('div', 'cam-stage')
+        const live = document.createElement('canvas')
+        live.className = 'cam-live'
+        live.width = 640
+        live.height = 360
+        const bar = el('div', 'cam-hud')
+        const tags = el('div', 'cam-tags')
+        const empty = txt('div', 'cam-scanline', 'СЕКТОР ЧИСТ')
+        stage.append(live, bar, tags, empty)
+        wrap.append(stage)
+        let time: HTMLElement
+        let count: HTMLElement
+        bar.append(
+          txt('span', 'cam-report-id', dev.toUpperCase()),
+          txt('span', 'cam-report-status', 'ЗАХВАЧЕНА'),
+        )
+        const owner = el('span', 'cam-owner-chip')
+        owner.append('ВЛАД: ', this.ownerSpan(d.owner))
+        bar.append(owner)
+        time = txt('span', 'cam-report-time', 'T+00:00')
+        count = txt('span', 'cam-report-count', 'ЦЕЛЕЙ: 0')
+        bar.append(time, count)
         if (this.deps.camLive !== undefined) {
-          const live = document.createElement('canvas')
-          live.className = 'cam-live'
-          live.width = 320
-          live.height = 180
-          wrap.append(live)
           this.deps.camLive.attach(live, dev)
           this.camLiveCanvas = live
         }
+        if (IS_TOUCH) {
+          // тап по кадру — джек-аут + тот же вид fullscreen из meatview (§13.7)
+          stage.classList.add('tap')
+          stage.addEventListener('click', () => this.deps.camLive?.openFullscreen(dev))
+        }
         const report = el('div', 'cam-report')
-        const head = el('div', 'cam-report-head')
-        const id = txt('span', 'cam-report-id', dev.toUpperCase())
-        head.append(id)
-        head.append(txt('span', 'cam-report-status', 'ЗАХВАЧЕНА'))
-        const time = txt('span', 'cam-report-time', 'T+00:00')
-        head.append(time)
-        const count = txt('span', 'cam-report-count', 'ЦЕЛЕЙ: 0')
-        head.append(count)
-        report.append(head)
         const list = el('div', 'cam-feed')
         report.append(list)
         wrap.append(report)
-        this.camRefs.push({ dev, list, time, count })
+        this.camRefs.push({ dev, list, time, count, stage, live, tags, empty })
       } else {
+        const camOwn = el('div', 'cam-owner')
+        camOwn.append('ВЛАДЕЛЕЦ: ', this.ownerSpan(d.owner), ' · РАДИУС 12 М + LOS')
+        wrap.append(camOwn)
         wrap.append(txt('div', 'hv-dim', 'НУЖЕН TROJAN: НА ДЕКЕ [2] VULNSCAN → [3] TROJAN'))
       }
       body.append(wrap)
@@ -3315,6 +3347,8 @@ export class HackView {
       }
       ref.count.textContent = `ЦЕЛЕЙ: ${seen?.length ?? 0}`
       ref.list.replaceChildren()
+      ref.tags.replaceChildren()
+      ref.empty.classList.toggle('hidden', (seen?.length ?? 0) > 0)
       if (seen === undefined) {
         ref.list.append(txt('div', 'cam-empty', 'ОЖИДАНИЕ КАДРА…'))
         continue
@@ -3329,6 +3363,7 @@ export class HackView {
         ref.list.append(txt('div', 'cam-empty-sub', `КАДР 2 Гц · ${lastText}`))
         continue
       }
+      this.renderCamTags(ref, seen)
       const prev = this.camPrevFrame.get(ref.dev)
       for (const s of seen) {
         ref.list.append(this.buildCamRow(s, cam, prev?.get(s.id)))
@@ -3339,6 +3374,42 @@ export class HackView {
       const m = new Map<number, CamSeen>()
       for (const s of seen) m.set(s.id, s)
       this.camPrevFrame.set(dev, m)
+    }
+  }
+
+  /** Теги целей поверх живого кадра (§13.7 ревебр «кадр-герой»): мировые
+   *  точки CamSeen проектируются в пиксели canvas по позе camLive.pose() —
+   *  та же точка рендера, что ставит camview.apply(), поэтому тег сидит на
+   *  фигуре. Вне кадра/позы другой камеры — тег не рисуем (лента внизу всё
+   *  равно полная). */
+  private renderCamTags(ref: HackView['camRefs'][number], seen: readonly CamSeen[]): void {
+    const pose = this.deps.camLive?.pose()
+    if (pose === null || pose === undefined || pose.id !== ref.dev) return
+    const cy = Math.cos(pose.yaw)
+    const sy = Math.sin(pose.yaw)
+    for (const s of seen) {
+      // центр корпуса игрока = ноги + 0.9 м (та же точка, что в строке-профиле)
+      const dx = s.x - pose.x
+      const dy = s.y + 0.9 - pose.y
+      const dz = s.z - pose.z
+      // в пространство камеры: fwd = (sin yaw·cos pitch, sin pitch, cos yaw·cos pitch)
+      const cp = Math.cos(pose.pitch)
+      const sp = Math.sin(pose.pitch)
+      const f = dx * sy * cp + dy * sp + dz * cy * cp
+      if (f < 0.3) continue // за спиной объектива
+      const right = dx * cy - dz * sy
+      const up = -dx * sy * sp + dy * cp - dz * cy * sp
+      const tanH = Math.tan(pose.fov / 2)
+      const aspect = ref.live.width / ref.live.height
+      const u = 0.5 + right / (f * tanH * aspect)
+      const v = 0.5 - up / (f * tanH)
+      if (u < -0.06 || u > 1.06 || v < -0.1 || v > 1.1) continue
+      const tag = el('div', 'cam-tag')
+      tag.style.left = `${Math.min(98, Math.max(2, u * 100))}%`
+      tag.style.top = `${Math.min(92, Math.max(4, v * 100))}%`
+      tag.style.borderColor = s.team === 1 ? '#ff4d5e' : '#ffffff'
+      tag.textContent = `${s.name} · ${Math.hypot(dx, dy, dz).toFixed(0)}М`
+      ref.tags.append(tag)
     }
   }
 

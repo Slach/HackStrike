@@ -126,6 +126,12 @@ interface CableView {
   meshes: Mesh[]
 }
 
+/** Слой мешов корпуса камеры: игрок видит (дефолтная маска FreeCamera
+ *  0x0FFFFFFF покрывает все слои), живой вид camCam — нет (layerMaskcamView
+ *  без этого бита). Без куллинга объектив смотрел на собственную линзу и
+ *  стену крепления — «зелёный купол на красном полотне» (плейтест 2026-11-20). */
+export const CAM_PROP_LAYER = 1 << 20
+
 /** Камера (M3 §13.7): сенсор наблюдения. LED-индикатор владения перекрашивается
  *  из snap.props.owner — нейтральная/своя/чужая видна издалека. */
 interface CameraView {
@@ -615,7 +621,10 @@ export class PropsView {
     this.doors.set(id, { id, pivot, x: pos[0], z: pos[2], axis, len: w, h, baseY: pos[1], open: false, angle: 0 })
   }
 
-  /** Камера наблюдения (§13.7): кронштейн + корпус + линза + LED владения. */
+  /** Камера наблюдения (§13.7): кронштейн + корпус + линза + LED владения.
+   *  Мешы корпуса — на layer CAM_PROP: игрок видит камеру, а её собственный
+   *  живой вид — нет (без куллинга объектив смотрел на свою линзу/стену —
+   *  «зелёный купол на красном полотне», плейтест 2026-11-20). */
   private buildCamera(id: string, pos: readonly [number, number, number], yaw = 0, pitch = 0): void {
     const body = MeshBuilder.CreateBox(`prop.${id}`, { width: 0.34, height: 0.24, depth: 0.42 }, this.scene)
     body.position.set(pos[0], pos[1], pos[2])
@@ -635,6 +644,9 @@ export class PropsView {
     ledMesh.position.set(pos[0], pos[1] + 0.16, pos[2])
     ledMesh.material = led
     ledMesh.isPickable = false
+    body.layerMask = CAM_PROP_LAYER
+    lens.layerMask = CAM_PROP_LAYER
+    ledMesh.layerMask = CAM_PROP_LAYER
     const cam: CameraView = { id, x: pos[0], z: pos[2], fy: pos[1], led, owner: null, yaw, pitch }
     this.cameras.set(id, cam)
     this.tintCamera(cam)
