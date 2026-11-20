@@ -2567,7 +2567,14 @@
          (она съедала до 90% экрана) — два уровня кнопок. Кандидаты — button:
          сбрасываем браузерную рамку/фон, держим тап-таргет ≥40px. */
       body.touch .hv-pal-list { gap: 6px; max-height: 56vh; }
-      body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 66px); }
+      /* §15.29 (ревебр owner: bubble действий «накладывается» на док): дерево
+         поднято ПОВЕРХ дока — ландшафт: 2 ряда плиток (~92px) + паддинги,
+         портрет: 4 ряда (~194px) + паддинги. Список скроллится,顶部 не за
+         экран: 56vh от новой нижней базы. */
+      body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 212px); }
+      @media (orientation: landscape) and (min-width: 600px) {
+        body.touch .hv-palette:not(:has(.hv-pal-input)) { bottom: calc(env(safe-area-inset-bottom) + 108px); }
+      }
       body.touch button.hv-pal-cand {
         width: 100%;
         font: inherit;
@@ -2652,9 +2659,25 @@
          компакт §15.6 (padding 5px/font 10px → ~24px) отменён как нарушавший
          touch-minimum. */
       body.touch .hv-btn-slash { order: -1; }
-      body.touch .pane-body { flex-direction: column; padding: 8px; gap: 8px; }
-      body.touch .deck-right { flex: 1 1 auto; min-height: 140px; }
+      /* §15.29 (ревебр owner: «карта едва различима, сократим отступы»):
+         каждый пиксель вертикали на счету — паддинги деки ужатые, строка
+         подсказки жестов ушла ПОВЕРХ карты (абсолют, с градиентной подложкой)
+         вместо отдельной строки; карта ниже min 96px (было 140 — flex всё
+         равно вытягивает по остатку, floor нужен только против схлопка). */
+      body.touch #hackview { padding: calc(env(safe-area-inset-top, 0px) + 6px) 10px 4px; }
+      body.touch #hackview .hv-main { gap: 6px; }
+      body.touch .hv-head { padding-bottom: 4px; }
+      body.touch .pane-body { flex-direction: column; padding: 6px; gap: 6px; }
+      body.touch .deck-right { position: relative; flex: 1 1 auto; min-height: 96px; }
       body.touch .hv-netmap { flex: 1; min-height: 0; }
+      body.touch .netmap-hint {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 2px;
+        pointer-events: none;
+        background: linear-gradient(rgba(1, 10, 5, 0) 0%, rgba(1, 10, 5, 0.8) 70%);
+      }
       /* строка статуса: MEM + процессы — одна компактная полоса */
       body.touch .deck-status {
         display: flex;
@@ -2693,9 +2716,13 @@
       @media (orientation: landscape) and (min-width: 600px) {
         body.touch .hv-run { grid-template-columns: repeat(4, 1fr); }
         body.touch .hv-run .hv-btn { font-size: 14px; }
+        /* §15.29: landscape-док тоньше — табы-чипы 36px (44 в портрете),
+           ряд кнопок 2×44+6 (gap 4), deck-wrap gap 4: ~14 px карте */
+        body.touch .hv-chip { min-height: 36px; padding: 7px 12px; }
+        body.touch .hv-run { gap: 4px; }
         /* ландшафт: статус — в правый угол строки спарков, карта получает
            освобождённую полосу (док на 36px ниже = карта крупнее) */
-        body.touch .deck-wrap { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto; gap: 6px; }
+        body.touch .deck-wrap { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto; gap: 4px; }
         body.touch .deck-wrap > .hv-sparks { grid-area: 1 / 1; }
         body.touch .deck-wrap > .deck-status { grid-area: 1 / 2; max-width: 46%; }
         body.touch .deck-wrap > .deck-right { grid-area: 2 / 1 / 3 / 3; }

@@ -252,6 +252,10 @@ export class HackView {
    *  между узлами, было 340×250). Зум/пан считаются от него. */
   private static readonly NETMAP_W = 480
   private static readonly NETMAP_H = 360
+  /** §15.29: ландшафт тача — широкая низкая карта (band'ы этажей рядом по
+   *  горизонтали вместо двух горизонтальных полос, сжимающих узлы в кашу). */
+  private static readonly NETMAP_W_LAND = 780
+  private static readonly NETMAP_H_LAND = 180
   /** Карта на тапе (§15.7): базовый зум > 1 — на 390px-высоте телефона
    *  фиксированная геометрия viewBox (узлы r=7, подписи 8px) давала ~5 css
    *  px; отталкиваемся от 1.5×, pinch по-прежнему разматывает до 0.6 (вся
@@ -405,6 +409,15 @@ export class HackView {
     this.toasts = el('div', 'hv-toasts')
     this.root.append(this.main, this.toasts)
     window.addEventListener('keydown', this.onKeyDown)
+    // §15.29: раскрой карты привязан к ориентации (landscape — широкие
+    // колонки-полосы) — при повороте экрана карта перестраивается сама,
+    // без ожидания следующего скана.
+    if (IS_TOUCH) {
+      const mq = matchMedia('(orientation: landscape) and (min-width: 600px)')
+      mq.addEventListener('change', () => {
+        if (this._active) this.schedule(() => this.updateNetmaps())
+      })
+    }
   }
 
   get active(): boolean {
@@ -468,6 +481,7 @@ export class HackView {
     this.closePalette()
     this.netmapZoom = HackView.NETMAP_ZOOM0 // зум/пан карты не переживает сессию деки
     this.netmapCenter = { x: HackView.NETMAP_W / 2, y: HackView.NETMAP_H / 2 }
+    this.netmapLand = false // §15.29: следующая сессия пересинхронизирует раскрой
     // §15.26: jack-out посреди жеста — залипшие указатели/холд въелись бы в
     // следующий render() деки (гейт §15.26 увидел бы «жест идёт» вечно).
     this.netmapPointers.clear()
@@ -3215,8 +3229,10 @@ export class HackView {
     }
   }
 
-  /** Полный rebuild карт — только из render() (скан/табы/цели). */
+  /** Полный rebuild карт — из render() (скан/табы/цели) и по смене ориентации
+   *  (§15.29). Старые hi-записи отсоединённых svg сбрасываем здесь. */
   private updateNetmaps(): void {
+    this.netmapHi.clear()
     for (const box of this.netmapBoxes) {
       box.replaceChildren()
       box.append(this.buildNetmapSvg())
@@ -3282,6 +3298,9 @@ export class HackView {
     x: HackView.NETMAP_W / 2,
     y: HackView.NETMAP_H / 2,
   }
+  /** §15.29: раскрой карты прошрой сборки (landscape-полосы?) — при смене
+   *  ориентации базовые зум/центр сбрасываются, 1.5-зум 780-полосы не live. */
+  private netmapLand = false
   private pinchDist = 0
   /** §15.26: hi-слой каждой живой карты (svg → группа + позиции узлов) —
    *  deck-тик обновляет только её, не трогая каркас. */
@@ -3303,16 +3322,25 @@ export class HackView {
     }
   }
 
+  /** §15.29: базовые размеры карты читаются из dataset текущего svg — они
+   *  различаются для landscape-полос и ordinary, а зум-состояние переживает
+   *  перестройку (в т.ч. поворот экрана). */
+  private netmapSvgDims(svg: SVGElement): { w: number; h: number } {
+    return {
+      w: Number(svg.dataset.w ?? HackView.NETMAP_W),
+      h: Number(svg.dataset.h ?? HackView.NETMAP_H),
+    }
+  }
+
   private applyNetmapZoom(svg: SVGElement): void {
-    const vw = HackView.NETMAP_W / this.netmapZoom
-    const vh = HackView.NETMAP_H / this.netmapZoom
+    const { w: BW, h: BH } = this.netmapSvgDims(svg)
+    const vw = BW / this.netmapZoom
+    const vh = BH / this.netmapZoom
     // Мягкий clamp центра: видимая область не уходит за базовый прямоугольник
     // карты — пан/зум не вывозят карту в бесконечность. При zoom < 1 (обзор
     // шире базы) центр фиксируется в центре базы.
-    const cx =
-      vw >= HackView.NETMAP_W ? HackView.NETMAP_W / 2 : Math.min(HackView.NETMAP_W - vw / 2, Math.max(vw / 2, this.netmapCenter.x))
-    const cy =
-      vh >= HackView.NETMAP_H ? HackView.NETMAP_H / 2 : Math.min(HackView.NETMAP_H - vh / 2, Math.max(vh / 2, this.netmapCenter.y))
+    const cx = vw >= BW ? BW / 2 : Math.min(BW - vw / 2, Math.max(vw / 2, this.netmapCenter.x))
+    const cy = vh >= BH ? BH / 2 : Math.min(BH - vh / 2, Math.max(vh / 2, this.netmapCenter.y))
     this.netmapCenter.x = cx
     this.netmapCenter.y = cy
     svg.setAttribute('viewBox', `${cx - vw / 2} ${cy - vh / 2} ${vw} ${vh}`)
@@ -3333,8 +3361,9 @@ export class HackView {
   }
 
   private netmapResetZoom(svg: SVGElement): void {
-    this.netmapZoom = HackView.NETMAP_ZOOM0 // тап-дабл: к тач-базе, не к десктопной
-    this.netmapCenter = { x: HackView.NETMAP_W / 2, y: HackView.NETMAP_H / 2 }
+    this.netmapZoom = this.netmapBase() // тап-дабл: к базе ТЕКУЩЕЙ ориентации (§15.29)
+    const d = this.netmapSvgDims(svg)
+    this.netmapCenter = { x: d.w / 2, y: d.h / 2 }
     this.applyNetmapZoom(svg)
   }
 
@@ -3457,13 +3486,37 @@ export class HackView {
     this.applyNetmapZoom(svg)
   }
 
+  /** §15.29: landscape тача — широкая низкая карта, полосы этажей рядом по
+   *  горизонтали (на 124px-ленте две горизонтальные полосы превращали сеть в
+   *  нечитаемую кашу). Возвращает базовые W/H и признак сайд-полос. */
+  private netmapDims(): { w: number; h: number; side: boolean } {
+    const land = IS_TOUCH && matchMedia('(orientation: landscape) and (min-width: 600px)').matches
+    if (land) return { w: HackView.NETMAP_W_LAND, h: HackView.NETMAP_H_LAND, side: true }
+    return { w: HackView.NETMAP_W, h: HackView.NETMAP_H, side: false }
+  }
+
+  /** Базовый зум: landscape тача — 1 (вся широкая карта целиком), иначе §15.6. */
+  private netmapBase(): number {
+    return this.netmapDims().side ? 1 : HackView.NETMAP_ZOOM0
+  }
+
   private buildNetmapSvg(): SVGElement {
-    const W = HackView.NETMAP_W
-    const H = HackView.NETMAP_H
+    const dim = this.netmapDims()
+    const W = dim.w
+    const H = dim.h
     const PAD = 40
     const svg = svgEl('svg')
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`)
+    svg.dataset.w = String(W)
+    svg.dataset.h = String(H)
     svg.classList.add('netmap-svg')
+    // §15.29: сменилась ориентация/режим карты между перестройками (поворот
+    // экрана) — базовые зум и центр не переживают смену раскроя.
+    if (this.netmapLand !== dim.side) {
+      this.netmapLand = dim.side
+      this.netmapZoom = this.netmapBase()
+      this.netmapCenter = { x: W / 2, y: H / 2 }
+    }
     this.attachNetmapZoom(svg)
 
     const nodes = [...this.devices.values()]
@@ -3527,15 +3580,29 @@ export class HackView {
     const levels = [...new Set(nodes.map((d) => levelOf(d.y)))].sort((a, b) => a - b)
     const shelfIdx = new Map<number, number>() // levelOf → индекс снизу (0=низ)
     levels.forEach((lv, i) => shelfIdx.set(lv, i))
-    const BAND_GAP = 16
-    const bandH = (H - 20 - 28 - BAND_GAP * (levels.length - 1)) / levels.length
-    const fits = new Map<number, { k: number; ox: number; oz: number; bandTop: number }>()
+    // §15.29 side: полосы — ВЕРТИКАЛЬНЫЕ колонки рядом по ширине. Одна
+    // широкая полоса на весь canvas, когда ярус один (частичный скан).
+    const SIDE_GAP = 18
+    const BAND_GAP_V = 16
+    const bandW = dim.side ? (W - 16 - SIDE_GAP * (levels.length - 1)) / levels.length : W
+    // side: вертикальный extent колонки (bandTop=10..H-8); полосы: прежний расчёт
+    const bandH = dim.side ? H - 18 : (H - 20 - 28 - BAND_GAP_V * (levels.length - 1)) / levels.length
+    const fits = new Map<number, { k: number; ox: number; oz: number; bandTop: number; bandLeft: number }>()
     for (const lv of levels) {
       const s = shelfIdx.get(lv) ?? 0
-      const bandBottom = H - 20 - s * (bandH + BAND_GAP)
-      const bandTop = bandBottom - bandH
-      const innerTop = bandTop + 18 // строка «ЭN» сверху полосы
-      const innerBottom = bandBottom - 6
+      let bx0: number, innerTop: number, innerBottom: number, bandTop: number
+      if (dim.side) {
+        bx0 = 8 + s * (bandW + SIDE_GAP)
+        bandTop = 10
+        innerTop = 28 // строка «ЭN» сверху колонки
+        innerBottom = H - 8
+      } else {
+        const bandBottom = H - 20 - s * (bandH + BAND_GAP_V)
+        bandTop = bandBottom - bandH
+        bx0 = 0
+        innerTop = bandTop + 18 // строка «ЭN» сверху полосы
+        innerBottom = bandBottom - 6
+      }
       let lx0 = Number.POSITIVE_INFINITY
       let lx1 = Number.NEGATIVE_INFINITY
       let lz0 = Number.POSITIVE_INFINITY
@@ -3549,12 +3616,14 @@ export class HackView {
       }
       const sx = Math.max(lx1 - lx0, 1)
       const sz = Math.max(lz1 - lz0, 1)
-      const k = Math.min((W - PAD * 2 - 30) / sx, (innerBottom - innerTop) / sz)
+      const usable = dim.side ? bandW - 20 : W - PAD * 2 - 30
+      const k = Math.min(usable / sx, (innerBottom - innerTop) / sz)
       fits.set(lv, {
         k,
-        ox: PAD + 14 + (W - PAD * 2 - 30 - sx * k) / 2 - lx0 * k,
+        ox: (dim.side ? bx0 + 10 + (bandW - 20 - sx * k) / 2 : PAD + 14 + (W - PAD * 2 - 30 - sx * k) / 2) - lx0 * k,
         oz: innerTop + (innerBottom - innerTop - sz * k) / 2 - lz0 * k,
         bandTop,
+        bandLeft: bx0,
       })
     }
     const screenFor = (d: ScanDevice): { x: number; y: number } => {
@@ -3582,7 +3651,10 @@ export class HackView {
       const hf = fits.get(hostLevel)
       const bandTop = hf?.bandTop ?? 10
       const dirY = bandTop + bandH / 2 - hostPos.y >= 0 ? 1 : -1
-      const deckX = Math.max(20, Math.min(W - 20, hostPos.x - 40))
+      // §15.29 side: дека клампится в СВОЮ колонку, не в общий canvas
+      const bxL = (hf?.bandLeft ?? 0) + (dim.side ? 14 : 20)
+      const bxR = (hf?.bandLeft ?? 0) + bandW - (dim.side ? 14 : 20)
+      const deckX = Math.max(bxL, Math.min(bxR, hostPos.x - 40))
       const deckY = Math.max(
         bandTop + 10,
         Math.min(bandTop + bandH - 6, hostPos.y + dirY * (Math.abs(hostPos.x - deckX) < 12 ? 36 : 18)),
@@ -3623,11 +3695,14 @@ export class HackView {
       if (maxPush < 0.5) break
     }
     // Кламп строго внутри своей полосы: узел никогда не покидает этаж.
+    // §15.29 side: по X — внутри своей колонки, а не всего canvas.
     for (const b of bodies) {
       const p = pos.get(b.id)
       const f = fits.get(b.lv)
       if (p === undefined || f === undefined) continue
-      p.x = Math.max(14, Math.min(W - 14, p.x))
+      p.x = dim.side
+        ? Math.max(f.bandLeft + 14, Math.min(f.bandLeft + bandW - 14, p.x))
+        : Math.max(14, Math.min(W - 14, p.x))
       p.y = Math.max(f.bandTop + 10, Math.min(f.bandTop + bandH - 6, p.y))
     }
     // Добивка после клампа (M5-ревизия 1.5, плейтест: R1 перекрывалась
@@ -3667,9 +3742,10 @@ export class HackView {
       const f = fits.get(lv)
       if (f === undefined) continue
       const r = svgEl('rect')
-      r.setAttribute('x', '8')
+      // §15.29 side: подложка — своя колонка, а не вся ширина
+      r.setAttribute('x', String(dim.side ? f.bandLeft : 8))
       r.setAttribute('y', String(f.bandTop))
-      r.setAttribute('width', String(W - 16))
+      r.setAttribute('width', String(dim.side ? bandW : W - 16))
       r.setAttribute('height', String(bandH))
       r.setAttribute('rx', '8')
       r.setAttribute('fill', 'rgba(55,255,155,0.03)')
@@ -3677,7 +3753,7 @@ export class HackView {
       r.setAttribute('stroke-dasharray', '3 5')
       svg.append(r)
       const t = svgEl('text')
-      t.setAttribute('x', '18')
+      t.setAttribute('x', String(dim.side ? f.bandLeft + 10 : 18))
       t.setAttribute('y', String(f.bandTop + 12))
       t.setAttribute('fill', '#4fae8b')
       t.setAttribute('font-size', String(Math.round(9 * S)))
