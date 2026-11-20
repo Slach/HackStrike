@@ -43,6 +43,10 @@ const (
 	physafeTakeRadius      = 2.5
 
 	matchRestartDelay = 30 * time.Second // §16.6: end-оверлей поживает 30 с (плейтест «отсчет рестарта 30 секунд =)»)
+	// safeKeyRegenDelay (§16.2, решение владельца 2026-11-20): rm safe_key —
+	// задержка, не перманентный отказ extract-победы: ключ регенерируется на
+	// NETSAFE, если его нет ВЕЗДЕ (хосты/деки/трансферы) 150 с подряд.
+	safeKeyRegenDelay = 150 * time.Second
 
 	// Лифты (§16.12, итерация 8.5): спуск 2F→1F один раз за матч (кнопка
 	// только на 2F — наверх никак; использованный лифт остаётся внизу).
@@ -1371,6 +1375,7 @@ func (w *world) resetDoorKey() {
 	}
 	// §16.6: safe_key — не ротируется, но матч-специфичен (код сейфа от
 	// старта матча — не повторяется между матчами, как и код d3).
+	w.safeKeyRegenAt = time.Time{} // новый матч: сид на месте, таймер не нужен
 	if w.safeKeyHost == "" {
 		w.safeKeyHost = "netsafe"
 	}
@@ -1389,6 +1394,58 @@ func (w *world) resetDoorKey() {
 		pl.items = kept
 	}
 	log.Printf("room: door_key reset for new match -> %s, safe_key reseeded (code %s)", w.doorKeyName, w.safeCode)
+}
+
+// safeKeyTick — регенерация safe_key (§16.2, решение владельца 2026-11-20):
+// rm не должен убивать extract-победу навсегда. Таймер 150 с идёт только
+// когда ключа нет ВЕЗДЕ (хосты, деки, cp/mv в полёте — снапшот доедет).
+func (w *world) safeKeyTick() {
+	if w.safeKeyHost == "" {
+		return
+	}
+	if w.safeKeyPresent() {
+		w.safeKeyRegenAt = time.Time{}
+		return
+	}
+	now := w.now()
+	if w.safeKeyRegenAt.IsZero() {
+		w.safeKeyRegenAt = now.Add(safeKeyRegenDelay)
+		log.Printf("room: safe_key absent — regen timer %v started", safeKeyRegenDelay)
+		return
+	}
+	if now.Before(w.safeKeyRegenAt) {
+		return
+	}
+	ns := w.cyber.devices[w.safeKeyHost]
+	if ns == nil {
+		w.safeKeyRegenAt = time.Time{}
+		return
+	}
+	ns.items = append(ns.items, dataItem{Name: "safe_key", MB: 120, Enc: true})
+	w.safeKeyRegenAt = time.Time{}
+	w.resendScanFor(ns.id)
+	log.Printf("room: safe_key regenerated on %s", ns.id)
+}
+
+// safeKeyPresent — safe_key есть хотя бы в одном месте: хост, дека, или он
+// летит cp/mv (POSIX-снапшот доедет и займёт место).
+func (w *world) safeKeyPresent() bool {
+	for _, d := range w.cyber.devices {
+		if hostHasItem(d, "safe_key") {
+			return true
+		}
+	}
+	for _, pl := range w.players {
+		if deckHasItem(pl, "safe_key") {
+			return true
+		}
+		for _, p := range pl.progs {
+			if (p.prog == "cp" || p.prog == "mv") && p.data == "safe_key" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // doorKeyLeftMs — сколько осталось до следующей ротации поколения (§16.5):

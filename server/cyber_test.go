@@ -2698,6 +2698,40 @@ func TestMvDeckTransfer(t *testing.T) {
 	}
 }
 
+// TestSafeKeyRegen — §16.2 (решение владельца 2026-11-20): rm safe_key —
+// задержка, не перманентный отказ: ключа нет ВЕЗДЕ 150 с → регенерация на
+// NETSAFE (тем же кодом матча); копия в деке таймер останавливает.
+func TestSafeKeyRegen(t *testing.T) {
+	w, h, clock := decryptWorld(t)
+	w.takeOut()
+	ns := w.cyber.devices["netsafe"]
+	if ns == nil || !hostHasItem(ns, "safe_key") {
+		t.Fatalf("netsafe must hold safe_key")
+	}
+	// враг rm-нул: ключа нет нигде; 160 с > 150 с таймера
+	ns.items = nil
+	for i := 0; i < 160*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if !hostHasItem(ns, "safe_key") {
+		t.Fatalf("safe_key must regenerate after 150 s of total absence")
+	}
+	if ns.items[0].Enc != true || ns.items[0].MB != 120 {
+		t.Fatalf("regenerated safe_key must be 120 MB enc, got %+v", ns.items[0])
+	}
+	// копия в деке — таймер не стартует даже после rm на хосте
+	ns.items = nil
+	h.items = []dataItem{{Name: "safe_key", MB: 120, Enc: true}}
+	for i := 0; i < 100*30; i++ {
+		*clock = clock.Add(time.Second / 30)
+		w.simulateTick()
+	}
+	if hostHasItem(ns, "safe_key") {
+		t.Fatalf("copy in a deck must hold the regen timer (safe_key present)")
+	}
+}
+
 // TestCpRmMidFlight — POSIX-семантика rm у cp (плейтест M5, симметрично
 // decrypt): источник rm-нут mid-flight — трансфер доносит снапшот старта
 // («открытый дескриптор»), а не молча глотает результат на финише.
