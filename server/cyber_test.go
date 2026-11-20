@@ -237,17 +237,18 @@ func TestProgramFairQueues(t *testing.T) {
 	w.takeOut()
 	jackAt(w, h, "t1")
 
-	// Одна: portscan 2 с — готов за ~60 тиков.
+	// Одна: portscan 2 с × (1 + 0.25 × точка входа в scanned, §12.5) = 2.5 с —
+	// готов за ~75 тиков.
 	w.handleMessage(h, message{"t": "run", "prog": "portscan"})
-	for i := 0; i < 58; i++ {
+	for i := 0; i < 70; i++ {
 		w.simulateTick()
 	}
 	w.takeOut()
 	if len(h.progs) != 1 {
-		t.Fatalf("portscan must still run at 58 ticks")
+		t.Fatalf("portscan must still run at 70 ticks")
 	}
 	var scans int
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 8; i++ {
 		w.simulateTick()
 	}
 	for _, om := range w.takeOut() {
@@ -256,7 +257,7 @@ func TestProgramFairQueues(t *testing.T) {
 		}
 	}
 	if len(h.progs) != 0 {
-		t.Fatalf("portscan must complete by 62 ticks (2 s)")
+		t.Fatalf("portscan must complete by 78 ticks (2.5 s)")
 	}
 	if scans != 1 {
 		t.Fatalf("exactly one scan after portscan, got %d", scans)
@@ -527,8 +528,9 @@ func TestDeckStatus(t *testing.T) {
 	if !ok || len(progs) != 1 || progs[0].Prog != "portscan" || progs[0].Dev != "" {
 		t.Fatalf("deck progs: %+v", deck["progs"])
 	}
-	if eta := progs[0].EtaMs; eta < 1400 || eta > 1600 {
-		t.Fatalf("deck etaMs = %d, want ~1533 (2 с минус 14 тиков работы)", eta)
+	// 2.5 с работы (точка входа в scanned, §12.5) минус ~14 тиков ≈ 2033
+	if eta := progs[0].EtaMs; eta < 1900 || eta > 2100 {
+		t.Fatalf("deck etaMs = %d, want ~2033", eta)
 	}
 }
 
@@ -2370,13 +2372,22 @@ func TestJackinResendsScan(t *testing.T) {
 		t.Fatalf("re-jackin must resend scan with ownership: scan=%v doorOwned=%v", scanSeen, doorOwned)
 	}
 
-	// А с нуля (новый игрок, знаний нет) — scan не приходит.
+	// А с нуля (новый игрок, знаний нет) — scan приходит С ТОЧКОЙ ВХОДА
+	// (§12.5 + плейтест-баг: молчаливый jackin оставлял клиенту карту
+	// прошлой сессии).
 	foe := w.addPlayer(2, "f", "hacker", -1)
 	w.takeOut()
+	fresh := false
 	for _, om := range jackAt(w, foe, "t2") {
-		if om.msg["t"] == "scan" {
-			t.Fatalf("fresh jackin must not send scan")
+		if om.msg["t"] != "scan" || om.to != foe.id {
+			continue
 		}
+		if devs, ok := om.msg["devices"].([]scanDevice); ok && len(devs) == 1 && devs[0].ID == "t2" {
+			fresh = true
+		}
+	}
+	if !fresh {
+		t.Fatalf("fresh jackin must send a scan with just the entry point")
 	}
 }
 
@@ -3127,6 +3138,33 @@ func TestDecryptSrvJob(t *testing.T) {
 // TestDecryptRmMidJob — POSIX-семантика rm (плейтест M5: «rm при летящем
 // decrypt — данные не появились»): джоба держит «открытый дескриптор» —
 // unlink не прерывает процесс, КОД доносится команде, хоть item'а уже нет.
+// TestJackinAlwaysSendsScan — плейтест-баг 2026-11-20: jackin при
+// scanned==nil (новый матч / реконнект) молчал — клиентский hackview
+// доживал со картой прошлой сессии до первого portscan («denied too_far,
+// а на карте srv1 есть»). §12.5: точка входа известна всегда → scan
+// обязан уйти при ЛЮБОМ jackin.
+func TestJackinAlwaysSendsScan(t *testing.T) {
+	w, h, _ := decryptWorld(t)
+	w.takeOut()
+	t1 := w.cyber.devices["t1"]
+	h.scanned = nil
+	w.jackin(h, t1)
+	got := false
+	for _, om := range w.takeOut() {
+		if om.to == h.id && om.msg["t"] == "scan" {
+			if devs, ok := om.msg["devices"].([]scanDevice); ok && len(devs) == 1 && devs[0].ID == "t1" {
+				got = true
+			}
+		}
+	}
+	if !got {
+		t.Fatalf("jackin with nil scanned must still send a scan with the entry point")
+	}
+	if len(h.scanned) != 1 || !h.scanned["t1"] {
+		t.Fatalf("entry point must become the seed of scanned, got %v", h.scanned)
+	}
+}
+
 func TestDecryptRmMidJob(t *testing.T) {
 	w, h, clock := decryptWorld(t)
 	srv := w.cyber.devices["srv1"]
@@ -3645,18 +3683,18 @@ func TestMatchResetCyberState(t *testing.T) {
 	if len(srv.jobs) != 0 {
 		t.Fatalf("new match must kill leftover SRV jobs")
 	}
-	if h.scanned != nil && len(h.scanned) != 0 {
-		t.Fatalf("new match must clear scanned fog of war, got %v", h.scanned)
+	if len(h.scanned) != 1 || !h.scanned[h.jackHost.id] {
+		t.Fatalf("new match must reset scanned to the entry point only (§12.5), got %v", h.scanned)
 	}
-	empty := true
+	devs := 0
 	for _, om := range w.takeOut() {
 		if om.to == h.id && om.msg["t"] == "scan" {
-			if devs, ok := om.msg["devices"].([]scanDevice); ok && len(devs) > 0 {
-				empty = false
+			if d, ok := om.msg["devices"].([]scanDevice); ok {
+				devs = len(d)
 			}
 		}
 	}
-	if !empty {
-		t.Fatalf("jacked player must receive an empty scan after reset")
+	if devs != 1 {
+		t.Fatalf("jacked player must receive a scan with just the entry point, got %d devices", devs)
 	}
 }

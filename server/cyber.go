@@ -941,15 +941,21 @@ func (w *world) jackin(pl *player, dev *device) {
 	// устройств (плейтест M3). Знания обрезаем по достижимости от новой
 	// точки входа ( с учётом firewall-сегментации, §13.5) — scan остаётся
 	// живым видом сети, а не архивом.
-	if pl.scanned != nil {
+	if pl.scanned == nil {
+		// §12.5 «точка входа известна всегда»: пустых знаний не бывает —
+		// jackin инициализирует карту точкой входа. Плейтест-баг: при
+		// scanned==nil (новый матч/реконнект) scan НЕ отправлялся и клиент
+		// доживал со картой прошлой сессии до первого portscan.
+		pl.scanned = map[string]bool{dev.id: true}
+	} else {
 		reach := w.reachableFor(dev.id, pl)
 		for id := range pl.scanned {
 			if !reach[id] {
 				delete(pl.scanned, id)
 			}
 		}
-		w.sendScan(pl)
 	}
+	w.sendScan(pl)
 	w.fireWatchers(dev, pl, "jackin", "")
 }
 
@@ -1402,7 +1408,10 @@ func (w *world) resetCyberMatchState() {
 	for _, pl := range w.players {
 		pl.scanned = nil
 		if pl.jacked && pl.jackHost != nil {
-			w.sendScan(pl) // деке — пустой срез: старая карта уходит с экрана
+			// точка входа известна всегда (§12.5): карта нового матча для
+			// джекнутого = одна точка входа, не пустой срез
+			pl.scanned = map[string]bool{pl.jackHost.id: true}
+			w.sendScan(pl) // старая карта уходит с экрана сразу
 		}
 	}
 	log.Printf("room: cyber state reset for new match")
