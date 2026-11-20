@@ -1881,21 +1881,29 @@ export class HackView {
 
   /** Кандидаты-ключи (§16.2): свои источники; если один ключ лежит на
    *  нескольких хостах — токен name@host (уточнение источника). */
+  /** Имя item'а для вставки в строку: при дубликатах имени на разных хостах —
+   *  с суффиксом @host (однозначный выбор, решение владельца 2026-11-20:
+   *  «ENTER на 06_19 — не подставилось?» → выбор обязан быть однозначным).
+   *  runDataCmd/reverse-форма разбирают key@host так же. */
+  private itemText(name: string, host: string): string {
+    let n = 0
+    for (const s of this.dataSources()) for (const it of s.items) if (it.n === name) n++
+    return n > 1 ? `${name}@${host}` : name
+  }
+
   private dataKeyCands(q: string, host: string | null): PalCand[] {
     const out: PalCand[] = []
     const seen = new Set<string>()
     const srcs = host !== null ? [{ host, items: this.dataHostItems(host) }] : this.dataSources()
-    const names = new Map<string, number>()
-    for (const s of this.dataSources()) for (const it of s.items) names.set(it.n, (names.get(it.n) ?? 0) + 1)
     for (const s of srcs) {
       for (const it of s.items) {
-        const full = `${it.n}@${s.host}`
-        if (seen.has(full)) continue
-        if (q !== '' && !it.n.toLowerCase().startsWith(q) && !full.toLowerCase().startsWith(q)) continue
-        seen.add(full)
+        const text = this.itemText(it.n, s.host)
+        if (seen.has(text)) continue
+        if (q !== '' && !it.n.toLowerCase().startsWith(q) && !text.toLowerCase().startsWith(q)) continue
+        seen.add(text)
         out.push({
           kind: 'item',
-          text: (names.get(it.n) ?? 0) > 1 ? full : it.n,
+          text,
           dev: s.host,
           data: it.n,
           label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
@@ -2069,7 +2077,7 @@ export class HackView {
         for (const it of revItems) {
           cands.push({
             kind: 'item',
-            text: it.n,
+            text: this.itemText(it.n, activeHost),
             dev: activeHost,
             data: it.n,
             label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
@@ -2106,7 +2114,7 @@ export class HackView {
         for (const it of revItems) {
           cands.push({
             kind: 'item',
-            text: it.n,
+            text: this.itemText(it.n, activeHost),
             dev: activeHost,
             data: it.n,
             label: `${it.n.toUpperCase()} ${it.mb}МБ${it.enc ? ' 🔒' : ''}`,
@@ -2347,8 +2355,14 @@ export class HackView {
     // reverse-форма (§16.2/§16.4): item активного таба + cp/rm/decrypt.
     // Гвард — точное имя item, иначе «cam1 cp» даст тост про данные до тоста
     // про программу.
-    if ((t1 === 'cp' || t1 === 'mv' || t1 === 'rm' || t1 === 'decrypt') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === (finalTokens[0] ?? '').toLowerCase())) {
-      const src = this.resolveDataSrc((finalTokens[0] ?? '').toLowerCase(), null)
+    // reverse-форма (§16.2/§16.4): item активного таба + cp/rm/decrypt.
+    // Ключ может быть с суффиксом @host (однозначный выбор дубликата).
+    const revKeyTok = (finalTokens[0] ?? '').toLowerCase()
+    const revAt = revKeyTok.indexOf('@')
+    const revName = revAt >= 0 ? revKeyTok.slice(0, revAt) : revKeyTok
+    const revHost = revAt >= 0 ? this.dataHostAt(revKeyTok.slice(revAt + 1)) : null
+    if ((t1 === 'cp' || t1 === 'mv' || t1 === 'rm' || t1 === 'decrypt') && this.dataHostItems(this.dataCtxHost()).some((it) => it.n === revName)) {
+      const src = this.resolveDataSrc(revName, revHost)
       if (src !== null) {
         if (t1 === 'rm' || t1 === 'decrypt') {
           this.sendData(t1, src.host, src.key, null)
