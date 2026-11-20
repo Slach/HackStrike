@@ -2552,44 +2552,49 @@ export class HackView {
   }
 
   private buildDeckPane(body: HTMLElement): void {
-    // Графики — одной горизонтальной строкой НАД колонками (плейтест M3:
+    // Графики — одной горизонтальной строкой НАД контентом (плейтест M3:
     // в узкой левой колонке канвасы наезжали на карту сети).
     const sparks = el('div', 'hv-sparks')
     sparks.append(this.buildSpark('cpu', 'CPU'))
     sparks.append(this.buildSpark('npu', 'NPU'))
     sparks.append(this.buildSpark('ram', 'RAM'))
     sparks.append(this.buildSpark('net', 'NET'))
-    const cols = el('div', 'deck-cols')
-    const wrap = el('div', 'deck-wrap')
-    wrap.append(sparks, cols)
-    body.append(wrap)
 
-    const left = el('div', 'deck-left')
-
+    // Список процессов (общий для колоночной и доковой версий).
     const progsBox = el('div', 'hv-progs')
     this.progLists.push(progsBox)
-    left.append(progsBox)
 
     // §16.1: MEM деки — занято/ёмкость + инвентарь данных (живой список)
     const memBox = el('div', 'hv-progs')
-    memBox.append(txt('div', 'hv-dim', 'MEM ДЕКИ'))
+    memBox.append(txt('div', 'hv-dim deck-memlabel', 'MEM ДЕКИ'))
     const memLine = txt('div', 'prog-name', '0/0 МБ')
     memBox.append(memLine)
     const inv = el('div', 'hv-progs')
     memBox.append(inv)
     this.deckDataBox = inv
     this.deckMemLine = memLine
-    left.append(memBox)
 
     const run = el('div', 'hv-run')
-    for (const [label, prog] of [
-      ['1 PORTSCAN', 'portscan'],
-      ['2 VULNSCAN', 'vulnscan'],
-      ['3 TROJAN', 'trojan'],
-      ['4 WATCHER', 'watcher'],
-      ['5 FIREWALL', 'firewall'],
-      ['6 ANTIVIRUS', 'antivirus'],
-    ] as const) {
+    // §15.27: на тапе цифры-хоткеи бессмысленны (клавиатуры нет), суффикс
+    // «→ ЦЕЛЬ?» съедает ширину плитки — на кнопках чистое имя программы.
+    const PROGS: readonly (readonly [string, RunProg])[] = IS_TOUCH
+      ? [
+          ['PORTSCAN', 'portscan'],
+          ['VULNSCAN', 'vulnscan'],
+          ['TROJAN', 'trojan'],
+          ['WATCHER', 'watcher'],
+          ['FIREWALL', 'firewall'],
+          ['ANTIVIRUS', 'antivirus'],
+        ]
+      : [
+          ['1 PORTSCAN', 'portscan'],
+          ['2 VULNSCAN', 'vulnscan'],
+          ['3 TROJAN', 'trojan'],
+          ['4 WATCHER', 'watcher'],
+          ['5 FIREWALL', 'firewall'],
+          ['6 ANTIVIRUS', 'antivirus'],
+        ]
+    for (const [label, prog] of PROGS) {
       const b = el('button', 'hv-btn')
       b.textContent = label + this.targetSuffix()
       b.addEventListener('click', () => this.runProg(prog))
@@ -2597,15 +2602,14 @@ export class HackView {
     }
     // §16.2: одна кнопка данных — палитра с листингом активного таба
     const dataBtn = el('button', 'hv-btn')
-    dataBtn.textContent = '7 DATA'
+    dataBtn.textContent = IS_TOUCH ? 'ДАННЫЕ' : '7 DATA'
     dataBtn.addEventListener('click', () => this.dataEntry())
     run.append(dataBtn)
     // [ / ] — тап-эквивалент клавиши '/' (ГДД §15.2): на мобильнике хоткея нет.
     const slash = el('button', 'hv-btn hv-btn-slash')
-    slash.textContent = '/ ПАЛИТРА'
+    slash.textContent = IS_TOUCH ? 'ПАЛИТРА' : '/ ПАЛИТРА'
     slash.addEventListener('click', () => this.openPalette('run'))
     run.append(slash)
-    left.append(run)
 
     const right = el('div', 'deck-right')
     const netmapBox = el('div', 'hv-netmap')
@@ -2613,18 +2617,41 @@ export class HackView {
     right.append(netmapBox)
     // §15.26: на тапе подсказка называет все три жеста — пан и щипок раньше
     // были невидимы для пользователя, «карту смотреть невозможно».
+    // §15.27: короче — в портретном доке обязана влезать в одну строку.
     right.append(
       txt(
         'div',
         'netmap-hint',
-        IS_TOUCH ? 'ПАН ПАЛЬЦЕМ · ЩИПОК — ЗУМ · ТАП ПО УЗЛУ — ЦЕЛЬ' : 'КЛИК ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА',
+        IS_TOUCH ? 'ПАН · ЩИПОК — ЗУМ · ТАП ПО УЗЛУ — ЦЕЛЬ' : 'КЛИК ПО УЗЛУ — ВЫБОР ЦЕЛИ СКАНА',
       ),
     )
 
+    if (IS_TOUCH) {
+      // §15.27 (ревебр owner: «layout под мобилой практически неюзабельный,
+      // кнопки слишком узкие по высоте»): док снизу вместо колонок. Карта —
+      // главный блок на всю ширину; под ней строка статуса (MEM+процессы) и
+      // грид кнопок-плиток 44px. В ландшафте ≥600px CSS-grid ставит статус
+      // в одну строку со спарками (правый угол), освобождая карте строку.
+      const status = el('div', 'deck-status')
+      status.append(memBox, progsBox)
+      const wrap = el('div', 'deck-wrap')
+      wrap.append(sparks, right, status, run)
+      body.append(wrap)
+      return
+    }
+
+    const cols = el('div', 'deck-cols')
+    const wrap = el('div', 'deck-wrap')
+    wrap.append(sparks, cols)
+    body.append(wrap)
+    const left = el('div', 'deck-left')
+    left.append(progsBox, memBox, run)
     cols.append(left, right)
   }
 
   private targetSuffix(): string {
+    // §15.27: на тапе — короткий бейдж цели (ширина плитки), без «ЦЕЛЬ?».
+    if (IS_TOUCH) return this.target !== null ? `·${this.target.toUpperCase()}` : ''
     return this.target !== null ? ` → ${this.target.toUpperCase()}` : ' → ЦЕЛЬ?'
   }
 

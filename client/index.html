@@ -2592,7 +2592,7 @@
         border-radius: 6px;
         cursor: pointer;
       }
-      body.touch .hv-chip { padding: 9px 12px; } /* табы пальцем */
+      body.touch .hv-chip { padding: 9px 12px; min-height: 44px; } /* табы пальцем (§15.27 — 44px-таргет) */
       body.touch .hv-btn { padding: 11px 12px; }
       /* Дека на тапе: CPU/NPU/RAM/NET «слишком здоровые» (§15.6) — каждая
          плашка сжимается в одну строку «метка · график · значение»: шапка
@@ -2613,29 +2613,75 @@
          (не висят над программами); полоска-заголовок «ДЕКА» убрана совсем —
          её дублирует ряд чипов-табов, × переехал в плавающий угол панели,
          чтобы табы оставались закрываемы без W. */
+      /* §15.27 (ревебр owner: «layout под мобилой практически неюзабельный,
+         кнопки слишком узкие по высоте; возможно, надо вообще переработать»):
+         Дека на тапе — ДОК СНИЗУ. Карта = главный блок на всю ширину
+         (колоночная раскладка §15.4 сплющивала её в 60px-полосу в портрете и
+         резала кнопки по высоте в ландшафте); под картой строка статуса
+         (MEM + процессы) и грид кнопок-плиток; спарки над картой. Порядок DOM
+         расставляет колоночный flex. Кнопки — полноценные 44px-таргеты:
+         компакт §15.6 (padding 5px/font 10px → ~24px) отменён как нарушавший
+         touch-minimum. */
       body.touch .hv-btn-slash { order: -1; }
-      body.touch .hv-run { gap: 3px; }
-      body.touch .hv-run .hv-btn { padding: 5px 8px; font-size: 10px; letter-spacing: 1px; }
-      /* список процессов тоже плотнее: на 390px по высоте каждый пикселя на вес.
-         min-height:0 превращал бокс в сжимаемый: при 4–5 процессах строки
-         вылезали за него и перекрывали «/ ПАЛИТРА» (ревебр owner). Фикс:
-         потолок 92px + внутренняя прокрутка; при нехватке места бок сжимается
-         до пола в две строки — ряд кнопок с «/ ПАЛИТРА» важнее и должен быть
-         виден целиком; зазор до него — добавочные 10px padding'ом (§15.10) */
-      body.touch .hv-progs {
-        flex: 0 1 auto;
-        min-height: 44px; /* border-box: 10 padding + две видимые строки */
-        max-height: 92px;
+      body.touch .pane-body { flex-direction: column; padding: 8px; gap: 8px; }
+      body.touch .deck-right { flex: 1 1 auto; min-height: 140px; }
+      body.touch .hv-netmap { flex: 1; min-height: 0; }
+      /* строка статуса: MEM + процессы — одна компактная полоса */
+      body.touch .deck-status {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        flex: none;
+      }
+      body.touch .deck-status .hv-progs {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 10px;
+        font-size: 10px;
+        min-height: 0;
+        max-height: 36px;
         overflow-y: auto;
         overscroll-behavior: contain;
-        gap: 2px;
-        font-size: 10px;
-        padding-bottom: 10px;
+      }
+      body.touch .deck-status .hv-progs > * { flex: none; }
+      body.touch .deck-memlabel { display: none; } /* MEM понятен из «0/256 МБ» */
+      /* док: кнопки-плитки сеткой, 44px-таргеты (§15.27) */
+      body.touch .hv-run {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
+        flex: none;
+      }
+      body.touch .hv-run .hv-btn {
+        min-height: 44px;
+        padding: 8px 6px;
+        font-size: 13px;
+        letter-spacing: 1px;
+        text-align: center;
       }
       @media (orientation: landscape) and (min-width: 600px) {
-        /* 240px deck-left + 12px gap — старт колонки netmap */
-        body.touch .hv-sparks { margin-left: 252px; }
+        body.touch .hv-run { grid-template-columns: repeat(4, 1fr); }
+        body.touch .hv-run .hv-btn { font-size: 14px; }
+        /* ландшафт: статус — в правый угол строки спарков, карта получает
+           освобождённую полосу (док на 36px ниже = карта крупнее) */
+        body.touch .deck-wrap { display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto 1fr auto; gap: 6px; }
+        body.touch .deck-wrap > .hv-sparks { grid-area: 1 / 1; }
+        body.touch .deck-wrap > .deck-status { grid-area: 1 / 2; max-width: 46%; }
+        body.touch .deck-wrap > .deck-right { grid-area: 2 / 1 / 3 / 3; }
+        body.touch .deck-wrap > .hv-run { grid-area: 3 / 1 / 4 / 3; }
       }
+      /* шапка в одну строку даже в портрете 390px */
+      body.touch #hackview .hv-head { gap: 8px; }
+      body.touch .hv-title { font-size: 13px; letter-spacing: 3px; }
+      body.touch .hv-host { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      body.touch .hv-exit-btn { min-height: 40px; flex: none; }
+      body.touch .netmap-hint { font-size: 9px; letter-spacing: 1px; white-space: nowrap; }
+      /* §15.27: футер «ЧИПЫ — ТАБЫ · [ / ] ПАЛИТРА · ВЫХОД — КНОПКА СПРАВА»
+         на тапе — чистый шум: чипы подписаны, ПАЛИТРА кнопкой не одна, ВЫХОД
+         виден красным в шапке. Строка освобождена карте. */
+      body.touch .hv-foot { display: none; }
       body.touch .pane-head { display: none; }
       body.touch .hv-pane { position: relative; }
       body.touch .pane-x {
