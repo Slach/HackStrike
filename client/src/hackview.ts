@@ -2170,9 +2170,13 @@ export class HackView {
         cands.push(...this.dataSubCands(pq, ['cp', 'mv', 'rm', 'decrypt']))
       } else {
         // decrypt — одноаргументная: приёмника нет, ключ уже дан
+        // Приёмник уже указан (плейтест 2026-11-20: «door_key cp deck» + Enter
+        // вставлял deck бесконечно вместо исполнения): кандидатов нет,
+        // Enter = запуск — то же правило, что в dataMode (фикс 3bd91dd).
         const qq = (tokens[2] ?? '').toLowerCase()
+        const dstDone = trailing ? tokens.length > 2 : this.dataHostAt(qq) !== null
         const src = this.dataSrcOf(dq, null)
-        if (tokens[1]?.toLowerCase() !== 'decrypt') {
+        if (tokens[1]?.toLowerCase() !== 'decrypt' && !dstDone) {
           cands.push(...this.dataHostCands(qq, true).filter((c) => c.dev !== src))
         }
       }
