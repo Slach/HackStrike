@@ -1884,6 +1884,57 @@
         -webkit-overflow-scrolling: touch;
         padding: 12px 8px;
       }
+      /* §15.24 (ревебр owner): join-экран обязан влезать без скролла. Компакт
+         под touch: панель/карточки/отступы ужатые, кнопки 44px и одной строкой
+         (min-width 120 вместо 240 — ДЕПЛОЙ/ПРИГЛАСИТЬ/НАСТРОЙКИ не заворачиваются).
+         Desktop побайтно прежний (всё под body.touch) */
+      body.touch .overlay > .panel {
+        padding: 12px 14px;
+      }
+      body.touch #joinScreen .tag {
+        margin: 4px 0 10px;
+      }
+      body.touch .joinRow {
+        margin-bottom: 10px;
+      }
+      body.touch .cards {
+        gap: 6px;
+        margin-bottom: 10px;
+      }
+      body.touch .card {
+        padding: 6px 9px;
+      }
+      body.touch .card-weapon {
+        margin: 2px 0 4px;
+        font-size: 9px;
+      }
+      body.touch .card-stats {
+        font-size: 10px;
+        gap: 2px 6px;
+      }
+      body.touch .card-note {
+        margin-top: 4px;
+        font-size: 9px;
+      }
+      body.touch .segBtn {
+        padding: 6px 10px;
+      }
+      body.touch .btnRow {
+        margin: 10px 0 4px;
+        gap: 8px;
+      }
+      body.touch .joinBtns .btn,
+      body.touch .joinBtns .btn.small {
+        font-size: 13px;
+        letter-spacing: 2px;
+        padding: 10px 12px;
+        min-height: 44px;
+        min-width: 120px;
+      }
+      body.touch .panel .dim {
+        margin-top: 6px;
+        font-size: 10px;
+      }
       /* Классы не влезают по ширине — идут вертикально в одну колонку (§15.3).
          Медиазапрос, не body.touch: решает ширина, телефон в ландшафте тоже
          попадает при <720px логической ширины. */
@@ -1898,6 +1949,25 @@
           font-size: 28px;
           letter-spacing: 7px;
           text-indent: 7px; /* §15.23 */
+        }
+      }
+      /* §15.24: портрет телефона — карточек 1-колонный MQ не оставляет места
+         по высоте (4×~130px + кнопки > 664px) → 2×2 после компакта влезает */
+      @media (orientation: portrait) {
+        body.touch .cards {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+      /* §15.24: в ландшафте телефон широкий — кнопки одной строкой (на скрине
+         owner НАСТРОЙКИ уехали второй строкой под ВЕРНУТЬСЯ/ПРИГЛАСИТЬ) */
+      @media (orientation: landscape) and (min-width: 600px) {
+        body.touch .joinBtns {
+          flex-wrap: nowrap;
+        }
+        body.touch .joinBtns .btn,
+        body.touch .joinBtns .btn.small {
+          min-width: 0;
+          flex: 1 1 0;
         }
       }
       /* §15.20 (ревебр owner): в ландшафте телефона (вьюпорт 844 > 720) MQ
