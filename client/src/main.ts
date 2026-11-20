@@ -763,7 +763,7 @@ const hackview = new HackView({
   camLive: {
     attach: (cv, camId) => camView.attachPanel(cv, camId),
     detach: () => camView.detachPanel(),
-    pose: () => camView.pose(),
+    pose: (camId) => camView.poseOf(camId),
     openFullscreen: (camId) => {
       sock.sendJackout()
       hackviewOff(true)
@@ -828,6 +828,9 @@ window.addEventListener('keydown', (e) => {
 // §13.7 живой вид камер: V — открыть/следующая, Esc — вернуться в meatview.
 // Хоткей только при игре и не в hackview (там V — буква палитры).
 let camHintUntil = 0
+/** 2 Гц pump живых панелей (§13.7): время последнего блита. Первый pump
+ *  случается сразу (at=0), новый таб камеры — чистый кадр ≤500 мс. */
+let camPumpAt = 0
 function camToggle(): void {
   if (!camView.hasCameras()) {
     // камер союзников нет — короткая подсказка вместо тихого no-op
@@ -1351,12 +1354,24 @@ engine.runRenderLoop(() => {
     fpsChip.textContent = `${Math.round(engine.getFps())} FPS`
   }
   scene.render()
-  // §13.7: кадр камеры в панели деки — после рендера блитим его из канваса
-  // (panelCanvas задан, только пока открыт таб камеры).
-  const pc = camView.panelCanvas
-  if (pc !== null) {
-    const ictx = pc.getContext('2d')
-    if (ictx !== null) ictx.drawImage(canvas, 0, 0, pc.width, pc.height)
+  // §13.7: живые кадры в панелях камер (сплит: несколько). 2 Гц — совпадает
+  // с подписью «КАДР 2 Гц» и дороже per-frame не выглядит: на каждый уникальный
+  // кам — доп. scene.render() той же камерой (applyFor меняет позу activeCamera),
+  // блит во все canvas этой камеры. После — на следующем кадре activeCamera
+  // восстановится вверху цикла (fullscreen-V приоритетнее панелей).
+  if (camView.visiblePanels.size > 0 && !camView.active) {
+    const t = performance.now()
+    if (t - camPumpAt >= 500) {
+      camPumpAt = t
+      for (const [id, cvs] of camView.visiblePanels) {
+        if (!camView.applyFor(id)) continue
+        scene.render()
+        for (const cv of cvs) {
+          const ictx = cv.getContext('2d')
+          if (ictx !== null) ictx.drawImage(canvas, 0, 0, cv.width, cv.height)
+        }
+      }
+    }
   }
 })
 

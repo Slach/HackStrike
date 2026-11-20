@@ -48,7 +48,7 @@ export interface HackViewDeps {
   camLive?: {
     attach: (canvas: HTMLCanvasElement, camId: string) => void
     detach: () => void
-    pose: () => { id: string; x: number; y: number; z: number; yaw: number; pitch: number; fov: number } | null
+    pose: (camId: string) => { id: string; x: number; y: number; z: number; yaw: number; pitch: number; fov: number } | null
     openFullscreen: (camId: string) => void
   }
 }
@@ -920,7 +920,17 @@ export class HackView {
     }
     if (this.panes.length === 1) this.splitDir = dir
     const shown = new Set(this.panes.map((p) => p.tabKey))
-    const tab = this.tabs.find((t) => !shown.has(t.key)) ?? this.tabs[0]
+    // Плейтест 2026-11-20: сплит от таба камеры брал деку («везде деку
+    // пытаются запихнуть») — новый пан берёт СКРЫТЫЙ таб того же типа,
+    // иначе любой скрытый, иначе дублирует активный (как раньше)
+    const kindOf = (t: Tab): string | null =>
+      t.dev === null ? 'deck' : this.devices.get(t.dev)?.kind ?? 'other'
+    const activeKey = this.panes[this.activePane]?.tabKey ?? this.tabs[0].key
+    const kind = kindOf(this.tabs.find((t) => t.key === activeKey) ?? this.tabs[0])
+    const tab =
+      this.tabs.find((t) => !shown.has(t.key) && kindOf(t) === kind) ??
+      this.tabs.find((t) => !shown.has(t.key)) ??
+      this.tabs[0]
     this.panes.push({ tabKey: tab.key })
     this.activePane = this.panes.length - 1
     this.schedule(() => this.render())
@@ -2781,7 +2791,8 @@ export class HackView {
     // §13.7 (плейтест 2026-11-20 «CAM2 слишком много раз, достаточно одного
     // в табе»): id камеры не дублируется в шапке панели и на полосе кадра —
     // ярлык таба единственный; на сплите остаётся полоса только с × закрытия
-    const camTab = tab.dev !== null && this.devices.get(tab.dev)?.kind === 'camera'
+    const camTab =
+      tab.dev !== null && this.devices.get(tab.dev)?.kind === 'camera' && this.panes.length === 1
     const head = el('div', 'pane-head' + (camTab ? ' cam-only' : ''))
     head.append(txt('span', 'pane-title', this.tabTitle(tab)))
     if (this.panes.length > 1) {
@@ -3401,8 +3412,8 @@ export class HackView {
    *  фигуре. Вне кадра/позы другой камеры — тег не рисуем (лента внизу всё
    *  равно полная). */
   private renderCamTags(ref: HackView['camRefs'][number], seen: readonly CamSeen[]): void {
-    const pose = this.deps.camLive?.pose()
-    if (pose === null || pose === undefined || pose.id !== ref.dev) return
+    const pose = this.deps.camLive?.pose(ref.dev)
+    if (pose === null || pose === undefined) return
     const cy = Math.cos(pose.yaw)
     const sy = Math.sin(pose.yaw)
     for (const s of seen) {

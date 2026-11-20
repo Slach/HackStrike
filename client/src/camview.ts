@@ -32,8 +32,10 @@ export class CamView {
   /** Индекс текущей камеры в списке союзных (цикл V/тап). */
   private idx = 0
   private list: CamInfo[] = []
-  /** Занят ли кадр табом камеры в hackview (рендер в панель, не на весь экран). */
-  private panel: HTMLCanvasElement | null = null
+  /** Панели живого кадра в табах камер hackview (сплит H/V: несколько одновременно).
+   *  Рендер — в этой же камере (одна сцена), main блитит canvas за canvas;
+   *  2 Гц — совпадает с «КАДР 2 Гц» ленты и дешевле per-frame. */
+  private panels = new Map<string, HTMLCanvasElement[]>()
   /** Колбэк «вид камеры открылся/закрылся/сменился» — main перерисовывает оверлей. */
   onChange: (() => void) | null = null
 
@@ -68,7 +70,7 @@ export class CamView {
       if (i >= 0) this.idx = i
     }
     if (this.list.length === 0) {
-      if (this.active || this.panel !== null) this.close()
+      if (this.active || this.panels.size > 0) this.close()
       return
     }
     if (this.idx >= this.list.length) this.idx = 0
@@ -95,37 +97,57 @@ export class CamView {
     this.onChange?.()
   }
 
-  /** Открыть вид в панели hackview (таб камеры) — без подмены основной картинки. */
+  /** Открыть вид в панели hackview (таб камеры) — без подмены основной картинки.
+   *  Сплит: у каждого таба своя панель, attach по id камеры. */
   attachPanel(canvas: HTMLCanvasElement, camId?: string): void {
-    this.panel = canvas
+    const first = this.panels.size === 0
     if (camId !== undefined) {
-      const i = this.list.findIndex((c) => c.id === camId)
-      if (i >= 0) this.idx = i
+      const arr = this.panels.get(camId)
+      if (arr !== undefined) arr.push(canvas)
+      else this.panels.set(camId, [canvas])
+      // индекс — на ПЕРВОЙ прикрепленной панели: V-цикл стартует с неё,
+      // сплит с 2+ камерами не должен гонять fullscreen по списку
+      if (first) {
+        const i = this.list.findIndex((c) => c.id === camId)
+        if (i >= 0) this.idx = i
+        this.apply()
+      }
     }
-    this.apply()
     this.onChange?.()
   }
 
-  detachPanel(): void {
-    if (this.panel === null) return
-    this.panel = null
-    this.onChange?.()
+  detachPanel(camId?: string): void {
+    if (camId !== undefined) this.panels.delete(camId)
+    else this.panels.clear()
+    if (this.panels.size === 0) this.onChange?.()
   }
 
-  /** Есть ли что рендерить: fullscreen-вид или панель таба. */
+  /** Панели для 2 Гц блита (id камеры → canvases; сплит: два таба одной камеры). */
+  get visiblePanels(): ReadonlyMap<string, HTMLCanvasElement[]> {
+    return this.panels
+  }
+
+  /** Поставить объектив на конкретную камеру (из visiblePanels) — 2 Гц pump
+   *  в main переключает позы между блитами панелей. false — камеры нет. */
+  applyFor(camId: string): boolean {
+    const c = this.list.find((k) => k.id === camId)
+    if (c === undefined) return false
+    const fx = Math.sin(c.yaw)
+    const fz = Math.cos(c.yaw)
+    this.camera.position.set(c.x + fx * CAM_OFFSET, c.y + CAM_LIFT, c.z + fz * CAM_OFFSET)
+    this.camera.rotation.set(-c.pitch, c.yaw, 0)
+    return true
+  }
+
+  /** Есть ли что рендерить: fullscreen-вид или панели таба. */
   get visible(): boolean {
-    return this.active || this.panel !== null
-  }
-
-  /** Панель активна — рендер этой камерой нужен только чтобы блитить кадр. */
-  get panelCanvas(): HTMLCanvasElement | null {
-    return this.panel
+    return this.active || this.panels.size > 0
   }
 
   close(): void {
-    if (!this.active && this.panel === null) return
+    if (!this.active && this.panels.size === 0) return
     this.active = false
-    this.panel = null
+    this.panels.clear()
     this.onChange?.()
   }
 
@@ -142,12 +164,12 @@ export class CamView {
     this.camera.rotation.set(-c.pitch, c.yaw, 0)
   }
 
-  /** Поза точки рендера — та же, что ставит apply(): нужна hackview для
-   *  проекции меток целей на кадр (тег рисуем поверх canvas, §13.7). id —
-   *  какой именно камеры поза (в таб идёт только она, сверяться с ref.dev). */
-  pose(): { id: string; x: number; y: number; z: number; yaw: number; pitch: number; fov: number } | null {
-    const c = this.current()
-    if (c === null) return null
+  /** Поза точки рендера КАЖДОЙ камеры — hackview проектирует теги целей по
+   *  своей (ref.dev), не по «текущей»: сплит с 2+ панелями (§13.7). */
+  poseOf(camId: string): { id: string; x: number; y: number; z: number; yaw: number; pitch: number; fov: number } | null {
+    const c = this.list.find((k) => k.id === camId)
+    // (см. applyFor — та же формула)
+    if (c === undefined) return null
     const fx = Math.sin(c.yaw)
     const fz = Math.cos(c.yaw)
     return {
