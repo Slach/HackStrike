@@ -4,32 +4,45 @@
 // Воспроизвести такое на своей машине нельзя — значит, страница сама считает
 // первичные события и рисует их на экране: тестеру остаётся прислать скришот.
 //
-// Как читать оверлей (для каждого симптома — свой счётчик):
-//   keys down/up — НЕ растётся при нажатиях → события не доходят до страницы
-//     (доставка браузера/ОС, а не игра);
-//   held         — «залипание»: держишь W, а held пуст → браузер сам прислал
-//     keyup, которого ты не нажимал (режим «раз в секунду»);
-//   gap          — пауза МЕЖДУ keydown: «клавиша считывается раз в секунду»
-//     видно как большой макс.пауза;
-//   mm           — движения мыши: count/с и суммарный |movementX| — если при
-//     вращении мышью mm стоит на нуле, мышь под lock не отдаёт дельты;
-//   lock         — lost/gained/error: флики pointer lock (курсор мигает) —
-//     главный кандидат «нельзя И ходить, И крутить» на Wayland/GTK;
-//   fps          — если всё выше в норме, а fps низкий, тормозит рендер.
+// Ревизия после первого же скрина-отчёта: кумулятивных счётчиков мало — по ним
+// не отличить «события не доходят» от «тестер не нажимал». Поэтому у каждой
+// строки есть СВЕЖЕСТЬ (last N мс назад — растёт на глазах при доставочном
+// провале) и РЕЙТ за последнюю секунду (~n/с — нормальные цифры поданы ниже).
+//
+// Как читать оверлей (норма при активном вводе показана в скобках):
+//   keys ~n/с   — keydown с autorepeat при зажатой клавише: ~20-35/с (X11) или
+//     ~1/с при зажатой без repeat (тогда «раз в секунду» видно прямо здесь);
+//     held[...] — что зажато сейчас; пустеет сам при живой клавише =ghost;
+//   last N мс   — с последнего keydown: при зажатой WASD не должно расти;
+//   mm ~n/с     — движения мыши под lock: норм 60-125+/с; единицы/секунды при
+//     вращении = Firefox не доставляет дельты (главная ветка «не крутится»);
+//   ghost×N     — keyup, за которым в пределах 1.2 с пришёл новый keydown той
+//     же клавиши ПОКА мышь двигалась: «отпустил не сам» — ОС/браузер рвёт
+//     удержание во время движения мыши (механика «нельзя И идти, И крутить»);
+//   lock lost/gained — >2-3 флапаньев за заход = мигающий lock (grace-фикс
+//     Controls уже смягчает это); err>0 = отказ самого захвата;
+//   fps         — всё выше в норме, а дёргается — винить рендер при низком fps.
 // Оверлей ничего не меняет в игре: слушает в capture-фазе, только наблюдает.
 // Без параметра в URL — одна проверка строки на старте, дальше не существует.
 
-type LockCounts = { lost: number; gained: number; err: number; lastAt: number }
-type KeyCounts = { down: number; up: number; lastAt: number; maxGapMs: number }
-type MmCounts = { n: number; px: number; lastAt: number; maxGapMs: number }
+const held = new Set<string>() // код -> время keydown (мс, performance)
+const downAt = new Map<string, number>()
+// keyup живой клавиши, запоминаем чтобы поймать «фантомное нажатие» следом
+const pendingGhost = new Map<string, { t: number; movedDuringHold: boolean }>()
+let ghost = 0
 
-const keys: KeyCounts = { down: 0, up: 0, lastAt: 0, maxGapMs: 0 }
-const mm: MmCounts = { n: 0, px: 0, lastAt: 0, maxGapMs: 0 }
-const lock: LockCounts = { lost: 0, gained: 0, err: 0, lastAt: 0 }
-const held = new Set<string>()
+const keys = { down: 0, up: 0, lastAt: 0, maxGapMs: 0 }
+const mm = { n: 0, px: 0, lastAt: 0, maxGapMs: 0 }
+const lock = { lost: 0, gained: 0, err: 0, lastAt: 0 }
+
+// скользящий бакет за последнюю секунду (для ~n/с)
+const bucket = { t: 0, keyN: 0, mmN: 0, mmPx: 0 }
+let keyRate = 0
+let mmRate = 0
+let mmPxRate = 0
 let fps = 0
 let fpsFrames = 0
-let fpsWindow = 0
+let fpsWin = 0
 
 export function installInputDiag(): void {
   if (!new URLSearchParams(location.search).has('inputdiag')) return
@@ -44,7 +57,17 @@ export function installInputDiag(): void {
       }
       keys.lastAt = now
       keys.down++
-      if (!e.repeat) held.add(e.code)
+      bucket.keyN++
+      if (!e.repeat) {
+        // «фантомное нажатие»: после отпускания в<1.2с новый press той же
+        // клавиши, и всё это пока мышь под lock двигалась — человек такие
+        // двойные нажатия осознанно не делает; рвёт удержание доставка.
+        const p = pendingGhost.get(e.code)
+        if (p !== undefined && now - p.t < 1200 && mm.lastAt > p.t && p.movedDuringHold) ghost++
+        pendingGhost.delete(e.code)
+        held.add(e.code)
+        downAt.set(e.code, now)
+      }
     },
     { capture: true },
   )
@@ -52,11 +75,24 @@ export function installInputDiag(): void {
     'keyup',
     (e) => {
       keys.up++
+      if (held.has(e.code)) {
+        // «отпустил не сам» фиксируется только если клавиша реально
+        // удерживалась; movedDuringHold — отличает ghost от простого тапа
+        pendingGhost.set(e.code, {
+          t: performance.now(),
+          movedDuringHold: mm.lastAt >= (downAt.get(e.code) ?? 0),
+        })
+      }
       held.delete(e.code)
+      downAt.delete(e.code)
     },
     { capture: true },
   )
-  window.addEventListener('blur', () => held.clear())
+  window.addEventListener('blur', () => {
+    held.clear()
+    downAt.clear()
+    pendingGhost.clear()
+  })
 
   document.addEventListener(
     'mousemove',
@@ -70,7 +106,10 @@ export function installInputDiag(): void {
       mm.lastAt = now
       if (e.movementX !== 0 || e.movementY !== 0) {
         mm.n++
-        mm.px += Math.abs(e.movementX) + Math.abs(e.movementY)
+        const d = Math.abs(e.movementX) + Math.abs(e.movementY)
+        mm.px += d
+        bucket.mmN++
+        bucket.mmPx += d
       }
     },
     { capture: true },
@@ -101,23 +140,32 @@ export function installInputDiag(): void {
   document.body.append(panel)
 
   requestAnimationFrame(function tick(t: number): void {
-    if (fpsWindow === 0) fpsWindow = t
+    if (fpsWin === 0) fpsWin = t
     else {
       fpsFrames++
-      const span = t - fpsWindow
+      const span = t - fpsWin
       if (span >= 500) {
         fps = Math.round((fpsFrames * 1000) / span)
         fpsFrames = 0
-        fpsWindow = t
+        fpsWin = t
       }
     }
+    if (bucket.t === 0) bucket.t = t
+    else if (t - bucket.t >= 1000) {
+      keyRate = bucket.keyN
+      mmRate = bucket.mmN
+      mmPxRate = Math.round(bucket.mmPx)
+      bucket.t = t
+      bucket.keyN = 0
+      bucket.mmN = 0
+      bucket.mmPx = 0
+    }
     const now = performance.now()
+    const age = (last: number): string => (last === 0 ? 'нет' : `${Math.round(now - last)} мс`)
     panel.textContent =
-      `keys down=${keys.down} up=${keys.up}  held[${[...held].join(',')}]  ` +
-      `gap max ${Math.round(keys.maxGapMs)} мс\n` +
-      `mm n=${mm.n} px=${Math.round(mm.px)}  gap max ${Math.round(mm.maxGapMs)} мс\n` +
-      `lock lost=${lock.lost} gained=${lock.gained} err=${lock.err}` +
-      (lock.lastAt === 0 ? '\n' : `  (${Math.round(now - lock.lastAt)} мс назад)\n`) +
+      `keys ~${keyRate}/с  held[${[...held].join(',')}]  last ${age(keys.lastAt)}  (макс.пауза ${Math.round(keys.maxGapMs)})\n` +
+      `mm   ~${mmRate}/с px ${mmPxRate}  last ${age(mm.lastAt)}  (макс.пауза ${Math.round(mm.maxGapMs)})  ghost×${ghost}\n` +
+      `lock lost=${lock.lost} gained=${lock.gained} err=${lock.err}  last ${age(lock.lastAt)}\n` +
       `${fps} fps · ${navigator.userAgent.slice(0, 44)}`
     requestAnimationFrame(tick)
   })
