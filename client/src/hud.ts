@@ -102,6 +102,54 @@ function waitImg(img: HTMLImageElement): Promise<void> {
   return img.decode().catch(() => undefined)
 }
 
+/** Скрин для печати — чёрно-белая инверсия + аншарп (§15.38, ревебр owner:
+ *  «то что белым должно быть чёрным… и сильно больше шарп»): игра тёмная —
+ *  на белой бумаге она была бы чёрным пятном, поэтому люма (BT.601)
+ *  инвертируется: тёмный фон → белая бумага, светлые линии → чёрные линии.
+ *  Шарп — 3×3-свёртка с k=2 (центр 9, соседи −2), один проход по моно-каналу.
+ *  Пиксельный цикл, а не ctx.filter — Safari долго не поддерживал canvas
+ *  filter, зато dataURL честно обработан в любом браузере. */
+function toPrintShot(src: HTMLCanvasElement): HTMLCanvasElement {
+  const out = document.createElement('canvas')
+  out.width = src.width
+  out.height = src.height
+  const ctx = out.getContext('2d')
+  if (ctx === null) return src
+  ctx.drawImage(src, 0, 0)
+  const data = ctx.getImageData(0, 0, out.width, out.height)
+  const px = data.data
+  const w = out.width
+  const h = out.height
+  // люма + инверсия в моно-канал: тёмное становится светлым
+  const mono = new Float32Array(w * h)
+  for (let i = 0, p = 0; i < mono.length; i++, p += 4) {
+    mono[i] = 255 - (0.299 * px[p]! + 0.587 * px[p + 1]! + 0.114 * px[p + 2]!)
+  }
+  // аншарп: s = (1+4k)·x − k·(соседи), k=2 → маска [0,−2,0;−2,9,−2;0,−2,0]
+  const K = 2
+  const sharp = new Float32Array(mono.length)
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x
+      const l = x > 0 ? mono[i - 1]! : mono[i]!
+      const r = x < w - 1 ? mono[i + 1]! : mono[i]!
+      const u = y > 0 ? mono[i - w]! : mono[i]!
+      const d = y < h - 1 ? mono[i + w]! : mono[i]!
+      const v = (1 + 4 * K) * mono[i]! - K * (l + r + u + d)
+      sharp[i] = v < 0 ? 0 : v > 255 ? 255 : v
+    }
+  }
+  for (let i = 0, p = 0; i < sharp.length; i++, p += 4) {
+    const v = Math.round(sharp[i]!)
+    px[p] = v
+    px[p + 1] = v
+    px[p + 2] = v
+    px[p + 3] = 255
+  }
+  ctx.putImageData(data, 0, 0)
+  return out
+}
+
 function selectInviteUrl(el: HTMLElement): void {
   const range = document.createRange()
   range.selectNodeContents(el)
@@ -458,6 +506,7 @@ export class Hud {
     ipsQr: byId<HTMLImageElement>('ipsQr'),
     ipsShot: byId<HTMLImageElement>('ipsShot'),
     ipsUrl: byId('ipsUrl'),
+    ipsDesc: byId('ipsDesc'),
     inviteUrl: byId('inviteUrl'),
     inviteCopy: byId<HTMLButtonElement>('inviteCopy'),
     inviteShare: byId<HTMLButtonElement>('inviteShare'),
@@ -826,8 +875,16 @@ export class Hud {
         })
         .then((qrData) => {
           this.el.ipsQr.src = qrData
-          this.el.ipsShot.src = this.splash !== null ? this.splash.toDataURL('image/png') : ''
+          // §15.38 (ревебр owner): на печать скрин идёт чёрно-белой инверсией
+          // с аншарпом — тёмный фон игры на белой бумаге
+          this.el.ipsShot.src =
+            this.splash !== null ? toPrintShot(this.splash).toDataURL('image/png') : ''
           this.el.ipsUrl.textContent = url
+          // описание — из .inviteRules join-модалки (единый источник текста),
+          // whitespace исходника схлопываем в одну строку на абзац
+          const rules = document.querySelector('#joinInvite .inviteRules')
+          this.el.ipsDesc.textContent =
+            rules !== null ? rules.textContent?.replace(/\s+/g, ' ').trim() ?? '' : ''
           return Promise.all([waitImg(this.el.ipsQr), waitImg(this.el.ipsShot)])
         })
         .then(() => window.print())

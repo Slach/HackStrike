@@ -3462,6 +3462,12 @@
         display: none;
       }
       @media print {
+        /* §15.38 (ревебр owner): крупный текст 28px съедает высоту — поля
+           10mm держат лист одной страницей A4 (контент ~267mm при 277mm) */
+        @page {
+          size: A4 portrait;
+          margin: 10mm;
+        }
         body > :not(#invitePrintSheet) {
           display: none !important;
         }
@@ -3472,27 +3478,55 @@
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 8px;
+          gap: 6px;
           color: #062b18;
           font-family: monospace;
         }
         .ipsHead {
-          font-size: 36px;
+          font-size: 48px;
           font-weight: bold;
           letter-spacing: 8px;
         }
         .ipsTag {
-          font-size: 11px;
+          font-size: 14px;
           letter-spacing: 3px;
           color: #666;
         }
+        /* §15.38 (ревебр owner): секции с заголовками — стиль .setHead игры */
+        .ipsH {
+          width: 100%;
+          font-size: 24px;
+          font-weight: bold;
+          letter-spacing: 4px;
+          color: #062b18;
+          border-bottom: 2px solid #062b18;
+          padding-bottom: 6px;
+        }
+        .ipsDesc {
+          /* §15.38 (ревебр owner): текст «ЧТО ЭТО» в 2.5× крупнее (11→28px) */
+          font-size: 28px;
+          line-height: 1.3;
+          color: #222;
+          text-align: justify;
+        }
+        .ipsJoinRow {
+          display: flex;
+          align-items: center;
+          gap: 10mm;
+        }
+        .ipsJoinCol {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4mm;
+        }
         #ipsQr {
-          width: 50mm;
-          height: 50mm;
+          width: 55mm;
+          height: 55mm;
           image-rendering: pixelated;
         }
         .ipsScan {
-          font-size: 10px;
+          font-size: 12px;
           letter-spacing: 3px;
           color: #888;
         }
@@ -3511,7 +3545,7 @@
           border-radius: 4px;
         }
         .ipsFoot {
-          font-size: 11px;
+          font-size: 12px;
           letter-spacing: 3px;
           color: #666;
         }
@@ -4194,15 +4228,24 @@
 
     <!-- §15.38: печатный лист приглашения — единственный видимый элемент в
          @media print (остальные body-дети спрятаны). Заполняется hud.ts при
-         тапе «РАСПЕЧАТАТЬ»: QR 720px (не 180px-миниатюра — иначе мыло на
-         бумаге), URL крупно, скрин игры. window.print() даёт и «Сохранить
-         как PDF» — без jsPDF-зависимости. -->
+         тапе «РАСПЕЧАТАТЬ»: текст описания из .inviteRules (единый источник),
+         QR 720px (не 180px-миниатюра — иначе мыло на бумаге), URL крупно,
+         скрин игры чёрно-белым (toGrayscale). window.print() даёт и
+         «Сохранить как PDF» — без jsPDF-зависимости. -->
     <div id="invitePrintSheet" class="invitePrintSheet">
       <div class="ipsHead">HACKSTRIKE</div>
       <div class="ipsTag">КОМАНДНЫЙ КИБЕР-FPS В БРАУЗЕРЕ · BLACKHAT VS WHITEHAT</div>
-      <img id="ipsQr" alt="QR — приглашение в HACKSTRIKE" />
-      <div class="ipsScan">НАВЕДИ КАМЕРУ ТЕЛЕФОНА</div>
-      <div id="ipsUrl" class="ipsUrl"></div>
+      <div class="ipsH">ЧТО ЭТО</div>
+      <div id="ipsDesc" class="ipsDesc"></div>
+      <div class="ipsH">КАК ЗАЙТИ</div>
+      <div class="ipsJoinRow">
+        <img id="ipsQr" alt="QR — приглашение в HACKSTRIKE" />
+        <div class="ipsJoinCol">
+          <div class="ipsScan">НАВЕДИ КАМЕРУ ТЕЛЕФОНА ИЛИ ПЕРЕЙДИ ПО ССЫЛКЕ</div>
+          <div id="ipsUrl" class="ipsUrl"></div>
+        </div>
+      </div>
+      <div class="ipsH">КАК ЭТО ВЫГЛЯДИТ</div>
       <img id="ipsShot" alt="скрин игры HACKSTRIKE" />
       <div class="ipsFoot">«ХАКНИ ИЛИ УМРИ» · «УБЕЙ ХАКЕРА ИЛИ УМРИ»</div>
     </div>
