@@ -8,6 +8,8 @@ import { IS_TOUCH as TOUCH } from './mobile'
 const SENS_RAD_PER_PX = 0.0022
 const PITCH_LIMIT = (89 * Math.PI) / 180
 const TAU = Math.PI * 2
+/** Окно «вернётся ли lock» при его потере (см. onPointerLockChange). */
+const GRACE_MS = 150
 
 export class Controls {
   yaw = 0
@@ -38,6 +40,7 @@ export class Controls {
   }
 
   dispose(): void {
+    this.cancelGrace()
     document.removeEventListener('mousemove', this.onMouseMove)
     document.removeEventListener('pointerlockchange', this.onPointerLockChange)
     window.removeEventListener('keydown', this.onKeyDown)
@@ -75,8 +78,31 @@ export class Controls {
   }
 
   private readonly onPointerLockChange = (): void => {
-    this.locked = document.pointerLockElement === this.canvas
-    if (!this.locked) this.resetKeys()
+    const nowLocked = document.pointerLockElement === this.canvas
+    if (nowLocked) this.cancelGrace() // lock вернулся до истечения grace — клавиши целы
+    this.locked = nowLocked
+    // Сброс откладывается (плейтест owner 2026-11-21, Firefox 159/160 Ubuntu):
+    // на Wayland/GTK указатель под lock мигает: lock кратковременно теряется
+    // и тут же возвращается. Мгновенный resetKeys превращал фликер в «отпустило WASD
+    // посреди бега»: движение дёргается, идти + крутить мышь не выходит.
+    // Esc-выход при этом не ломается: без возврата lock'а grace сработает, а
+    // tryRelock на следующем keydown всё равно пересграбит курсор.
+    if (!this.locked) this.scheduleGrace()
+  }
+
+  private graceTimer = 0
+  private scheduleGrace(): void {
+    if (this.graceTimer !== 0) return
+    this.graceTimer = window.setTimeout(() => {
+      this.graceTimer = 0
+      if (!this.locked) this.resetKeys()
+    }, GRACE_MS)
+  }
+  private cancelGrace(): void {
+    if (this.graceTimer !== 0) {
+      clearTimeout(this.graceTimer)
+      this.graceTimer = 0
+    }
   }
 
   /** Мгновенный flush input при смене контрольного состояния (ГДД §15.13):

@@ -31,6 +31,7 @@ import { CamView } from './camview'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
 import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen, preventPageZoom } from './mobile'
+import { installInputDiag } from './inputdiag'
 
 // 66 мс (было 100; ×1.5 ревебр owner 2026-11-17, ГДД §15.13): тап-движение
 // на мобиле. Серверная lag-compensation синхронизирована — rewindTicks=3.
@@ -57,6 +58,9 @@ const camView = new CamView(scene)
 
 const hud = new Hud()
 const controls = new Controls(canvas)
+// ?inputdiag=1 — счётчики клавиш/мыши/pointer-lock на экране (ГДД §15.40):
+// удалённая диагностика «мышь и WASD одновременно» на чужих машинах.
+installInputDiag()
 
 // Touch-оверлей meatview (ГДД §15.1) — только при детекте пальца: крестина
 // движения слева, круг прицела справа, ДЕЙСТВИЕ=Space. --kb для деки (§15.2).
