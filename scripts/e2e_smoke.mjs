@@ -308,5 +308,24 @@ check('после ухода 2v0 → 1v1', new Set(remaining).size === remaining
 }
 
 clients.forEach((c) => c.ws.readyState === 1 && c.ws.close())
+
+// --- §15.40: /api/diag — диагностика ввода по нику (после разбора, чтобы не
+// влиять на балансовые проверки выше: это отдельный клиент в конец) ---
+{
+  const dOn = await (await fetch(`${BASE}/api/diag?name=DiagMarked&on=1`)).json()
+  check('diag: /api/diag?on=1 принимает имя', dOn.on === 1, JSON.stringify(dOn))
+  const dc = await connect()
+  send(dc, { t: 'join', name: 'DiagMarked', cls: 'assault' })
+  const dw = await waitFor(dc, (m) => m.t === 'welcome', 4000).catch(() => null)
+  check('diag: помеченный join получает welcome.diag=1', dw?.diag === 1, JSON.stringify(dw))
+  // мгновенное выкл онлайн-носителю (без перезахода)
+  await fetch(`${BASE}/api/diag?name=DiagMarked&on=0`)
+  const dOff = await waitFor(dc, (m) => m.t === 'diag' && m.on === 0, 4000).catch(() => null)
+  check('diag: on=0 летит онлайн-носителю без перезахода', !!dOff)
+  dc.ws.close()
+  const bad = await fetch(`${BASE}/api/diag?name=X`) // без on=
+  check('diag: запрос без on → 400', bad.status === 400)
+}
+
 console.log(failures === 0 ? '\nE2E: ВСЕ ПРОВЕРКИ ПРОЙДЕНЫ ✓' : `\nE2E: ПРОВАЛОВ ${failures}`)
 process.exit(failures === 0 ? 0 : 1)

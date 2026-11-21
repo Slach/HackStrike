@@ -31,7 +31,7 @@ import { CamView } from './camview'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
 import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen, preventPageZoom } from './mobile'
-import { installInputDiag } from './inputdiag'
+import { setDiag, maybeInstallFromUrl } from './inputdiag'
 
 // 66 мс (было 100; ×1.5 ревебр owner 2026-11-17, ГДД §15.13): тап-движение
 // на мобиле. Серверная lag-compensation синхронизирована — rewindTicks=3.
@@ -60,7 +60,8 @@ const hud = new Hud()
 const controls = new Controls(canvas)
 // ?inputdiag=1 — счётчики клавиш/мыши/pointer-lock на экране (ГДД §15.40):
 // удалённая диагностика «мышь и WASD одновременно» на чужих машинах.
-installInputDiag()
+// Второй вход — серверный флаг по нику (welcome.diag / {"t":"diag"} ниже).
+maybeInstallFromUrl()
 
 // Touch-оверлей meatview (ГДД §15.1) — только при детекте пальца: крестина
 // движения слева, круг прицела справа, ДЕЙСТВИЕ=Space. --kb для деки (§15.2).
@@ -562,12 +563,16 @@ const sock = new GameSocket({
       case 'welcome':
         myId = msg.id
         myTeam = msg.team
+        if (msg.diag) setDiag(true) // §15.40: держатель стенда включил диагностику по нику
         playing = true
         buffer.clear()
         views.clear()
         hackview.setMyId(msg.id)
         hud.setTeam(msg.team)
         hud.hideJoin()
+        break
+      case 'diag': // §15.40: держатель стенда щёлкнул диагностикой по моему нику
+        setDiag(msg.on === 1)
         break
       case 'team':
         myTeam = msg.team

@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -55,6 +56,10 @@ type world struct {
 	// получает код навсегда»): HUD «КОД D3», переживает смерть игрока,
 	// отсылается вошедшим позже (addPlayer). Чистится на новом матче.
 	doorCodes map[int]string
+
+	// §15.40: диагностика ввода — имена, включённые держателем стенда через
+	// GET /api/diag; новый join под таким именем получает welcome.diag=1.
+	diag map[string]bool
 
 	// §16.6: safe_key на NETSAFE — код сейфа (итерация 5): фиксирован на
 	// матч (safe_key не ротируется, в отличие от door_key), узнаётся тем же
@@ -153,6 +158,7 @@ func newWorld(m *gameMap) *world {
 		m:         m,
 		players:   make(map[uint64]*player),
 		sessions:  make(map[string]*session),
+		diag:      make(map[string]bool),
 		cyber:     buildCyber(m),
 		fragLimit: fragLimit,
 		matchLen:  matchDuration,
@@ -287,6 +293,7 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 	}
 	pl := &player{id: id, name: w.uniqueName(name), team: team}
 	canon := sanitizeName(name)
+	pl.diag = w.diag[strings.ToLower(canon)] // §15.40: отметка регистронезависима
 	if s, ok := w.sessions[canon]; ok && w.now().Sub(s.at) < sessionTTL {
 		// Вернувшийся игрок: команда/позиция/класс/hp/знания сети как было,
 		// владение устройствами и vulned-заметки перемапливаются на новый id.
@@ -345,7 +352,11 @@ func (w *world) addPlayer(id uint64, name, cls string, wantTeam int) *player {
 	}
 	w.players[id] = pl
 	w.startMatchIfNeeded()
-	w.sendTo(id, message{"t": "welcome", "id": id, "team": pl.team, "tick": w.tick})
+	wl := message{"t": "welcome", "id": id, "team": pl.team, "tick": w.tick}
+	if pl.diag {
+		wl["diag"] = 1 // §15.40: клиент сам поднимет оверлей ?inputdiag
+	}
+	w.sendTo(id, wl)
 	// §16.4/§16.6: коды, узнанные командой (decrypt → HUD), знает навсегда
 	// в рамках матча — вошедшему позже досылаем (вор убил носителя — код
 	// у команды не пропадает).

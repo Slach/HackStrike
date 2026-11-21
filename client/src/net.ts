@@ -187,7 +187,8 @@ export interface MatchPlayer {
 }
 
 export type ServerMessage =
-  | { t: 'welcome'; id: number; team: number; tick: number }
+  | { t: 'welcome'; id: number; team: number; tick: number; diag: boolean } // diag: §15.40 сервер включил диагностику ввода по нику
+  | { t: 'diag'; on: number } // §15.40: мгновенное вкл/выкл оверлея онлайн-игроку
   | { t: 'team'; team: number } // server rebalanced me to the other team
   | ({ t: 'snap' } & Snapshot)
   | { t: 'shot'; by: number; hit: number; from: Vec3; to: Vec3 }
@@ -457,7 +458,10 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
         id: num(m.id, -1),
         team: num(m.team, 0) === 1 ? 1 : 0,
         tick: num(m.tick, 0),
+        diag: m.diag === 1, // §15.40
       }
+    case 'diag': // §15.40: мгновенное вкл/выкл диагностики по нику
+      return { t: 'diag', on: num(m.on, 0) }
     case 'team':
       return { t: 'team', team: num(m.team, 0) === 1 ? 1 : 0 }
     case 'snap': {
