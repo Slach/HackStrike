@@ -3349,6 +3349,11 @@
         line-height: 1.5;
         color: rgba(234, 255, 243, 0.82);
       }
+      .pwaSection {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
       .pwaSteps {
         display: grid;
         grid-template-columns: repeat(2, 1fr);
@@ -3997,16 +4002,26 @@
             под бары, а на iPhone полный экран не работает вовсе. Установи
             игру как приложение — откроется во весь экран, как настоящая.
             <b>Тапни по скрину</b> — откроет на весь экран.</div>
-          <div id="pwaIos" class="pwaSteps hidden">
-            <div class="pwaStep"><img src="/pwa/ios-1.png" alt="Safari: кнопка Поделиться внизу" loading="lazy" /><div class="pwaCap"><span class="pwaN">1.</span>Внизу Safari — кнопка <b>«Поделиться»</b> (квадрат со стрелкой)</div></div>
-            <div class="pwaStep"><img src="/pwa/ios-2.png" alt="Меню Safari: Share" loading="lazy" /><div class="pwaCap"><span class="pwaN">2.</span>В меню выбери <b>Share</b></div></div>
-            <div class="pwaStep"><img src="/pwa/ios-3.png" alt="Список: Add to Home Screen" loading="lazy" /><div class="pwaCap"><span class="pwaN">3.</span>Пролистай вниз — <b>Add to Home Screen</b></div></div>
-            <div class="pwaStep"><img src="/pwa/ios-4.png" alt="Диалог Add to Home Screen" loading="lazy" /><div class="pwaCap"><span class="pwaN">4.</span>Жми <b>Add</b> (тумблер <b>Open as Web App</b> включён)</div></div>
+          <!-- §15.37: navigator.share (Web Share API) умеет открыть системный
+               шит «Поделиться» из JS — но только по тапу (user-activation) и
+               без гарантии, что в шите будет «Add to Home Screen» (это
+               Safari-экшен, из JS-вызова может не показаться) — потому кнопка
+               видна лишь где есть API, а 4 шага остаются фолбэком. -->
+          <div id="pwaIos" class="pwaSection hidden">
+            <button id="pwaShareBtn" class="btn small hidden" type="button"><span class="btnIco">⤴</span>ОТКРЫТЬ МЕНЮ «ПОДЕЛИТЬСЯ»</button>
+            <div class="pwaSteps">
+              <div class="pwaStep"><img src="/pwa/ios-1.png" alt="Safari: кнопка Поделиться внизу" loading="lazy" /><div class="pwaCap"><span class="pwaN">1.</span>Внизу Safari — кнопка <b>«Поделиться»</b> (квадрат со стрелкой)</div></div>
+              <div class="pwaStep"><img src="/pwa/ios-2.png" alt="Меню Safari: Share" loading="lazy" /><div class="pwaCap"><span class="pwaN">2.</span>В меню выбери <b>Share</b></div></div>
+              <div class="pwaStep"><img src="/pwa/ios-3.png" alt="Список: Add to Home Screen" loading="lazy" /><div class="pwaCap"><span class="pwaN">3.</span>Пролистай вниз — <b>Add to Home Screen</b></div></div>
+              <div class="pwaStep"><img src="/pwa/ios-4.png" alt="Диалог Add to Home Screen" loading="lazy" /><div class="pwaCap"><span class="pwaN">4.</span>Жми <b>Add</b> (тумблер <b>Open as Web App</b> включён)</div></div>
+            </div>
           </div>
-          <div id="pwaAndroid" class="pwaSteps hidden">
-            <div class="pwaStep"><img src="/pwa/and-1.svg" alt="Меню Chrome: Install app" loading="lazy" /><div class="pwaCap"><span class="pwaN">1.</span>Меню <b>⋮</b> → <b>Install app</b> («Добавить на гл. экран»)</div></div>
-            <div class="pwaStep"><img src="/pwa/and-2.svg" alt="Диалог установки Chrome" loading="lazy" /><div class="pwaCap"><span class="pwaN">2.</span>В диалоге жми <b>Install</b></div></div>
-            <div class="pwaStep"><img src="/pwa/and-3.svg" alt="Иконка на главном экране" loading="lazy" /><div class="pwaCap"><span class="pwaN">3.</span>Иконка на гл. экране — игра без баров, во весь экран</div></div>
+          <div id="pwaAndroid" class="pwaSection hidden">
+            <div class="pwaSteps">
+              <div class="pwaStep"><img src="/pwa/and-1.svg" alt="Меню Chrome: Install app" loading="lazy" /><div class="pwaCap"><span class="pwaN">1.</span>Меню <b>⋮</b> → <b>Install app</b> («Добавить на гл. экран»)</div></div>
+              <div class="pwaStep"><img src="/pwa/and-2.svg" alt="Диалог установки Chrome" loading="lazy" /><div class="pwaCap"><span class="pwaN">2.</span>В диалоге жми <b>Install</b></div></div>
+              <div class="pwaStep"><img src="/pwa/and-3.svg" alt="Иконка на главном экране" loading="lazy" /><div class="pwaCap"><span class="pwaN">3.</span>Иконка на гл. экране — игра без баров, во весь экран</div></div>
+            </div>
           </div>
           <div class="btnRow">
             <button id="pwaInstallBtn" class="btn small hidden" type="button">↓ УСТАНОВИТЬ</button>

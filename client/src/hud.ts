@@ -420,6 +420,7 @@ export class Hud {
     pwa: byId('joinPwa'),
     pwaIos: byId('pwaIos'),
     pwaAndroid: byId('pwaAndroid'),
+    pwaShareBtn: byId<HTMLButtonElement>('pwaShareBtn'),
     pwaInstallBtn: byId<HTMLButtonElement>('pwaInstallBtn'),
     pwaClose: byId('pwaClose'),
     pwaBanner: byId<HTMLButtonElement>('pwaBanner'),
@@ -648,6 +649,12 @@ export class Hud {
       })
     }
     this.el.pwaLightbox.addEventListener('click', () => this.el.pwaLightbox.classList.add('hidden'))
+    // §15.37: navigator.share открывает системный шит «Поделиться» одним
+    // тапом — требует user-activation, поэтому живёт только в обработчике;
+    // отмена пользователя (AbortError) и отказ браузера — молча.
+    this.el.pwaShareBtn.addEventListener('click', () => {
+      void navigator.share({ title: 'HACKSTRIKE', url: location.origin + '/' }).catch(() => undefined)
+    })
     // Android Chrome шлёт beforeinstallprompt (с манифестом §15.37) — даём
     // нативный диалог вместо ручных шагов; iOS события не шлёт, там кнопка
     // остаётся скрытой и путь только через скриншоты.
@@ -844,6 +851,7 @@ export class Hud {
       (/Macintosh/.test(navigator.userAgent) && (navigator.maxTouchPoints ?? 0) > 1)
     this.el.pwaIos.classList.toggle('hidden', !forced && !ios)
     this.el.pwaAndroid.classList.toggle('hidden', !forced && ios)
+    this.el.pwaShareBtn.classList.toggle('hidden', !('share' in navigator))
     this.el.pwaInstallBtn.classList.toggle('hidden', this.deferredInstall === null)
     this.el.pwa.classList.remove('hidden')
   }
