@@ -3455,6 +3455,67 @@
       .pwaLbNav:disabled {
         opacity: 0.25;
       }
+      /* §15.38: печатный лист приглашения. На экране мёртв; в печати — единственный
+         видимый элемент: белая бумага, тёмно-зелёный текст, QR 50mm (рассчитан на
+         A4 portrait: head+QR+URL+скрин+foot ~245mm при 267mm печатных). */
+      .invitePrintSheet {
+        display: none;
+      }
+      @media print {
+        body > :not(#invitePrintSheet) {
+          display: none !important;
+        }
+        body {
+          background: #fff;
+        }
+        #invitePrintSheet {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+          color: #062b18;
+          font-family: monospace;
+        }
+        .ipsHead {
+          font-size: 36px;
+          font-weight: bold;
+          letter-spacing: 8px;
+        }
+        .ipsTag {
+          font-size: 11px;
+          letter-spacing: 3px;
+          color: #666;
+        }
+        #ipsQr {
+          width: 50mm;
+          height: 50mm;
+          image-rendering: pixelated;
+        }
+        .ipsScan {
+          font-size: 10px;
+          letter-spacing: 3px;
+          color: #888;
+        }
+        .ipsUrl {
+          font-size: 18px;
+          font-weight: bold;
+          color: #000;
+          border: 2px solid #062b18;
+          border-radius: 6px;
+          padding: 6px 12px;
+          word-break: break-all;
+        }
+        #ipsShot {
+          width: 150mm;
+          border: 1px solid #ccc;
+          border-radius: 4px;
+        }
+        .ipsFoot {
+          font-size: 11px;
+          letter-spacing: 3px;
+          color: #666;
+        }
+      }
       /* §15.18: iOS Safari ломает touch-drag бегунка range под
          -webkit-user-select:none (body.touch) — чекбокс (тап) жив, слайдеры
          мертвы (ревебр owner). Возвращаем auto точечно; на touch — none
@@ -3664,10 +3725,17 @@
       body:not(.touch) #joinInvite .setHead {
         grid-area: head;
       }
-      body:not(.touch) #joinInvite .inviteGallery,
-      body:not(.touch) #joinInvite .inviteSplash {
+      body:not(.touch) #joinInvite .inviteGallery {
         grid-area: media;
         align-self: center;
+      }
+      /* §15.38: на десктопе слайды стоят рядом (свайпа нет) — QR и заставка
+         в одной линии; cap про свайп скрываем */
+      body:not(.touch) #joinInvite .invSlide {
+        flex: 0 0 50%;
+      }
+      body:not(.touch) #joinInvite .invCapSwipe {
+        display: none;
       }
       /* Ячейку text держит ОДНА обёртка .inviteTextCol. Раньше grid-area: text
          доставался slogan, rules и url всем троем — грид складывал их в одну
@@ -3964,8 +4032,9 @@
       <div id="joinInvite" class="settings hidden">
         <div class="setPanel">
           <div class="setHead">ПРИГЛАСИТЬ</div>
-          <!-- Мобила: свайп-галерея QR ↔ заставка. Десктоп: QR-слайд скрываем,
-               показываем заставку с запечённым текстом (inviteSplashText). -->
+          <!-- §15.38: галерея QR ↔ заставка теперь на обеих платформах —
+               мобила свайпает (§15.5), десктоп видит два слайда рядом.
+               Bake-заставка (inviteSplashText) убрана: дублировала URL. -->
           <div id="inviteGallery" class="inviteGallery">
             <div class="invSlide" id="invSlideQr">
               <canvas id="inviteQr" width="180" height="180"></canvas>
@@ -3973,10 +4042,9 @@
             </div>
             <div class="invSlide">
               <img id="inviteShotImg" alt="заставка HACKSTRIKE">
-              <div class="invCap">СВАЙП → ЗАСТАВКА</div>
+              <div class="invCap invCapSwipe">СВАЙП → ЗАСТАВКА</div>
             </div>
           </div>
-          <img id="inviteSplashText" class="inviteSplash hidden" alt="HACKSTRIKE — приглашение">
           <div class="inviteTextCol">
           <div class="inviteSlogan">«ХАКНИ ИЛИ УМРИ»<br />«УБЕЙ ХАКЕРА ИЛИ УМРИ»<br />«ЖИЗНЬ В ЭТОЙ ИГРЕ СЛИШКОМ КОРОТКА, НО ИНТЕРЕСНА»</div>
           <div class="inviteRules">
@@ -3995,6 +4063,7 @@
             <button id="inviteShare" class="btn small hidden" type="button">↗ ПОДЕЛИТЬСЯ</button>
             <button id="inviteCopy" class="btn small" type="button">КОПИРОВАТЬ ТЕКСТ</button>
             <button id="inviteQrCopy" class="btn small ghost" type="button">КОПИРОВАТЬ КАРТИНКУ</button>
+            <button id="invitePrint" class="btn small ghost" type="button">РАСПЕЧАТАТЬ</button>
             <button id="inviteClose" class="btn small ghost" type="button">ЗАКРЫТЬ</button>
           </div>
         </div>
@@ -4107,6 +4176,21 @@
         <div id="crawlText"></div>
       </div>
       <div class="crawl-skip">ЛЮБАЯ КЛАВИША — ПРОПУСТИТЬ</div>
+    </div>
+
+    <!-- §15.38: печатный лист приглашения — единственный видимый элемент в
+         @media print (остальные body-дети спрятаны). Заполняется hud.ts при
+         тапе «РАСПЕЧАТАТЬ»: QR 720px (не 180px-миниатюра — иначе мыло на
+         бумаге), URL крупно, скрин игры. window.print() даёт и «Сохранить
+         как PDF» — без jsPDF-зависимости. -->
+    <div id="invitePrintSheet" class="invitePrintSheet">
+      <div class="ipsHead">HACKSTRIKE</div>
+      <div class="ipsTag">КОМАНДНЫЙ КИБЕР-FPS В БРАУЗЕРЕ · BLACKHAT VS WHITEHAT</div>
+      <img id="ipsQr" alt="QR — приглашение в HACKSTRIKE" />
+      <div class="ipsScan">НАВЕДИ КАМЕРУ ТЕЛЕФОНА</div>
+      <div id="ipsUrl" class="ipsUrl"></div>
+      <img id="ipsShot" alt="скрин игры HACKSTRIKE" />
+      <div class="ipsFoot">«ХАКНИ ИЛИ УМРИ» · «УБЕЙ ХАКЕРА ИЛИ УМРИ»</div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

@@ -93,6 +93,15 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   })
 }
 
+/** Дождаться декодирования img (§15.38: перед window.print() — иначе в PDF
+ *  пустые прямоугольники). dataURL декодируется мгновенно, но decode()
+ *  гарантирует; отсутствие API (старые браузеры) — просто резолвимся. */
+function waitImg(img: HTMLImageElement): Promise<void> {
+  if (img.complete) return Promise.resolve()
+  if (typeof img.decode !== 'function') return Promise.resolve()
+  return img.decode().catch(() => undefined)
+}
+
 function selectInviteUrl(el: HTMLElement): void {
   const range = document.createRange()
   range.selectNodeContents(el)
@@ -445,7 +454,10 @@ export class Hud {
     inviteGallery: byId('inviteGallery'),
     invSlideQr: byId('invSlideQr'),
     inviteShotImg: byId<HTMLImageElement>('inviteShotImg'),
-    inviteSplashText: byId<HTMLImageElement>('inviteSplashText'),
+    invitePrint: byId<HTMLButtonElement>('invitePrint'),
+    ipsQr: byId<HTMLImageElement>('ipsQr'),
+    ipsShot: byId<HTMLImageElement>('ipsShot'),
+    ipsUrl: byId('ipsUrl'),
     inviteUrl: byId('inviteUrl'),
     inviteCopy: byId<HTMLButtonElement>('inviteCopy'),
     inviteShare: byId<HTMLButtonElement>('inviteShare'),
@@ -757,11 +769,11 @@ export class Hud {
       // Мобила = тач + Web Share Level 2 с файлами: там свайп-галерея
       // QR ↔ заставка и «поделиться». Десктопный Chrome тоже умеет share —
       // поэтому тач-проверка обязательна, иначе на десктопе лезет не тот UI.
+      // §15.38: галерея теперь на обеих платформах (десктоп — два слайда
+      // рядом), bake-заставка убрана — URL и так под ней.
       const mobile = navigator.maxTouchPoints > 0 && canShareFiles()
       this.el.inviteShare.classList.toggle('hidden', !mobile)
       this.el.inviteQrCopy.classList.toggle('hidden', mobile)
-      this.el.inviteGallery.classList.toggle('hidden', !mobile)
-      this.el.inviteSplashText.classList.toggle('hidden', mobile)
       this.el.invite.classList.remove('hidden')
       void this.ensureSplash()
     })
@@ -797,6 +809,29 @@ export class Hud {
           // просто выделяем ссылку, чтобы юзер скопировал её вручную.
           selectInviteUrl(this.el.inviteUrl)
         })
+    })
+    // §15.38: «РАСПЕЧАТАТЬ» — печатный лист #invitePrintSheet (единственный
+    // видимый в @media print): QR рендерим в 720px-канвас (180px-миниатюра
+    // на бумаге — мыло), скрин и URL крупно. dataURL-картинки ждут decode(),
+    // иначе window.print() захватывает ещё не декодированные img — в PDF
+    // пустые прямоугольники. window.print() даёт и «Сохранить как PDF».
+    this.el.invitePrint.addEventListener('click', () => {
+      const url = this.el.inviteUrl.textContent
+      this.ensureSplash()
+        .then(() => {
+          if (this.splash === null) throw new Error('hud: splash not ready')
+          if (url === '') throw new Error('hud: invite url empty')
+          const qr = document.createElement('canvas')
+          return QRCode.toCanvas(qr, url, { width: 720, margin: 2 }).then(() => qr.toDataURL('image/png'))
+        })
+        .then((qrData) => {
+          this.el.ipsQr.src = qrData
+          this.el.ipsShot.src = this.splash !== null ? this.splash.toDataURL('image/png') : ''
+          this.el.ipsUrl.textContent = url
+          return Promise.all([waitImg(this.el.ipsQr), waitImg(this.el.ipsShot)])
+        })
+        .then(() => window.print())
+        .catch((err) => console.warn('hud: print failed', err))
     })
     this.el.inviteClose.addEventListener('click', () => this.el.invite.classList.add('hidden'))
     this.el.invite.addEventListener('click', (e) => {
@@ -993,7 +1028,6 @@ export class Hud {
       this.splash = composeSplash(meat, hack, url)
       this.splashText = composeSplashText(this.splash, url)
       this.el.inviteShotImg.src = this.splash.toDataURL('image/png')
-      this.el.inviteSplashText.src = this.splashText.toDataURL('image/png')
     })()
     return this.splashPromise
   }
