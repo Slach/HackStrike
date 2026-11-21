@@ -113,7 +113,8 @@ interface DoorView {
   x: number
   z: number
   axis: 'x' | 'z'
-  len: number
+  len: number // длинная сторона полотна (вдоль оси)
+  thick: number // толщина полотна (по нормали)
   h: number // высота полотна = ход выезда вверх
   baseY: number // базовый Y центра полотна (закрыто)
   open: boolean
@@ -570,16 +571,19 @@ export class PropsView {
     locked = false,
   ): void {
     if (locked) this.lockedDoors.add(id)
-    const [w, h, depth] = size
+    // size — мировые габариты [X, Y, Z], та же конвенция, что у серверного
+    // блокера (server/cyber.go: d.box из pos±size/2). Раньше axis 'z' ветка
+    // трактует size[0] как толщину, а size[2] как длину — d5/d6 рисовались
+    // повёрнутыми на 90°: полотно лежало поперёк проёма («tooltip ЗАКРЫТА, а
+    // дверь стоит не в двери», плейтест 2026-11-21).
+    const [sx, h, sz] = size
+    const len = axis === 'x' ? sx : sz // длинная сторона полотна — вдоль оси
+    const thick = axis === 'x' ? sz : sx
     const pivot = new TransformNode(`prop.${id}.pivot`, this.scene)
     // Вертикальный выезд (решение владельца): полотно уезжает вверх на свою
     // высоту, как вратарская/шлюз. pivot держит базовую позицию центра.
     pivot.position.set(pos[0], pos[1], pos[2])
-    const panel = MeshBuilder.CreateBox(
-      `prop.${id}`,
-      axis === 'x' ? { width: w, height: h, depth } : { width: depth, height: h, depth: w },
-      this.scene,
-    )
+    const panel = MeshBuilder.CreateBox(`prop.${id}`, { width: sx, height: h, depth: sz }, this.scene)
     panel.parent = pivot
     panel.position.set(0, h / 2, 0)
     panel.material = this.mats.door
@@ -592,14 +596,14 @@ export class PropsView {
     // изнутри, на второй снаружи») — щиток с проводами и LED на ОБЕИХ
     // сторонах полотна у пола: замок виден, с какой стороны ни подошёл.
     // Едет с полотном.
-    const portOff = w / 2 - 0.25 // у края полотна по его длинной оси
+    const portOff = len / 2 - 0.25 // у края полотна по его длинной оси
     const ledMat = new StandardMaterial(`mat.prop.${id}.portled`, this.scene)
     ledMat.emissiveColor = new Color3(0.15, 0.7, 0.35)
     ledMat.disableLighting = true
     for (const face of [1, -1]) {
       // face=1 — «передняя» сторона по нормали (z для axis x, x для axis z)
-      const px = axis === 'x' ? portOff : (depth / 2 + 0.04) * face
-      const pz = axis === 'x' ? (depth / 2 + 0.04) * face : portOff
+      const px = axis === 'x' ? portOff : (thick / 2 + 0.04) * face
+      const pz = axis === 'x' ? (thick / 2 + 0.04) * face : portOff
       const port = MeshBuilder.CreateBox(`prop.${id}.port${face}`, { width: 0.26, height: 0.36, depth: 0.08 }, this.scene)
       port.parent = panel
       port.position.set(px, -h / 2 + 0.5, pz)
@@ -627,7 +631,7 @@ export class PropsView {
       led.material = ledMat
       led.isPickable = false
     }
-    this.doors.set(id, { id, pivot, x: pos[0], z: pos[2], axis, len: w, h, baseY: pos[1], open: false, angle: 0 })
+    this.doors.set(id, { id, pivot, x: pos[0], z: pos[2], axis, len, thick, h, baseY: pos[1], open: false, angle: 0 })
   }
 
   /** Камера наблюдения (§13.7): кронштейн + корпус + линза + LED владения.
@@ -1006,8 +1010,11 @@ export class PropsView {
     let bestT = maxDist
     const boxes: { label: string; min: [number, number, number]; max: [number, number, number] }[] = []
     for (const d of this.doors.values()) {
-      const halfW = d.axis === 'x' ? d.len / 2 : 0.15
-      const halfD = d.axis === 'z' ? d.len / 2 : 0.15
+      // Половинки по мировым осям — из реальных габаритов полотна (как у
+      // серверного д.bокса), не захардкоженных 0.15: у d5/d6 наводящийся
+      // луч попадал в полотно, а AABB был в другом месте.
+      const halfW = (d.axis === 'x' ? d.len : d.thick) / 2
+      const halfD = (d.axis === 'z' ? d.len : d.thick) / 2
       boxes.push({ label: `ДВЕРЬ ${d.id.toUpperCase()} — ${d.open ? 'ОТКРЫТА' : 'ЗАКРЫТА'}`, min: [d.x - halfW, d.baseY, d.z - halfD], max: [d.x + halfW, d.baseY + d.h, d.z + halfD] })
     }
     // Терминал/радио/switch: высота от реальной точки пропса (как у камер —
@@ -1110,8 +1117,8 @@ export class PropsView {
     for (const d of this.doors.values()) {
       if (d.open) continue
       // дверь: центр (x, baseY, z), ось x — панель вдоль X; вдоль Z — вдоль Z
-      const halfW = d.axis === 'x' ? d.len / 2 : 0.15
-      const halfD = d.axis === 'z' ? d.len / 2 : 0.15
+      const halfW = (d.axis === 'x' ? d.len : d.thick) / 2
+      const halfD = (d.axis === 'z' ? d.len : d.thick) / 2
       out.push({
         min: [d.x - halfW, d.baseY, d.z - halfD],
         max: [d.x + halfW, d.baseY + d.h, d.z + halfD],
