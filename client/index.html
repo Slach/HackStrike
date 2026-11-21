@@ -3712,30 +3712,44 @@
          колонки — медиа (галерея/заставка) слева, текст справа, кнопки внизу.
          Мобила (body.touch) остаётся вертикальной, как .setPanel по умолчанию. */
       body:not(.touch) #joinInvite .setPanel {
-        width: 80%;
+        width: 92%;
         display: grid;
         grid-template-columns: minmax(300px, 0.9fr) 1.1fr;
         grid-template-areas:
           'head head'
           'media text'
+          'shot shot'
           'btns btns';
         align-items: center;
-        column-gap: 28px;
+        column-gap: 22px;
+        gap: 10px;
+        padding: 14px 18px;
       }
       body:not(.touch) #joinInvite .setHead {
         grid-area: head;
       }
+      /* §15.38 (ревебр owner): скрин — своя строка на всю панель
+         («colspan=2»): display:contents распускает галерею на десктопе,
+         слайды становятся обычными грид-элементами панели. QR остаётся в
+         левой колонке (media), заставка занимает строку shot. */
       body:not(.touch) #joinInvite .inviteGallery {
+        display: contents;
+      }
+      body:not(.touch) #joinInvite #invSlideQr {
         grid-area: media;
         align-self: center;
       }
-      /* §15.38: на десктопе слайды стоят рядом (свайпа нет) — QR и заставка
-         в одной линии; cap про свайп скрываем */
-      body:not(.touch) #joinInvite .invSlide {
-        flex: 0 0 50%;
+      body:not(.touch) #joinInvite .invSlideShot {
+        grid-area: shot;
+        align-self: center;
       }
       body:not(.touch) #joinInvite .invCapSwipe {
         display: none;
+      }
+      body:not(.touch) #joinInvite #inviteShotImg {
+        width: 100%;
+        max-height: 40vh;
+        object-fit: contain;
       }
       /* Ячейку text держит ОДНА обёртка .inviteTextCol. Раньше grid-area: text
          доставался slogan, rules и url всем троем — грид складывал их в одну
@@ -4040,7 +4054,7 @@
               <canvas id="inviteQr" width="180" height="180"></canvas>
               <div class="invCap">QR — НАВЕДИ КАМЕРУ</div>
             </div>
-            <div class="invSlide">
+            <div class="invSlide invSlideShot">
               <img id="inviteShotImg" alt="заставка HACKSTRIKE">
               <div class="invCap invCapSwipe">СВАЙП → ЗАСТАВКА</div>
             </div>
