@@ -4,7 +4,7 @@
 
 import { CLASSES } from './classes'
 import type { Cls, NetStats, SnapPlayer } from './net'
-import { IS_TOUCH, IS_MOBILE_PLATFORM, isStandalonePWA } from './mobile'
+import { IS_TOUCH, IS_IOS_PLATFORM, IS_MOBILE_PLATFORM, isStandalonePWA } from './mobile'
 import QRCode from 'qrcode'
 
 const TEAM_END_LABEL = ['WHITEHAT', 'BLACKHAT'] as const // team 0 = WhiteHat (белая, §2)
@@ -874,15 +874,17 @@ export class Hud {
     this.el.deploy.disabled = !this.mapReady || this.el.name.value.trim().length === 0
   }
 
-  /** §15.37: показать модалку установки с платформенной секцией шагов.
-   *  ?pwahint=1 (дебаг) показывает обе секции на любом устройстве. */
+  /** §15.37: показать модалку установки с платформенной секцией шагов —
+   *  либо iOS, либо Android (детект в mobile.ts, считается при загрузке).
+   *  Дебаг: ?pwahint=1 — обе секции, ?pwahint=ios / ?pwahint=and — по одной
+   *  (детект платформы всё равно прав, потому секция — константа загрузки). */
   private openPwaModal(): void {
-    const forced = new URLSearchParams(location.search).has('pwahint')
-    const ios =
-      /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-      (/Macintosh/.test(navigator.userAgent) && (navigator.maxTouchPoints ?? 0) > 1)
-    this.el.pwaIos.classList.toggle('hidden', !forced && !ios)
-    this.el.pwaAndroid.classList.toggle('hidden', !forced && ios)
+    const hint = new URLSearchParams(location.search).get('pwahint')
+    const forced = hint !== null
+    const showIos = forced ? hint === '' || hint === '1' || hint === 'ios' : IS_IOS_PLATFORM
+    const showAndroid = forced ? hint === '' || hint === '1' || hint === 'and' : !IS_IOS_PLATFORM
+    this.el.pwaIos.classList.toggle('hidden', !showIos)
+    this.el.pwaAndroid.classList.toggle('hidden', !showAndroid)
     this.el.pwaShareBtn.classList.toggle('hidden', !('share' in navigator))
     this.el.pwaInstallBtn.classList.toggle('hidden', this.deferredInstall === null)
     this.el.pwa.classList.remove('hidden')

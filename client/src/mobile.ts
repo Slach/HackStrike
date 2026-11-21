@@ -19,13 +19,25 @@ import type { Controls } from './controls'
 export const IS_TOUCH =
   matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0
 
+/** iOS-семейство для платформенных шагов инструкции (ГДД §15.37) — UA здесь
+ *  легален, на UI-режим и геймплей не влияет. Три случая: обычный UA
+ *  (iPhone/iPad/iPod); iPadOS 13+, маскирующийся под Macintosh (ловим по
+ *  maxTouchPoints); iPhone с включённым «Запросить сайт для настольных
+ *  компьютеров» — UA тоже Macintosh, но палец остаётся coarse, а экран
+ *  телефонным (< 500pt по меньшей стороне; у iPad минимум 768 — не
+ *  пересекаются). */
+export const IS_IOS_PLATFORM =
+  /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && (navigator.maxTouchPoints ?? 0) > 1) ||
+  (/Macintosh/.test(navigator.userAgent) &&
+    matchMedia('(pointer: coarse)').matches &&
+    Math.min(screen.width, screen.height) < 500)
+
 /** Платформенная подсказка «это телефон» — ЕДИНСТВЕННОЕ место, где UA
  *  легален (ГДД §15.37): выбирает платформенные шаги инструкции установки
- *  (iOS vs Chrome), на UI-режим и геймплей не влияет. iPadOS 13+ маскируется
- *  под Macintosh — ловим по maxTouchPoints. */
-export const IS_MOBILE_PLATFORM =
-  /iPhone|iPad|iPod|Android|Mobi/i.test(navigator.userAgent) ||
-  (/Macintosh/.test(navigator.userAgent) && (navigator.maxTouchPoints ?? 0) > 1)
+ *  (iOS vs Chrome), на UI-режим и геймплей не влияет. */
+export const IS_MOBILE_PLATFORM = IS_IOS_PLATFORM ||
+  /Android|Mobi/i.test(navigator.userAgent)
 
 /** Игра открыта как установленное приложение, а не вкладка браузера
  *  (ГДД §15.37). standalone — манифест на Android + iOS ≥ 16.4; fullscreen —

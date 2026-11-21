@@ -2762,7 +2762,10 @@ wifi проходит по кромке огня.
   по-прежнему решают признаки пальца (§15 intro); UA-детект платформы
   (iPhone/iPad/iPod/Android, iPadOS = «Macintosh» + maxTouchPoints>1) —
   единственное легальное место для UA: **выбор платформенных шагов
-  инструкции** (iOS vs Chrome), на UI-режим и геймплей не влияет.
+  инструкции** (iOS vs Chrome), на UI-режим и геймплей не влияет. iPhone с
+  «Запросить сайт для настольных компьютеров» (UA Macintosh) ловится по
+  `pointer: coarse` + экран < 500pt по меньшей стороне — иначе была бы
+  Android-ветка (iPad исключён: у него минимум 768pt).
 - **Манифест** `client/public/pwa/manifest.webmanifest`:
   `display:"fullscreen"` (статус-бар скрыт — то, что §15.4 даёт только
   standalone), `orientation:"landscape"`, иконки 192/512 maskable +
@@ -2787,8 +2790,8 @@ wifi проходит по кромке огня.
   fullscreen+landscape, §15.4). Плашка `#pwaBanner` в лобби — путь вернуть
   инструкцию. Кнопка
   «УСТАНОВИТЬ» (Android) на `beforeinstallprompt` → нативный диалог;
-  `appinstalled` гасит плашку и модалку. Дебаг: `?pwahint=1` форсирует
-  модалку на десктопе.
+  `appinstalled` гасит плашку и модалку. Дебаг: `?pwahint=1` — обе секции,
+  `?pwahint=ios` / `?pwahint=and` — по одной на любом устройстве.
 - **Запрет зума**: `user-scalable=no` (§15.1) Safari в вкладке игнорирует →
   JS-гашение: preventDefault на `gesturestart/gesturechange/gestureend`
   (Safari-события; Chrome их не диспатчит; touchmove-пинч деки/V-вида
