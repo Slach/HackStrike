@@ -148,14 +148,18 @@ func TestGasDisarmStopsAndRearmRestarts(t *testing.T) {
 	g.open = false
 	g.gasArmAt = time.Time{}
 	advance(w, clock, 30) // 1 с закрытого клапана
-	if p.hp != hpAfterDisarmPrep {
-		t.Fatalf("closed valve must stop damage instantly, hp %d -> %d", hpAfterDisarmPrep, p.hp)
+	dropClosed := hpAfterDisarmPrep - p.hp
+	// Объёмный DoT остановлен мгновенно; течёт только яд ~2.5 HP/s
+	// (rev 2026-11-21 «газ отравленный») — в разы меньше объёмных 8 HP/s.
+	if dropClosed < 1 || dropClosed > 4 {
+		t.Fatalf("closed valve: only poison (~2.5 HP/s) may tick, got %d HP in 1s", dropClosed)
 	}
 
 	armGas(w, g, *clock)  // close→open: телеграф рестарт, долг обнулён
-	advance(w, clock, 45) // 1.5 с — ровно граница, урона не было бы и весь период телеграфа
-	if p.hp != hpAfterDisarmPrep {
-		t.Fatalf("re-armed valve must not inherit old debt (fresh telegraph), hp %d -> %d", hpAfterDisarmPrep, p.hp)
+	advance(w, clock, 45) // 1.5 с — телеграф: объёмного урона нет, яд течёт
+	dropTelegraph := hpAfterDisarmPrep - p.hp - dropClosed
+	if dropTelegraph < 2 || dropTelegraph > 6 {
+		t.Fatalf("re-armed valve must not inherit old debt (fresh telegraph): only poison may tick, got %d HP in 1.5s", dropTelegraph)
 	}
 }
 
@@ -406,5 +410,61 @@ func TestGasNetworkDiscovery(t *testing.T) {
 	}
 	if !w.cyber.reachable("t1")["g1"] {
 		t.Fatalf("g1 must be a graph neighbor of s2 via cable c5")
+	}
+}
+
+// (11) Яд (rev 2026-11-21): после выхода из объёма отравление продолжает
+// жечь ~2.5 HP/s ещё 10 с, потом останавливается. Внутри объёма яд не
+// дублирует объёмный DoT.
+func TestGasPoisonAfterLeave(t *testing.T) {
+	w, clock := gasTestWorld(t)
+	p := w.addPlayer(1, "p", "heavy", -1) // 200 HP — запас на объём+яд
+	w.takeOut()
+	p.pos = vec3{30, 1, 30}
+	g := w.cyber.devices["g1"]
+	armGas(w, g, *clock)
+
+	advance(w, clock, 90) // 3 с: 1.5 телеграф + 1.5 объёмного DoT → отравлен
+	insideHP := p.hp
+	if insideHP >= 200 {
+		t.Fatalf("volume DoT must land while inside, hp=%d", p.hp)
+	}
+	if !p.gasPoisonUntil.After(*clock) {
+		t.Fatalf("damage ticks inside must arm the poison debuff")
+	}
+
+	p.pos = vec3{20, 1, 20} // вышел из объёма (далеко от g1)
+	advance(w, clock, 60)   // 2 с яда → ~5 HP
+	want := insideHP - 5
+	if p.hp > want+1 || p.hp < want-1 {
+		t.Fatalf("poison outside: hp=%d, want ~%d (2.5 HP/s)", p.hp, want)
+	}
+
+	advance(w, clock, 300) // ещё 10 с: яд истекает на ~13-й секунде → всего ~25 HP
+	want = insideHP - 25
+	if p.hp > want+2 || p.hp < want-2 {
+		t.Fatalf("poison must expire after %v: hp=%d, want ~%d", gasPoisonDur, p.hp, want)
+	}
+	hp := p.hp
+	advance(w, clock, 120) // 4 с после истечения — HP не меняется
+	if p.hp != hp {
+		t.Fatalf("poison must stop after expiry: hp %d -> %d", hp, p.hp)
+	}
+}
+
+// (12) Отравление не переживает смерть: респавн с полным HP без яда.
+func TestGasPoisonDiesWithPlayer(t *testing.T) {
+	w, clock := gasTestWorld(t)
+	p := w.addPlayer(1, "p", "assault", -1)
+	w.takeOut()
+	p.pos = vec3{30, 1, 30}
+	g := w.cyber.devices["g1"]
+	armGas(w, g, *clock)
+	advance(w, clock, 550) // ~18.3 с: объёмный DoT 8 HP/s добирает 125 HP (яд внутри не дублируется)
+	if p.alive {
+		t.Fatalf("standing inside the gas must kill an assault eventually")
+	}
+	if !p.gasPoisonUntil.IsZero() {
+		t.Fatalf("death must clear the poison debuff")
 	}
 }

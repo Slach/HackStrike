@@ -56,6 +56,8 @@ var (
 	simComps   = flag.String("sim.comps", "", "фикс. составы: \"comp0,comp1\"")
 	simPassive = flag.Int("sim.passive", 0, "команда-жертва (1|2): держит базу, к целям не идёт")
 	simFixVault = flag.Bool("sim.fixvault", false, "абляция: d5/d6 размер [0.3,3,4] (закрыть обход хранилища)")
+	simSquads   = flag.String("sim.squads", "", "фикс. планы мяса: \"squad0,squad1\"")
+	simBaseWork = flag.Float64("sim.basework", 0, "абляция: длительность base-канала physafe, с (0 = константа ГДД)")
 )
 
 // fixVaultDoors — абляционная правка геометрии: створки d5/d6 лежат ПОПЕРЁК
@@ -164,9 +166,18 @@ var compPresets = map[string][]string{
 	"2SN+AR":   {"sniper", "sniper", "assault"},
 	"SN+2HV":   {"sniper", "heavy", "heavy"},
 	"AR+HV+SN": {"assault", "heavy", "sniper"},
+	"3SN":      {"sniper", "sniper", "sniper"},
+	// noh4* — БЕЗ хакера, 4 «мяса» (сценарии владельца 2026-11-21: «у одной
+	// команды хакер есть, у других только мясные»; noh4SN3HV — «1 снайпер и
+	// 3 хеви ломятся сразу на второй этаж»)
+	"noh4":      {"assault", "heavy", "sniper", "assault"},
+	"noh4SN3HV": {"sniper", "heavy", "heavy", "heavy"},
 }
 
-var compNames = []string{"3AR", "2AR+SN", "3HV", "2HV+SN", "2SN+AR", "SN+2HV", "AR+HV+SN"}
+var compNames = []string{"3AR", "2AR+SN", "3HV", "2HV+SN", "2SN+AR", "SN+2HV", "AR+HV+SN", "3SN"}
+
+// noHacker — составы без хакера (4 мяса вместо хакер+3).
+func noHacker(comp string) bool { return strings.HasPrefix(comp, "noh4") }
 
 func pickComp(rng *rand.Rand) string {
 	if rng.Float64() < 0.3 {
@@ -176,6 +187,14 @@ func pickComp(rng *rand.Rand) string {
 }
 
 func meatClasses(comp string, rng *rand.Rand) []string {
+	if comp == "noh4" {
+		pool := []string{"assault", "assault", "heavy", "heavy", "sniper"}
+		out := make([]string, 4)
+		for i := range out {
+			out[i] = pool[rng.Intn(len(pool))]
+		}
+		return out
+	}
 	if comp != "rnd" {
 		return append([]string(nil), compPresets[comp]...)
 	}
@@ -187,10 +206,10 @@ func meatClasses(comp string, rng *rand.Rand) []string {
 	return out
 }
 
-var hackerPlans = []string{"door_rush", "safe_rush", "hybrid", "defense", "disrupt", "valve_siege"}
+var hackerPlans = []string{"door_rush", "safe_rush", "hybrid", "defense", "disrupt", "valve_siege", "valve_brute"}
 
 func pickHackerPlan(rng *rand.Rand) string {
-	weights := []float64{0.28, 0.16, 0.12, 0.16, 0.16, 0.12}
+	weights := []float64{0.26, 0.15, 0.11, 0.15, 0.15, 0.11, 0.07}
 	r := rng.Float64()
 	for i, w := range weights {
 		if r < w {
@@ -201,10 +220,10 @@ func pickHackerPlan(rng *rand.Rand) string {
 	return "door_rush"
 }
 
-var squadPlans = []string{"escort", "push", "hold", "hunt"}
+var squadPlans = []string{"escort", "push", "hold", "hunt", "cover_brute", "wave", "assassin"}
 
 func pickSquadPlan(rng *rand.Rand) string {
-	weights := []float64{0.3, 0.35, 0.15, 0.2}
+	weights := []float64{0.25, 0.3, 0.1, 0.15, 0.1, 0.05, 0.05}
 	r := rng.Float64()
 	for i, w := range weights {
 		if r < w {
@@ -536,8 +555,8 @@ type objectivesStat struct {
 	RadarMsgs        [2]int     `json:"radarMsgs"`
 	CamFrames        [2]int     `json:"camFrames"`
 	BruteTries       int        `json:"bruteTries"`
-	BruteDoorT       float64    `json:"bruteDoorT"`
-	BruteSafeT       float64    `json:"bruteSafeT"`
+	BruteDoorT       [2]float64 `json:"bruteDoorT"` // когда команда вскрыла дверь брутом
+	BruteSafeT       [2]float64 `json:"bruteSafeT"` // когда команда вскрыла сейф брутом
 }
 
 type combatStat struct {
@@ -578,12 +597,23 @@ type teamBB struct {
 	safeCode     string
 	carrierID    uint64
 	enemyCarrier uint64
+
+	// relay-брут (план мяса cover_brute): угадайка общекомандная, пробует
+	// один бот за раз (ротация). Анти-флуд сервера персональный (player.
+	// enterAt), поэтому N ботов у клавиатуры = N-кратная каденция перебора —
+	// так и задумано: кооп-брутфорс легитимен. relay2 — то же для КОДА
+	// СЕЙФА (фаза 2, требует открытого клапана — без лавы).
+	relay    *codeGuesser
+	relayBy  uint64 // чья проба в полёте (ответ этого бота кормит relay)
+	relay2   *codeGuesser
+	relay2By uint64
 }
 
 type intelPos struct {
 	p      vec3
 	at     time.Time
 	jacked bool
+	by     uint64 // кто виден в метке (radar/cam ID; 0 — устройство/неизвестно)
 }
 
 type simBot struct {
@@ -645,7 +675,7 @@ type simBot struct {
 
 type hackerBrain struct {
 	plan       string
-	phase      string // entry | crack | guard
+	phase      string // entry | crack | guard | brute
 	ops        []hackOp
 	cur        *hackOp
 	entry      string
@@ -658,6 +688,7 @@ type hackerBrain struct {
 	chaffLeft  int
 	gasAt      time.Time
 	placed     map[string]bool
+	guesser    *codeGuesser // valve_brute: физический перебор кода двери после клапана
 }
 
 type hackOp struct {
@@ -740,6 +771,12 @@ func runSimGame(seed int64, ng, ngFix *navGrid) gameResult {
 			brute = [2]bool{false, false}
 		}
 	}
+	if *simSquads != "" {
+		parts := strings.Split(*simSquads, ",")
+		if len(parts) == 2 {
+			squad = [2]string{parts[0], parts[1]}
+		}
+	}
 	for t := 0; t < 2; t++ {
 		g.bb[t] = &teamBB{team: t, comp: comp[t], plan: plan[t], squad: squad[t],
 			brute: brute[t], passive: *simPassive == t+1}
@@ -747,9 +784,16 @@ func runSimGame(seed int64, ng, ngFix *navGrid) gameResult {
 
 	// игроки: по хакеру и 3 мясо в команде (spawnBot сам делает addPlayer —
 	// второй вызов заменял w.players[id] новым объектом, а боты держали
-	// протухший указатель и «водили» мёртвые тела)
+	// протухший указатель и «водили» мёртвые тела); noh4* — 4 мяса без хакера
 	id := uint64(1)
 	for t := 0; t < 2; t++ {
+		if noHacker(comp[t]) {
+			for _, c := range meatClasses(comp[t], rng) {
+				g.spawnBot(id, t, "meat", c)
+				id++
+			}
+			continue
+		}
 		g.spawnBot(id, t, "hacker", "hacker")
 		id++
 		cls := meatClasses(comp[t], rng)
@@ -761,6 +805,9 @@ func runSimGame(seed int64, ng, ngFix *navGrid) gameResult {
 			g.spawnBot(id, t, role, c)
 			id++
 		}
+	}
+	if *simBaseWork > 0 {
+		w.physafeBaseWork = *simBaseWork // абляция длительности base-канала
 	}
 	g.matchStart = w.matchEndsAt.Add(-w.matchLen)
 	if simTraceT != nil {
@@ -846,7 +893,10 @@ func (b *simBot) initBrain(g *simGame) {
 		b.mm.plan = "brute"
 		b.mm.bruteSafe = g.rng.Float64() < 0.6 // после двери брутить и код сейфа
 	}
-	// дверь хранилища: своя сторона предпочитает свой борт
+	// дверь хранилища: своя сторона предпочитает свой борт; альтернативы
+	// ЗЕРКАЛЬНЫ (d4↔d3 — точечная симметрия карты): раньше обе команды
+	// фолбэчились на d4/d3 с клавиатурами на восточной стороне — лишние
+	// метры только для запада
 	r := g.rng.Float64()
 	if b.team == 0 {
 		switch {
@@ -862,9 +912,9 @@ func (b *simBot) initBrain(g *simGame) {
 		case r < 0.5:
 			b.mm.vaultDoor = "d6"
 		case r < 0.75:
-			b.mm.vaultDoor = "d4"
-		default:
 			b.mm.vaultDoor = "d3"
+		default:
+			b.mm.vaultDoor = "d4"
 		}
 	}
 }
@@ -1122,27 +1172,27 @@ func (g *simGame) drain() {
 				g.ev.Alerts[b.team]++
 				b.inbox = append(b.inbox, msg)
 				if dev := g.w.cyber.devices[str(msg, "dev")]; dev != nil {
-					b.addIntel(g, dev.pos, false)
+					b.addIntel(g, dev.pos, false, 0)
 				}
 			}
 		case "radar":
 			if b := g.botByID(om.to); b != nil {
 				g.ev.RadarMsgs[b.team]++
 				b.inbox = append(b.inbox, msg)
-				if who, ok := msg["who"].([]radarWho); ok {
-					for _, r := range who {
-						if p, ok2 := g.w.players[r.ID]; ok2 {
-							b.addIntel(g, p.pos, true)
+					if who, ok := msg["who"].([]radarWho); ok {
+						for _, r := range who {
+							if p, ok2 := g.w.players[r.ID]; ok2 {
+								b.addIntel(g, p.pos, true, r.ID)
+							}
 						}
 					}
-				}
 			}
 		case "cam":
 			if b := g.botByID(om.to); b != nil {
 				g.ev.CamFrames[b.team]++
 				if seen, ok := msg["seen"].([]camSeen); ok {
 					for _, s := range seen {
-						b.addIntel(g, vec3{s.X, s.Y, s.Z}, false)
+						b.addIntel(g, vec3{s.X, s.Y, s.Z}, false, s.ID)
 					}
 				}
 			}
@@ -1322,8 +1372,8 @@ func dist2D(a, c vec3) float64 {
 	return math.Sqrt(dx*dx + dz*dz)
 }
 
-func (b *simBot) addIntel(g *simGame, p vec3, jacked bool) {
-	b.intel = append(b.intel, intelPos{p: p, at: g.clock, jacked: jacked})
+func (b *simBot) addIntel(g *simGame, p vec3, jacked bool, by uint64) {
+	b.intel = append(b.intel, intelPos{p: p, at: g.clock, jacked: jacked, by: by})
 }
 
 func (b *simBot) intelFresh(now time.Time) []intelPos {
@@ -1734,6 +1784,8 @@ func (b *simBot) hackerTick(g *simGame) {
 		b.entryTick(g)
 	case "crack":
 		b.crackTick(g)
+	case "brute":
+		b.hackerBruteTick(g)
 	default:
 		b.guardTick(g)
 	}
@@ -1765,8 +1817,12 @@ func (b *simBot) threatNear(g *simGame, r float64) bool {
 func (b *simBot) pickEntry(g *simGame) {
 	hh := &b.hh
 	var prefs []string
+	// СВОЙ терминал первым — симметрично для обеих команд. Раньше запад
+	// шёл к радио (r1/r2 в миде, лишние метры под огнём на каждый джек) —
+	// этот ботский bias, а не свойство карты, давал востоку 64.6% решённых
+	// матчей в смешанном прогоне 2026-11-20.
 	if b.team == 0 {
-		prefs = []string{"r1", "r2", "t1", "s1"}
+		prefs = []string{"t1", "r1", "r2", "s1"}
 	} else {
 		prefs = []string{"t2", "r1", "r2", "s2"}
 	}
@@ -2099,6 +2155,26 @@ func (b *simBot) replan(g *simGame) {
 			}
 		}
 		hh.phase = "guard" // рулим газом/дверью из jackedSide
+	case "valve_brute":
+		// Сценарий владельца 2026-11-21: хакер отключает лаву (v3 на 2F),
+		// затем выходит из деки и ФИЗИЧЕСКИ перебирает код двери умным
+		// алгоритмом (перепись цифр → перестановки), снайперы прикрывают.
+		if !g.valve3Open() {
+			if !known("v3") {
+				push(hackOp{kind: "scan"})
+				return
+			}
+			if !own("v3") {
+				push(hackOp{kind: "vuln", dev: "v3"}, hackOp{kind: "trojan", dev: "v3"})
+				return
+			}
+			push(hackOp{kind: "ctrl", dev: "v3"})
+			return
+		}
+		// клапан открыт — джек-аут и пешком к клавиатуре (анти-флуд не пускает
+		// джекнутого: enter у сервера — только физический ввод)
+		g.w.handleMessage(b.pl, message{"t": "jackout"})
+		hh.phase = "brute"
 	}
 }
 
@@ -2261,6 +2337,59 @@ func (b *simBot) crackTick(g *simGame) {
 	b.steer(g, vec3{}, math.Atan2(w.physafe.pos[0]-b.pl.pos[0], w.physafe.pos[2]-b.pl.pos[2]), 0)
 }
 
+// hackerBruteTick — план valve_brute, фаза «brute»: лава погашена, хакер
+// вне деки у клавиатуры своей двери хранилища; умный перебор (перепись
+// цифр → перестановки, hh.guesser), ответы — через onCodeReply. Под огнём
+// сначала отстрел, перебор ждёт.
+func (b *simBot) hackerBruteTick(g *simGame) {
+	if !g.valve3Open() { // клапан закрыли — вернуться в деку и перехватить
+		b.hh.phase = "entry"
+		return
+	}
+	doorID := "d5"
+	if b.team == 1 {
+		doorID = "d6"
+	}
+	dev := g.w.cyber.devices[doorID]
+	kp := g.nearestKeypad(doorID, b.pl.pos)
+	if dev == nil || kp == nil {
+		b.hh.phase = "guard"
+		return
+	}
+	if dev.open {
+		if g.ev.BruteDoorT[b.team] == 0 {
+			g.ev.BruteDoorT[b.team] = g.t()
+		}
+		b.hh.phase = "guard"
+		return
+	}
+	if b.hh.guesser == nil {
+		b.hh.guesser = &codeGuesser{}
+	}
+	if d := dist2D(b.pl.pos, kp.Pos); d > 2.0 {
+		if b.combatStep(g) {
+			return
+		}
+		if d > 3.2 {
+			b.setGoal(g, kp.Pos)
+			b.steerFollow(g)
+		} else {
+			dx, dz := kp.Pos[0]-b.pl.pos[0], kp.Pos[2]-b.pl.pos[2]
+			l := math.Max(1e-6, math.Hypot(dx, dz))
+			b.steer(g, vec3{dx / l, 0, dz / l}, math.Atan2(dx, dz), 0)
+		}
+		return
+	}
+	if b.combatStep(g) {
+		return
+	}
+	if b.enterCD.Before(g.clock) {
+		b.enterCD = g.clock.Add(2300 * time.Millisecond)
+		g.w.handleMessage(b.pl, message{"t": "enter", "dev": kp.ID, "code": b.hh.guesser.probe()})
+	}
+	b.steer(g, vec3{}, math.Atan2(kp.Pos[0]-b.pl.pos[0], kp.Pos[2]-b.pl.pos[2]), 0)
+}
+
 // --- мозг мяса --------------------------------------------------------------
 
 func (b *simBot) meatTick(g *simGame) {
@@ -2316,8 +2445,13 @@ func (b *simBot) meatTick(g *simGame) {
 			return
 		}
 		if b.rankNear(g, g.w.physafe.pos, 1) {
-			if b.combatStep(g) {
-				return
+			// сейф достижим — приоритет цели над боем (владелец 2026-11-21:
+			// «у ботов есть цель вскрыть physafe, оно должно работать»);
+			// отстрел только когда враг стоит прямо на пути к сейфу
+			if b.visTarget != nil && dist2D(b.visTarget.pos, g.w.physafe.pos) < 6 {
+				if b.combatStep(g) {
+					return
+				}
 			}
 			b.setGoal(g, g.w.physafe.pos)
 			b.steerFollow(g)
@@ -2336,6 +2470,12 @@ func (b *simBot) meatTick(g *simGame) {
 		b.holdTick(g)
 	case "hunt":
 		b.huntTick(g)
+	case "cover_brute":
+		b.coverBruteTick(g)
+	case "wave":
+		b.waveTick(g)
+	case "assassin":
+		b.assassinTick(g)
 	case "brute":
 		b.bruteTick(g)
 	default:
@@ -2402,8 +2542,9 @@ func (b *simBot) carryTick(g *simGame) {
 
 func (b *simBot) escortTick(g *simGame) {
 	bb := g.bb[b.team]
-	// код известен — эскорт превращается в пуш (цель уже доступна команде)
-	if bb.doorCode != "" {
+	// код известен ИЛИ дверь вскрыта (хакером с кодом или физическим
+	// перебором valve_brute) — эскорт превращается в пуш
+	if bb.doorCode != "" || g.vaultOpen() {
 		b.mm.plan = "push"
 		return
 	}
@@ -2513,6 +2654,188 @@ func (b *simBot) huntTick(g *simGame) {
 	b.steerFollow(g)
 }
 
+// coverBruteTick — кооп-брутфорс (запрос владельца 2026-11-21 «один
+// бруфорсит, остальные прикрывают»): рота у клавиатуры своей двери, пробует
+// ОБЩУЮ угадайку по ротации (персональный анти-флуд сервера легализует
+// эстафету — N ботов у клавиатуры дают N-кратную каденцию), бой обслуживает
+// combatStep в meatTick. Вскрыл — обычный пуш к сейфу.
+func (b *simBot) coverBruteTick(g *simGame) {
+	bb := g.bb[b.team]
+	if bb.doorCode != "" { // хакер добыл код — перебор не нужен
+		b.mm.plan = "push"
+		return
+	}
+	dev := g.w.cyber.devices[b.mm.vaultDoor]
+	kp := g.nearestKeypad(b.mm.vaultDoor, b.pl.pos)
+	if dev == nil || kp == nil {
+		b.mm.plan = "push"
+		return
+	}
+	if dev.open {
+		if g.ev.BruteDoorT[b.team] == 0 {
+			g.ev.BruteDoorT[b.team] = g.t()
+		}
+		if g.valve3Open() && bb.safeCode == "" && g.w.physafe.carrier == 0 {
+			b.safeRelayTick(g) // клапан открыт — эстафетой перебираем код сейфа
+			return
+		}
+		b.mm.plan = "push"
+		return
+	}
+	if bb.relay == nil {
+		bb.relay = &codeGuesser{}
+	}
+	if d := dist2D(b.pl.pos, kp.Pos); d > 2.4 {
+		b.setGoal(g, kp.Pos)
+		b.steerFollow(g)
+		return
+	}
+	// у клавиатуры: стоим, по ротации 33 тика (~1.1 с) кто-то один пробует —
+	// каждый бот не чаще своего анти-флуда (2 с), каденция команды 2с/N
+	var atKP []*simBot
+	for _, o := range g.bots {
+		if o.team != b.team || o.role == "hacker" || !o.pl.alive {
+			continue
+		}
+		if dist2D(o.pl.pos, kp.Pos) <= 2.4 {
+			atKP = append(atKP, o)
+		}
+	}
+	if len(atKP) > 0 {
+		prober := atKP[int(g.w.tick/33)%len(atKP)]
+		if prober.pl.id == b.pl.id && b.enterCD.Before(g.clock) {
+			b.enterCD = g.clock.Add(2300 * time.Millisecond)
+			bb.relayBy = b.pl.id
+			g.w.handleMessage(b.pl, message{"t": "enter", "dev": kp.ID, "code": bb.relay.probe()})
+		}
+	}
+	b.steer(g, vec3{}, b.pl.yaw+math.Sin(float64(g.w.tick)/20)*0.8, 0)
+}
+
+// safeRelayTick — фаза 2 кооп-брута (вопрос владельца 2026-11-21: «один
+// бруфорсит, остальные прикрывают»): клапан открыт (лавы нет), эстафетный
+// перебор КОДА СЕЙФА у physafe; найденный код вводится тем же ротационным
+// порядком — ввод верного кода сам стартует канал crack (3 с, урон прерывает).
+func (b *simBot) safeRelayTick(g *simGame) {
+	bb := g.bb[b.team]
+	if bb.safeCode != "" {
+		b.mm.plan = "push" // хакер decrypt'нул — открываем кодом как обычно
+		return
+	}
+	if bb.relay2 == nil {
+		bb.relay2 = &codeGuesser{}
+	}
+	ps := g.w.physafe.pos
+	const psEnter = 3.0 // сервер пускает enter в physafeTakeRadius+0.7
+	if d := dist2D(b.pl.pos, ps); d > psEnter {
+		b.setGoal(g, ps)
+		b.steerFollow(g)
+		return
+	}
+	var atPS []*simBot
+	for _, o := range g.bots {
+		if o.team != b.team || o.role == "hacker" || !o.pl.alive {
+			continue
+		}
+		if dist2D(o.pl.pos, ps) <= psEnter {
+			atPS = append(atPS, o)
+		}
+	}
+	if len(atPS) > 0 {
+		prober := atPS[int(g.w.tick/33)%len(atPS)]
+		if prober.pl.id == b.pl.id && b.enterCD.Before(g.clock) {
+			b.enterCD = g.clock.Add(2300 * time.Millisecond)
+			bb.relay2By = b.pl.id
+			g.w.handleMessage(b.pl, message{"t": "enter", "dev": "physafe", "code": bb.relay2.probe()})
+		}
+	}
+	b.steer(g, vec3{}, math.Atan2(ps[0]-b.pl.pos[0], ps[2]-b.pl.pos[2]), 0)
+}
+
+// waveTick — «мясная волна» (сценарий владельца: без хакера, 1 снайпер и 3
+// хеви ломятся на 2F и выносят сейф по очереди): каждый сам перебирает СВОЙ
+// код у клавиатуры (каденция 2с/N естественная), вскрыл — внутрь к сейфу.
+// Лава без клапана встречает волны смертей — сценарий и проверяет клапан-шлюз.
+func (b *simBot) waveTick(g *simGame) {
+	bb := g.bb[b.team]
+	dev := g.w.cyber.devices[b.mm.vaultDoor]
+	kp := g.nearestKeypad(b.mm.vaultDoor, b.pl.pos)
+	if dev == nil || kp == nil {
+		return
+	}
+	if dev.open {
+		if g.ev.BruteDoorT[b.team] == 0 {
+			g.ev.BruteDoorT[b.team] = g.t()
+		}
+		if g.w.physafe.carrier == 0 && b.canReachSafe(g) {
+			if d := dist2D(b.pl.pos, g.w.physafe.pos); d < 2.4 {
+				b.pressInteractPulse()
+				b.steer(g, vec3{}, math.Atan2(g.w.physafe.pos[0]-b.pl.pos[0], g.w.physafe.pos[2]-b.pl.pos[2]), 0)
+				return
+			}
+			b.setGoal(g, g.w.physafe.pos)
+			b.steerFollow(g)
+			return
+		}
+		return
+	}
+	if bb.doorCode != "" { // код всё-таки добыт — обычный ввод
+		b.approachKeypad(g, kp)
+		return
+	}
+	if d := dist2D(b.pl.pos, kp.Pos); d > 2.0 {
+		if d > 3.2 {
+			b.setGoal(g, kp.Pos)
+			b.steerFollow(g)
+		} else {
+			dx, dz := kp.Pos[0]-b.pl.pos[0], kp.Pos[2]-b.pl.pos[2]
+			l := math.Max(1e-6, math.Hypot(dx, dz))
+			b.steer(g, vec3{dx / l, 0, dz / l}, math.Atan2(dx, dz), 0)
+		}
+		return
+	}
+	if b.enterCD.Before(g.clock) {
+		b.enterCD = g.clock.Add(2300 * time.Millisecond)
+		g.w.handleMessage(b.pl, message{"t": "enter", "dev": kp.ID, "code": b.mm.guesser.probe()})
+	}
+	b.steer(g, vec3{}, math.Atan2(kp.Pos[0]-b.pl.pos[0], kp.Pos[2]-b.pl.pos[2]), 0)
+}
+
+// assassinTick — «мясной раш на чужого хакера» (запрос владельца 2026-11-21:
+// 3 снайпера + хакер убивают чужого хакера всегда, победа по фрагам). Цель —
+// только легитимные каналы: LOS (класс виден в прицеле) и radar/cam-метки
+// с ID игрока.
+func (b *simBot) assassinTick(g *simGame) {
+	eh := g.hackerOf(1 - b.team)
+	if eh == nil || !eh.pl.alive {
+		b.patrolTick(g) // враг без хакера — обычное патрулирование
+		return
+	}
+	if b.visTarget != nil && b.visTarget.id == eh.pl.id && b.visTarget.alive {
+		b.setGoal(g, eh.pl.pos)
+		b.steerFollow(g)
+		return
+	}
+	for _, it := range b.intelFresh(g.clock) {
+		if it.by == eh.pl.id {
+			b.setGoal(g, it.p)
+			b.steerFollow(g)
+			return
+		}
+	}
+	b.patrolTick(g)
+}
+
+// patrolTick — обход опорных точек мида (общая часть охоты/убийцы).
+func (b *simBot) patrolTick(g *simGame) {
+	wp := huntPoints[b.mm.wp%len(huntPoints)]
+	if dist2D(b.pl.pos, wp) < 2.5 {
+		b.mm.wp++
+	}
+	b.setGoal(g, wp)
+	b.steerFollow(g)
+}
+
 // bruteTick — физический перебор кодов на клавиатурах (проверка
 // «анти-брутфорс» §16.7): дверь хранилища, затем код сейфа у physafe.
 func (b *simBot) bruteTick(g *simGame) {
@@ -2525,8 +2848,8 @@ func (b *simBot) bruteTick(g *simGame) {
 		}
 		if door.open {
 			b.mm.phase = 1
-			if g.ev.BruteDoorT == 0 {
-				g.ev.BruteDoorT = g.t()
+			if g.ev.BruteDoorT[b.team] == 0 {
+				g.ev.BruteDoorT[b.team] = g.t()
 			}
 			return
 		}
@@ -2598,89 +2921,149 @@ func (g *simGame) hackerOf(team int) *simBot {
 	return nil
 }
 
-// --- брутфорс-угадайка: одна позиция за цикл проб, ответ = floor+1 ----------
+// --- брутфорс-угадайка: двухфазный алгоритм (предложение владельца 2026-11-21)
+//
+// Фаза 1 «перепись»: пробы 0000, 1111, ..., 9999 дают census[d] — сколько
+// позиций кода заняты цифрой d (hintMatch считает точные совпадения позиций;
+// сумма census всегда 4). Как только сумма набрана, остальные цифры — нули,
+// перепись обрывается раньше десятой пробы.
+//
+// Фаза 2 «перестановки»: код — FNV-1a от имени поколения, цифры МОГУТ
+// повторяться, поэтому перебираем все РАЗЛИЧНЫЕ перестановки мультимножества
+// (максимум 24 при четырёх разных цифрах). match==4 — код найден. Если все
+// перестановки исчерпаны — код сменился (ротация door_key посреди перебора),
+// перепись начинается заново.
+//
+// Итого ~7-10 проб переписи + ~12 перестановок в среднем против ~40 у наивной
+// позиционной угадайки: ~40 с соло при анти-флуде 2 с, 2с/N с эстафетой.
 
 type codeGuesser struct {
-	known [4]int
-	resp  [10]int // ответы на цифры текущей позиции
-	pos   int
-	dig   int
-	seen  int
-	done  bool
+	census [10]int
+	phase  int      // 0 = перепись, 1 = перестановки
+	dig    int      // текущая цифра переписи
+	perms  []string // кандидаты фазы 2
+	permI  int
+	done   bool
+	code   string
 }
 
 func (cg *codeGuesser) probe() string {
 	if cg.done {
-		return fmt.Sprintf("%d%d%d%d", cg.known[0], cg.known[1], cg.known[2], cg.known[3])
+		return cg.code
 	}
-	var sb [4]byte
-	for i := 0; i < 4; i++ {
-		if i == cg.pos {
-			sb[i] = byte('0' + cg.dig)
-		} else if cg.known[i] >= 0 {
-			sb[i] = byte('0' + cg.known[i])
-		} else {
-			sb[i] = '0'
-		}
+	if cg.phase == 0 {
+		return fmt.Sprintf("%d%d%d%d", cg.dig, cg.dig, cg.dig, cg.dig)
 	}
-	return string(sb[:])
+	if cg.permI >= len(cg.perms) {
+		*cg = codeGuesser{} // рестарт: код сменился посреди перебора
+		return "0000"
+	}
+	return cg.perms[cg.permI]
 }
 
 func (cg *codeGuesser) onReply(match int) {
-	if cg.done {
+	if cg.done || match < 0 {
 		return
 	}
-	if cg.pos > 3 {
+	if cg.phase == 0 {
+		cg.census[cg.dig] = match
+		cg.dig++
+		sum := 0
+		for _, c := range cg.census {
+			sum += c
+		}
+		if sum > 4 {
+			// перепись «разъехалась»: код сменился посреди неё (ротация
+			// door_key 120 с) — начинается заново
+			*cg = codeGuesser{}
+			return
+		}
+		if sum == 4 || cg.dig > 9 {
+			cg.perms = multisetPerms(cg.census)
+			cg.phase = 1
+		}
+		return
+	}
+	cur := cg.perms[cg.permI]
+	cg.permI++
+	if match == 4 {
 		cg.done = true
-		return
+		cg.code = cur
 	}
-	cg.resp[cg.dig] = match
-	cg.seen++
-	cg.dig++
-	if cg.dig > 9 {
-		// позиция просканирована: верная цифра даёт ответ на 1 больше минимума
-		minR := cg.resp[0]
-		for d := 1; d < 10; d++ {
-			if cg.resp[d] < minR {
-				minR = cg.resp[d]
-			}
-		}
-		found := -1
-		for d := 0; d < 10; d++ {
-			if cg.resp[d] == minR+1 {
-				found = d
-				break
-			}
-		}
-		if found >= 0 {
-			cg.known[cg.pos] = found
-		}
-		cg.pos++
-		cg.dig = 0
-		cg.seen = 0
-		cg.resp = [10]int{}
-		if cg.pos > 3 {
-			cg.done = true
+}
+
+// multisetPerms — все различные перестановки мультимножества цифр census.
+// Защита: не более 4 цифр (перепись, смешанная с ротацией кода, может дать
+// сумму >4 — лишнее отсекается).
+func multisetPerms(census [10]int) []string {
+	var digits []byte
+	for d := 0; d < 10 && len(digits) < 4; d++ {
+		for i := 0; i < census[d] && len(digits) < 4; i++ {
+			digits = append(digits, byte('0'+d))
 		}
 	}
+	sort.Slice(digits, func(i, j int) bool { return digits[i] < digits[j] })
+	var out []string
+	var buf [4]byte
+	used := make([]bool, len(digits))
+	var rec func(k int)
+	rec = func(k int) {
+		if k == len(digits) {
+			out = append(out, string(buf[:]))
+			return
+		}
+		for i := range digits {
+			if used[i] || (i > 0 && digits[i] == digits[i-1] && !used[i-1]) {
+				continue
+			}
+			used[i] = true
+			buf[k] = digits[i]
+			rec(k + 1)
+			used[i] = false
+		}
+	}
+	rec(0)
+	return out
 }
 
 // onCodeReply — ответ клавиатуры/сейфа на ввод: угадайка + метрики брутфорса.
 func (b *simBot) onCodeReply(g *simGame, msg message) {
+	bb := g.bb[b.team]
 	if msg["ok"] == true {
-		if b.mm.plan == "brute" && b.mm.phase == 1 && str(msg, "dev") == "physafe" && g.ev.BruteSafeT == 0 {
-			g.ev.BruteSafeT = g.t()
+		if str(msg, "dev") == "physafe" && g.ev.BruteSafeT[b.team] == 0 &&
+			((b.mm.plan == "brute" && b.mm.phase == 1) || b.mm.plan == "cover_brute") {
+			g.ev.BruteSafeT[b.team] = g.t() // код сейфа подобран брутом
 		}
 		return
 	}
-	match := int(num(msg, "match"))
+	// hintMatch у сервера — int (num() читает только float64 и давал 0:
+	// перепись не сходилась и перебор крутился вечно)
+	match := asInt(msg["match"])
 	if match < 0 {
 		return // анти-флуд: ответ без подсказки — в статистику не идёт
+	}
+	dev := str(msg, "dev")
+	// relay-брут: ответ кормит ОБЩУЮ угадайку команды (проба этого бота в полёте)
+	if b.mm.plan == "cover_brute" && strings.HasPrefix(dev, "k") && bb.relay != nil && bb.relayBy == b.pl.id {
+		g.ev.BruteTries++
+		bb.relay.onReply(match)
+		return
+	}
+	// relay-брут кода сейфа (фаза 2, клапан открыт)
+	if b.mm.plan == "cover_brute" && dev == "physafe" && bb.relay2 != nil && bb.relay2By == b.pl.id {
+		g.ev.BruteTries++
+		bb.relay2.onReply(match)
+		return
+	}
+	// хакер в фазе физического перебора (valve_brute)
+	if b.role == "hacker" && b.hh.plan == "valve_brute" && b.hh.phase == "brute" && strings.HasPrefix(dev, "k") {
+		g.ev.BruteTries++
+		b.hh.guesser.onReply(match)
+		return
 	}
 	if b.mm.plan != "brute" {
 		return
 	}
-	dev := str(msg, "dev")
 	if b.mm.phase == 0 && strings.HasPrefix(dev, "k") {
 		g.ev.BruteTries++
 		b.mm.guesser.onReply(match)
@@ -2726,7 +3109,9 @@ func computeSummary(results []gameResult, wall time.Duration) map[string]any {
 	safeSum, safeCnt := [2]float64{}, [2]int{}
 	vaultSum, vaultCnt := 0.0, 0
 	chanSum, chanCnt := 0.0, 0
-	bruteGames, bruteDoorOK, bruteSafeOK := 0, 0, 0
+	bruteGames := 0
+	bruteSafeOK := [2]int{}
+	bruteDoorOK := [2]int{}
 	for _, r := range results {
 		overall.add(r)
 		byReason[r.Reason]++
@@ -2786,13 +3171,21 @@ func computeSummary(results []gameResult, wall time.Duration) map[string]any {
 				jackedDeaths += p.JackedDeaths
 			}
 		}
-		if r.Brute[0] || r.Brute[1] {
-			bruteGames++
-			if r.Objectives.BruteDoorT > 0 {
-				bruteDoorOK++
+		hasBrute := r.Brute[0] || r.Brute[1]
+		for t := 0; t < 2; t++ {
+			if r.Squad[t] == "cover_brute" || r.Squad[t] == "wave" || r.Plan[t] == "valve_brute" {
+				hasBrute = true
 			}
-			if r.Objectives.BruteSafeT > 0 {
-				bruteSafeOK++
+			if r.Objectives.BruteDoorT[t] > 0 {
+				bruteDoorOK[t]++
+			}
+		}
+		if hasBrute {
+			bruteGames++
+		}
+		for t := 0; t < 2; t++ {
+			if r.Objectives.BruteSafeT[t] > 0 {
+				bruteSafeOK[t]++
 			}
 		}
 	}
@@ -2859,7 +3252,8 @@ func computeSummary(results []gameResult, wall time.Duration) map[string]any {
 			"camFrames":        obj.CamFrames,
 			"brute": map[string]any{
 				"games": bruteGames, "hintTries": obj.BruteTries,
-				"doorOpened": bruteDoorOK, "safeOpened": bruteSafeOK,
+				"doorOpened": []int{bruteDoorOK[0], bruteDoorOK[1]},
+					"safeOpened": []int{bruteSafeOK[0], bruteSafeOK[1]},
 			},
 		},
 		"combat": map[string]any{
@@ -2881,8 +3275,9 @@ func TestSimDebug(t *testing.T) {
 	ng := buildNavGrid(m)
 	simTraceT = t
 	defer func() { simTraceT = nil }()
-	*simComps = "3AR,3AR"
-	*simTeams = "door_rush,defense"
+	*simComps = "3SN,3AR"
+	*simTeams = "valve_brute,door_rush"
+	*simSquads = "escort,push"
 	*simPassive = 0
 	res := runSimGame(42, ng, ng)
 	t.Logf("RESULT winner=%d reason=%s dur=%.0f scores=%v", res.Winner, res.Reason, res.DurationS, res.Scores)

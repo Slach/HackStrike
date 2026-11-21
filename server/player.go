@@ -99,4 +99,9 @@ type player struct {
 	prevInteract bool      // edge-детект space между тиками
 	enterAt      time.Time // §16.7: анти-флуд кода на клавиатуре d3 (1/2 с)
 	carry        bool      // §16.6: несёт PHYSAFE (×0.5 скорость, джек-ин нельзя)
+
+	// §14.2 (rev 2026-11-21): отравление газом — объёмный DoT продлевает его,
+	// после выхода яд продолжает жечь gasPoisonDPS ещё gasPoisonDur.
+	gasPoisonUntil time.Time
+	gasPoisonOwner uint64 // кто взвёл отравивший газ (атрибуция килла)
 }

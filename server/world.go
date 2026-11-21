@@ -97,6 +97,17 @@ type world struct {
 	// взвода); списания — целыми очками, не зависят от тик-рейта.
 	fireDebt map[fireDebtKey]float64
 
+	// gasPoisonDebt — float-долг отравления (§14.2 rev 2026-11-21): яд после
+	// выхода из объёма, ключ — игрок (отравление одно на игрока, источник
+	// перезаписывается последним урон-тиком в объёме).
+	gasPoisonDebt map[uint64]float64
+
+	// Каналы physafe (§16.6) — поля, а не константы: бенч-абляции (флаг
+	// -sim.basework) меняют длительность base-канала per-match без правки
+	// боевых констант ГДД.
+	physafeCrackWork float64
+	physafeBaseWork  float64
+
 	// netF — сетевой фактор прогресса программ на ТЕКУЩИЙ тик (§16.3,
 	// честные очереди на линках). Пересчитывается в начале simulateTick по
 	// всем игрокам сразу — конкуренция за bw межигроковая.
@@ -146,8 +157,11 @@ func newWorld(m *gameMap) *world {
 		fragLimit: fragLimit,
 		matchLen:  matchDuration,
 		now:       time.Now,
-		gasDebt:   make(map[gasDebtKey]float64),
-		fireDebt:  make(map[fireDebtKey]float64),
+		gasDebt:          make(map[gasDebtKey]float64),
+		fireDebt:         make(map[fireDebtKey]float64),
+		gasPoisonDebt:    make(map[uint64]float64),
+		physafeCrackWork: physafeChannelWork,
+		physafeBaseWork:  physafeBaseChannelWork,
 	}
 	// §16.6: домашняя позиция PHYSAFE из карты (за код-дверьми, у лавы)
 	for _, p := range m.props {

@@ -110,6 +110,12 @@ const (
 	gasDPS       = 8.0                     // HP/с
 	gasTelegraph = 1500 * time.Millisecond // мигание перед первым уроном
 
+	// Яд (§14.2, ревизия 2026-11-21 — решение владельца «газ отравленный»):
+	// каждый урон-тик в объёме продлевает отравление, и после выхода из
+	// объёма яд продолжает жечь медленно. Механика антидота — в roadmap.
+	gasPoisonDur = 10 * time.Second // сколько секунд яд жжёт после выхода
+	gasPoisonDPS = 2.5              // HP/с отравления вне объёма
+
 	// M4 объект 2 «пол-лава» → огонь (§14.6.1, ревизия v1): постоянный DoT
 	// внутри AABB полосы, без телеграфа; горит пока водяной клапан закрыт.
 	lavaDPS = 25.0 // HP/с
@@ -3068,6 +3074,11 @@ func (w *world) radarFeedTick() {
 // живой игрок, чей AABB пересекает объём пропа, копит float-долг, и при
 // переполнении получает урон целыми очками (FF ON, мёртвым — ничего). Долг
 // сбрасывается при смене момента взвода (close→open рестартит телеграф).
+//
+// Отравление (rev 2026-11-21, решение владельца «газ отравленный»): каждый
+// урон-тик внутри объёма продлевает игроку gasPoisonUntil; после выхода
+// (или снятия газа — яд уже в крови) HP продолжает падать gasPoisonDPS ещё
+// gasPoisonDur. Антидот — будущая механика (roadmap).
 func (w *world) gasTick(dt float64) {
 	if len(w.cyber.gases) == 0 {
 		return
@@ -3084,6 +3095,9 @@ func (w *world) gasTick(dt float64) {
 			if !pl.alive || !boxesOverlap(playerBoxAt(pl.pos), g.box) {
 				continue
 			}
+			// яд: урон-тик в объёме освежает отравление (источник — владелец газа)
+			pl.gasPoisonUntil = now.Add(gasPoisonDur)
+			pl.gasPoisonOwner = g.owner
 			key := gasDebtKey{dev: g.id, arm: g.gasArmCount, pl: pl.id}
 			debt, ok := w.gasDebt[key]
 			if !ok { // свежий ключ: первый тик внутри объёма не начисляет — долг с нуля
@@ -3099,6 +3113,39 @@ func (w *world) gasTick(dt float64) {
 			w.gasDebt[key] = debt
 		}
 	}
+	// Фаза яда: живой с активным отравлением вне урон-объёмов продолжает
+	// терять HP. Мёртвым сбрасываем сразу — отравление не переживает респавн.
+	for _, pl := range w.players {
+		if !pl.alive {
+			pl.gasPoisonUntil = time.Time{}
+			continue
+		}
+		if pl.gasPoisonUntil.IsZero() || !now.Before(pl.gasPoisonUntil) {
+			continue
+		}
+		if w.inArmedGas(pl.pos, now) {
+			continue // внутри объёма уже жжёт объёмный DoT — яд не дублируем
+		}
+		debt := w.gasPoisonDebt[pl.id] + gasPoisonDPS*dt
+		if whole := int(debt); whole > 0 {
+			debt -= float64(whole)
+			w.envDamage(pl, whole, pl.gasPoisonOwner)
+		}
+		w.gasPoisonDebt[pl.id] = debt
+	}
+}
+
+// inArmedGas — игрок внутри хотя бы одного ОТКРЫТОГО газа за телеграфом.
+func (w *world) inArmedGas(p vec3, now time.Time) bool {
+	for _, g := range w.cyber.gases {
+		if !g.open || g.gasArmAt.IsZero() || now.Sub(g.gasArmAt) < gasTelegraph {
+			continue
+		}
+		if boxesOverlap(playerBoxAt(p), g.box) {
+			return true
+		}
+	}
+	return false
 }
 
 // fireTick — §14.6.1: DoT огненных полос, комната-горутина, сразу после
@@ -3323,9 +3370,9 @@ func (w *world) physafeTick(dt float64) {
 	}
 	w.physafe.chProgress += dt
 	// на месте 3 с (сейф под огнём лавы — быстро), на базе 6 с (плейтест)
-	work := physafeChannelWork
+	work := w.physafeCrackWork
 	if w.physafe.chKind == "base" {
-		work = physafeBaseChannelWork
+		work = w.physafeBaseWork
 	}
 	if w.tick%tickRate == 0 {
 		w.broadcast(message{"t": "extract", "team": w.physafe.chTeam, "stage": "channel",

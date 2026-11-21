@@ -705,8 +705,10 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// → s5 и стояки c43 s4—s3 / c44 s5—s3 (+2 кабеля) — у s3 четыре аплинка
 	// (s2/s6/s4/s5): сеть хранилища — меш, firewall на одном транзите ветку
 	// больше не отрезает.
-	if len(cs.order) != 38 || len(cs.cables) != 39 || len(cs.doors) != 6 || len(cs.gases) != 2 {
-		t.Fatalf("m1 props: want 38 devices / 37 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
+	// симметрия (2026-11-21): c45 s1—s3 (bw 40) — зеркало c9 s2—s3; без него
+	// s1 (запад-мид) ходил на s3 в обход (через s2 или s6).
+	if len(cs.order) != 38 || len(cs.cables) != 40 || len(cs.doors) != 6 || len(cs.gases) != 2 {
+		t.Fatalf("m1 props: want 38 devices / 38 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {

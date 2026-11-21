@@ -234,9 +234,17 @@ check('после ухода 2v0 → 1v1', new Set(remaining).size === remaining
     return s ? s.devices.map((d) => d.id) : []
   }
   const need = ['srv1', 'netsafe', 'd3']
-  for (let i = 0; i < 6 && !need.every((id) => seenIDs().includes(id)); i++) {
+  for (let i = 0; i < 12 && !need.every((id) => seenIDs().includes(id)); i++) {
     send(H, { t: 'run', prog: 'portscan' })
-    await waitNew(H, 'scan').catch(() => {})
+    // ждать ПОЛНОГО завершения скана (scan шлётся по завершении); посылать
+    // следующий поверх работающего нельзя — честные очереди §16.3 делят
+    // магистраль между параллельными сканами и раскрытие ползёт
+    // (отловлено 2026-11-21: 3 параллельных portscan'а — ETA 30-45 с)
+    for (let j = 0; j < 200; j++) {
+      const d = [...H.msgs].reverse().find((m) => m.t === 'deck')
+      if (d && (d.progs || []).length === 0) break
+      await sleep(100)
+    }
     await sleep(200)
   }
   const ids = seenIDs()
