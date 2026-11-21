@@ -245,6 +245,7 @@ type navNode struct {
 	x, z, h float64
 	flags   uint8
 	door    string // проп двери, перекрывающий точку стояния
+	gas     string // газовый объём, накрывающий точку (per-volume штрафы)
 }
 
 type navGrid struct {
@@ -359,6 +360,7 @@ func buildNavGrid(m *gameMap) *navGrid {
 				for _, gb := range gasBoxes {
 					if boxesOverlap(b, gb.box) {
 						n.flags |= navGas
+						n.gas = gb.id
 					}
 				}
 				for _, db := range doorBoxes {
@@ -444,7 +446,7 @@ func abs(v int) int {
 
 // path — A*: from→to; pass решает проходимость узлов-дверей, extra
 // добавляет штраф за флаги (лава/газ — мировое состояние).
-func (ng *navGrid) path(from, to vec3, pass func(string) bool, extra func(uint8) float64) []navNode {
+func (ng *navGrid) path(from, to vec3, pass func(string) bool, extra func(*navNode) float64) []navNode {
 	s, t := ng.nearestNode(from), ng.nearestNode(to)
 	if s < 0 || t < 0 {
 		return nil
@@ -488,7 +490,7 @@ func (ng *navGrid) path(from, to vec3, pass func(string) bool, extra func(uint8)
 			}
 			w := math.Hypot(m.x-nd.x, m.z-nd.z) + 0.01
 			if extra != nil {
-				w += extra(m.flags)
+				w += extra(m)
 			}
 			if m.door != "" {
 				w += 2 // двери — не любим даже проходимые
@@ -1311,17 +1313,19 @@ func (g *simGame) vaultOpen() bool {
 }
 
 // navExtra — мировые штрафы пути: лава (пока клапан закрыт) и газ.
-func (g *simGame) navExtra(flags uint8) float64 {
+// Газ — per-volume (узел знает свой объём): закрытый объём — лёгкий штраф
+// «пробегать не хочется», ОТКРЫТЫЙ — тяжёлый. Раньше любой открытый газ
+// карал все газовые узлы карты — боты обходили и не-отравленные лестницы.
+func (g *simGame) navExtra(n *navNode) float64 {
 	c := 0.0
-	if flags&navLava != 0 && !g.valve3Open() {
+	if n.flags&navLava != 0 && !g.valve3Open() {
 		c += 10
 	}
-	if flags&navGas != 0 {
+	if n.flags&navGas != 0 {
 		c += 1.5
-		for _, gs := range g.w.cyber.gases {
-			if gs.open {
-				c += 4.5
-				break
+		if n.gas != "" {
+			if gs := g.w.cyber.devices[n.gas]; gs != nil && gs.open {
+				c += 6 // armed: 8 HP/s + яд — пересекать только при нужде
 			}
 		}
 	}
@@ -1523,8 +1527,26 @@ func (b *simBot) setGoal(g *simGame, to vec3) {
 	b.repathCD = g.clock.Add(700 * time.Millisecond)
 	b.goal = to
 	b.goalSet = true
-	b.path = g.ng.path(b.pl.pos, to, g.doorPass, g.navExtra)
+	b.path = g.ng.path(b.pl.pos, to, g.doorPass, b.navFor(g))
 	b.pathI = 0
+}
+
+// navFor — штрафы пути для ТЕКУЩЕГО решения. 10% решений бот игнорирует газ
+// (владелец 2026-11-21: «боты всегда обходят — пусть в 10% случаев идут
+// через газ»): люди иногда едят DoT ради позиции/тайминга. Решение живёт до
+// следующего перестроения пути. Лава не bravery-ится: 25 HP/s — не
+// геройство, а гарантированная смерть.
+func (b *simBot) navFor(g *simGame) func(*navNode) float64 {
+	if g.rng.Float64() < 0.10 {
+		return func(n *navNode) float64 {
+			c := 0.0
+			if n.flags&navLava != 0 && !g.valve3Open() {
+				c += 10
+			}
+			return c
+		}
+	}
+	return g.navExtra
 }
 
 // follow — идти по пути: возвращает желаемое движение; открывает двери
@@ -2292,13 +2314,16 @@ func (b *simBot) jackedSide(g *simGame) {
 		if gs.owner != b.pl.id || !reach[gs.id] {
 			continue
 		}
+		// враг «в объёме» или подходит (<10 м от центра) — взводим; люди
+		// взводят газ, ВИДЯ, что кто-то идёт к лестнице, а не стоя внутри
+		center := gs.box.min.add(gs.box.max).scaled(0.5)
 		enemyIn := false
 		for _, it := range b.intelFresh(g.clock) {
-			if boxesOverlap(playerBoxAt(it.p), gs.box) {
+			if boxesOverlap(playerBoxAt(it.p), gs.box) || dist2D(it.p, center) < 10 {
 				enemyIn = true
 			}
 		}
-		if b.visTarget != nil && boxesOverlap(playerBoxAt(b.visTarget.pos), gs.box) {
+		if b.visTarget != nil && (boxesOverlap(playerBoxAt(b.visTarget.pos), gs.box) || dist2D(b.visTarget.pos, center) < 10) {
 			enemyIn = true
 		}
 		switch {
@@ -3307,5 +3332,49 @@ func TestSimDebug(t *testing.T) {
 	for _, p := range res.Players {
 		t.Logf("p%d t%d %-7s frags=%d deaths=%d shots=%d hits=%d progs=%d troj=%d jackS=%.0f",
 			p.ID, p.Team, p.Cls, p.Frags, p.Deaths, p.Shots, p.Hits, p.ProgsRun, p.Trojans, p.JackedS)
+	}
+}
+
+// TestStairGasDetour — проверка вопросов владельца 2026-11-21: газовая шахта
+// g3 покрывает ВСЕ ступени СЗ-лестницы, а при взводе путь 1F→2F идёт через
+// ДРУГУЮ лестницу (ЮЗ), а не через отравленную.
+func TestStairGasDetour(t *testing.T) {
+	m, _ := parseGameMap(h2dm1JSON)
+	w := newWorld(m)
+	ng := buildNavGrid(m)
+	g3 := w.cyber.devices["g3"]
+	steps, inVol := 0, 0
+	for _, c := range m.Colliders {
+		if c.Kind != "stair" || c.Min[2] > 6 || c.Min[0] > 20 {
+			continue
+		}
+		steps++
+		if boxesOverlap(aabb{vec3(c.Min), vec3(c.Max)}, g3.box) {
+			inVol++
+		}
+	}
+	if steps == 0 || inVol != steps {
+		t.Fatalf("g3 must cover the whole NW stair shaft, got %d/%d", inVol, steps)
+	}
+	g3.open = true
+	g := &simGame{w: w, ng: ng}
+	p := ng.path(vec3{10, 1, 32}, vec3{33, 8, 33}, func(string) bool { return true }, g.navExtra)
+	if len(p) == 0 {
+		t.Fatalf("no route to the vault with g3 armed")
+	}
+	nw, tops := 0, 0
+	for _, n := range p {
+		if n.gas == "g3" {
+			nw++
+		}
+		if n.h > 7.5 {
+			tops++
+		}
+	}
+	if nw > 2 {
+		t.Fatalf("route must detour the armed NW shaft, got %d g3 nodes", nw)
+	}
+	if tops == 0 {
+		t.Fatalf("route must reach 2F")
 	}
 }
