@@ -6,8 +6,9 @@
 зелёный «H» на тёмном фоне, палитра — из index.html (:root): --cy #37ff9b,
 фон #020e08 (панель, сплющенная в solid).
 
-Использование: python3 gen_pwa_icons.py [выходной-каталог]
-Пишет icon-192.png, icon-512.png, apple-touch-icon.png (180).
+Использование: python3 tools/gen_pwa_icons.py [выходной-каталог]
+По умолчанию пишет client/public/pwa/: icon-192.png, icon-512.png,
+apple-touch-icon.png (180).
 """
 
 import struct
@@ -48,7 +49,7 @@ def render(size: int) -> bytes:
 
 
 def main() -> None:
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "public" / "pwa")
+    out = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parent.parent / "client" / "public" / "pwa")
     out.mkdir(parents=True, exist_ok=True)
     for name, size in (("icon-192.png", 192), ("icon-512.png", 512), ("apple-touch-icon.png", 180)):
         (out / name).write_bytes(render(size))
