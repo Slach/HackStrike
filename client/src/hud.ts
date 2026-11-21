@@ -423,6 +423,8 @@ export class Hud {
     pwaInstallBtn: byId<HTMLButtonElement>('pwaInstallBtn'),
     pwaClose: byId('pwaClose'),
     pwaBanner: byId<HTMLButtonElement>('pwaBanner'),
+    pwaLightbox: byId('pwaLightbox'),
+    pwaLightboxImg: byId<HTMLImageElement>('pwaLightboxImg'),
     deploy: byId<HTMLButtonElement>('deployBtn'),
     resume: byId<HTMLButtonElement>('resumeBtn'),
     joinStatus: byId('joinStatus'),
@@ -632,6 +634,20 @@ export class Hud {
     this.el.pwa.addEventListener('click', (e) => {
       if (e.target === this.el.pwa) this.el.pwa.classList.add('hidden')
     })
+    // Тап по шагу (вся карточка — крупнее зона тапа) разворачивает скрин на
+    // весь экран; тап по развёрнутому закрывает (§15.37 ревебр owner: в
+    // портрете миниатюра нечитаема). Клик не доходит до backdrop-закрытия
+    // модалки — e.target внутри лайтбокса, не сам #joinPwa.
+    for (const step of this.el.pwa.querySelectorAll('.pwaStep')) {
+      const img = step.querySelector('img')
+      if (!img) continue
+      step.addEventListener('click', () => {
+        this.el.pwaLightboxImg.src = img.src
+        this.el.pwaLightboxImg.alt = img.alt
+        this.el.pwaLightbox.classList.remove('hidden')
+      })
+    }
+    this.el.pwaLightbox.addEventListener('click', () => this.el.pwaLightbox.classList.add('hidden'))
     // Android Chrome шлёт beforeinstallprompt (с манифестом §15.37) — даём
     // нативный диалог вместо ручных шагов; iOS события не шлёт, там кнопка
     // остаётся скрытой и путь только через скриншоты.
@@ -656,6 +672,7 @@ export class Hud {
         this.el.settings.classList.add('hidden')
         this.el.invite.classList.add('hidden')
         this.el.pwa.classList.add('hidden')
+        this.el.pwaLightbox.classList.add('hidden')
       }
       // скип полёт-титров любой клавишей
       if (!this.el.crawl.classList.contains('hidden')) this.hideCrawl()

@@ -3381,6 +3381,39 @@
         color: var(--cy);
         margin-right: 4px;
       }
+      /* §15.37 (ревебр owner): в портрете миниатюры нечитаемы — тап по шагу
+         разворачивает скрин на весь экран, тап по нему закрывает. fixed, а
+         не absolute: join на телефоне скроллится (§15.3) — лайтбокс должен
+         держаться к вьюпорту, не к контенту */
+      .pwaStep {
+        cursor: zoom-in;
+      }
+      .pwaLightbox {
+        position: fixed;
+        inset: 0;
+        z-index: 3; /* поверх .setPanel внутри .settings (z 2) */
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        background: rgba(0, 0, 0, 0.92);
+        padding: 12px;
+        cursor: zoom-out;
+      }
+      .pwaLightbox img {
+        max-width: 94%;
+        max-height: 86%;
+        object-fit: contain;
+        background: #04120a;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      .pwaLightboxCap {
+        font-size: 11px;
+        letter-spacing: 2px;
+        color: var(--cy);
+      }
       /* §15.18: iOS Safari ломает touch-drag бегунка range под
          -webkit-user-select:none (body.touch) — чекбокс (тап) жив, слайдеры
          мертвы (ревебр owner). Возвращаем auto точечно; на touch — none
@@ -3962,7 +3995,8 @@
           <div class="setHead">УСТАНОВКА // УДОБНАЯ ИГРА</div>
           <div class="pwaWhy">В браузерной вкладке игра теряет часть экрана
             под бары, а на iPhone полный экран не работает вовсе. Установи
-            игру как приложение — откроется во весь экран, как настоящая.</div>
+            игру как приложение — откроется во весь экран, как настоящая.
+            <b>Тапни по скрину</b> — откроет на весь экран.</div>
           <div id="pwaIos" class="pwaSteps hidden">
             <div class="pwaStep"><img src="/pwa/ios-1.png" alt="Safari: кнопка Поделиться внизу" loading="lazy" /><div class="pwaCap"><span class="pwaN">1.</span>Внизу Safari — кнопка <b>«Поделиться»</b> (квадрат со стрелкой)</div></div>
             <div class="pwaStep"><img src="/pwa/ios-2.png" alt="Меню Safari: Share" loading="lazy" /><div class="pwaCap"><span class="pwaN">2.</span>В меню выбери <b>Share</b></div></div>
@@ -3978,6 +4012,12 @@
             <button id="pwaInstallBtn" class="btn small hidden" type="button">↓ УСТАНОВИТЬ</button>
             <button id="pwaClose" class="btn small ghost" type="button">ИГРАТЬ В БРАУЗЕРЕ</button>
           </div>
+        </div>
+        <!-- §15.37 (ревебр owner): разворот шага на весь экран; тап закрывает.
+             Внутри #joinPwa — прячется вместе с модалкой. -->
+        <div id="pwaLightbox" class="pwaLightbox hidden">
+          <img id="pwaLightboxImg" alt="шаг установки крупно" />
+          <div class="pwaLightboxCap">ТАП — ЗАКРЫТЬ</div>
         </div>
       </div>
     </div>
