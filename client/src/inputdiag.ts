@@ -27,6 +27,14 @@
 //     Controls уже смягчает это); err>0 = отказ самого захвата;
 //   fps         — всё выше в норме, а дёргается — винить рендер при низком fps.
 // Оверлей ничего не меняет в игре: слушает в capture-фазе, только наблюдает.
+//
+// Поверх «для глаз» — серверный накопитель (§15.40): раз в секунду те же
+// счётчики уходят сообщением {"t":"diagrec"} (только пока флаг включён),
+// сервер дописывает к ним свои данные секунды и копит в кольцевом буфере
+// ника. Тестеру не нужно ничего скиншотить: «побегай — держатель сам
+// вытащит /api/diagdump». setDiagSender подключает transport из main.ts.
+
+import type { ClientMessage } from './net'
 
 const held = new Set<string>()
 const downAt = new Map<string, number>()
@@ -50,6 +58,26 @@ let fpsWin = 0
 let installed = false
 let panel: HTMLElement | null = null
 let rafOn = false
+
+/** Transport аплоада: main.ts вешает sock.send-обёртку (в type протокола —
+ *  diagrec). Вызов каждый раз проверяет installed — выключили, и не шлём. */
+let sender: ((m: ClientMessage) => void) | null = null
+export function setDiagSender(fn: ((m: ClientMessage) => void) | null): void {
+  sender = fn
+}
+
+function uploadRec(): void {
+  if (!installed || sender === null) return
+  sender({
+    t: 'diagrec',
+    kd: keys.down, ku: keys.up, kg: Math.round(keys.maxGapMs),
+    mm: mm.n, mp: Math.round(mm.px), mg: Math.round(mm.maxGapMs),
+    lk: lock.lost, lg: lock.gained, le: lock.err,
+    gh: ghost, fps,
+    held: [...held].join(','),
+    ua: navigator.userAgent.slice(0, 80),
+  })
+}
 
 function onKeyDown(e: KeyboardEvent): void {
   const now = performance.now()
@@ -139,6 +167,7 @@ function tick(t: number): void {
     bucket.keyN = 0
     bucket.mmN = 0
     bucket.mmPx = 0
+    uploadRec() // §15.40: та же секунда — на сервер в кольцевой буфер
   }
   if (panel !== null) {
     const now = performance.now()

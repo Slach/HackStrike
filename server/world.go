@@ -59,7 +59,10 @@ type world struct {
 
 	// §15.40: диагностика ввода — имена, включённые держателем стенда через
 	// GET /api/diag; новый join под таким именем получает welcome.diag=1.
-	diag map[string]bool
+	// diagBufs — накопленные секундные записями diagrec по канону ника
+	// (кольцевые, diagMaxRecs); переживают выход/ресезсию, слетают на рестарте.
+	diag    map[string]bool
+	diagBufs map[string][]diagRec
 
 	// §16.6: safe_key на NETSAFE — код сейфа (итерация 5): фиксирован на
 	// матч (safe_key не ротируется, в отличие от door_key), узнаётся тем же
@@ -159,6 +162,7 @@ func newWorld(m *gameMap) *world {
 		players:   make(map[uint64]*player),
 		sessions:  make(map[string]*session),
 		diag:      make(map[string]bool),
+		diagBufs:  make(map[string][]diagRec),
 		cyber:     buildCyber(m),
 		fragLimit: fragLimit,
 		matchLen:  matchDuration,
@@ -457,6 +461,8 @@ func (w *world) handleMessage(pl *player, msg message) {
 		w.handleCamview(pl, msg)
 	case "enter": // ввод кода на клавиатуре d3 (§16.7)
 		w.handleEnter(pl, msg)
+	case "diagrec": // секундная запись диагностики ввода (§15.40)
+		w.handleDiagRec(pl, msg)
 	}
 }
 

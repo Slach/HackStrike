@@ -22,6 +22,9 @@ export type ClientMessage =
   | { t: 'fire'; yaw: number; pitch: number }
   | { t: 'respawn'; cls: Cls }
   | { t: 'ping'; c: number }
+  // §15.40: секундный кадр диагностики ввода (только у игрока с diag-флагом;
+  // сервер коп → GET /api/diagdump). Поля — кумулятивные счётчики inputdiag.ts.
+  | { t: 'diagrec'; kd: number; ku: number; kg: number; mm: number; mp: number; mg: number; lk: number; lg: number; le: number; gh: number; fps: number; held: string; ua: string }
   // M2 (GDD §12.5). Jack-in rides on input.keys.interact — nothing separate.
   | { t: 'jackout' }
   | { t: 'run'; prog: RunProg; dev?: string; dst?: string; data?: string } // §16.2/§16.4: cp/mv/rm — dst/data, decrypt — data (джоба на dev)

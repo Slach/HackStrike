@@ -318,10 +318,26 @@ clients.forEach((c) => c.ws.readyState === 1 && c.ws.close())
   send(dc, { t: 'join', name: 'DiagMarked', cls: 'assault' })
   const dw = await waitFor(dc, (m) => m.t === 'welcome', 4000).catch(() => null)
   check('diag: помеченный join получает welcome.diag=1', dw?.diag === 1, JSON.stringify(dw))
+  // цепочка целиком: WS-кадр diagrec → сервер дописал свои поля → HTTP-выгрузка
+  send(dc, { t: 'diagrec', kd: 5, ku: 4, kg: 120, mm: 300, mp: 900, mg: 40, lk: 0, lg: 1, le: 0, gh: 2, fps: 61, held: 'KeyW', ua: 'e2e' })
+  await sleep(300)
+  const dump = await (await fetch(`${BASE}/api/diagdump?name=DiagMarked`)).json()
+  const last = Array.isArray(dump) ? dump[dump.length - 1] : null
+  check('diagrec: дамп хранит запись с серверными полями',
+    !!last && last.kd === 5 && last.gh === 2 && last.held === 'KeyW' &&
+      typeof last.tick === 'number' && typeof last.x === 'number' && typeof last.w === 'number',
+    JSON.stringify(last))
+  const names = await (await fetch(`${BASE}/api/diagdump`)).json()
+  check('diagdump: список имён с размерами (канон — нижний регистр)', names.diagmarked >= 1, JSON.stringify(names))
   // мгновенное выкл онлайн-носителю (без перезахода)
   await fetch(`${BASE}/api/diag?name=DiagMarked&on=0`)
   const dOff = await waitFor(dc, (m) => m.t === 'diag' && m.on === 0, 4000).catch(() => null)
   check('diag: on=0 летит онлайн-носителю без перезахода', !!dOff)
+  // сняли флаг — новые diagrec не копятся
+  send(dc, { t: 'diagrec', kd: 99 })
+  await sleep(300)
+  const dump2 = await (await fetch(`${BASE}/api/diagdump?name=DiagMarked`)).json()
+  check('diag: после on=0 новые кадры не копятся', Array.isArray(dump2) && dump2[dump2.length - 1].kd === 5)
   dc.ws.close()
   const bad = await fetch(`${BASE}/api/diag?name=X`) // без on=
   check('diag: запрос без on → 400', bad.status === 400)

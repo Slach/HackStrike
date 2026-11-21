@@ -73,7 +73,8 @@ type player struct {
 	respawnAt time.Time
 	frags     int // личные фраги для таблицы конца матча (§3.3)
 
-	diag bool // §15.40: игрок помечен держателем стенда — welcome.diag=1
+	diag       bool      // §15.40: игрок помечен держателем стенда — welcome.diag=1
+	diagLastAt time.Time // §15.40: анти-спам приёма diagrec (не чаще 2 Гц)
 
 	// posHist — недавние позиции ног (старая→новая), по одной за тик.
 	// Lag compensation выстрелов (ГДД §9.4): клиент видит цель ~100 мс в

@@ -34,8 +34,9 @@ type room struct {
 	clients map[uint64]*client
 	join    chan *client
 	leave   chan *client
-	inputs  chan taggedMessage
-	diag    chan diagToggle // §15.40: переключатель диагностики по нику
+	inputs   chan taggedMessage
+	diag     chan diagToggle    // §15.40: переключатель диагностики по нику
+	diagDump chan diagDumpReq   // §15.40: выгрузка накопленных записей
 }
 
 func newRoom(m *gameMap) *room {
@@ -46,6 +47,7 @@ func newRoom(m *gameMap) *room {
 		leave:   make(chan *client),
 		inputs:  make(chan taggedMessage, 128),
 		diag:    make(chan diagToggle),
+		diagDump: make(chan diagDumpReq),
 	}
 }
 
@@ -65,6 +67,8 @@ func (r *room) run(ctx context.Context) {
 		case cmd := <-r.diag:
 			cmd.reply <- r.handleDiag(cmd) // §15.40
 			r.flush()
+		case q := <-r.diagDump:
+			r.handleDiagDump(q) // §15.40
 		case <-ticker.C:
 			r.world.simulateTick()
 			r.flush()

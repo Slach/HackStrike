@@ -56,8 +56,10 @@ func newHTTPMux(r *room) *http.ServeMux {
 	})
 	mux.HandleFunc("/ws", r.handleWS)
 	// §15.40: диагностика ввода по нику: держатель стенда включает тестеру
-	// оверлей «перегрузись и побегай» (nginx проксирует /api префиксом).
+	// счётчики («побегай, я сам вытащу») и забирает накопленный дамп (nginx
+	// проксирует /api префиксом).
 	mux.HandleFunc("/api/diag", r.handleDiagGET)
+	mux.HandleFunc("/api/diagdump", r.handleDiagDumpGET)
 	return mux
 }
 

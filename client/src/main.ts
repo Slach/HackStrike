@@ -31,7 +31,7 @@ import { CamView } from './camview'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
 import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen, preventPageZoom } from './mobile'
-import { setDiag, maybeInstallFromUrl } from './inputdiag'
+import { setDiag, maybeInstallFromUrl, setDiagSender } from './inputdiag'
 
 // 66 мс (было 100; ×1.5 ревебр owner 2026-11-17, ГДД §15.13): тап-движение
 // на мобиле. Серверная lag-compensation синхронизирована — rewindTicks=3.
@@ -780,6 +780,9 @@ const sock = new GameSocket({
   onClose: resetSession,
 })
 sock.start() // connect + stats window; without this join has no socket to ride on
+// §15.40: секундные кадры диагностики летят на сервер (копит до выгрузки
+// /api/diagdump) — скриншоты тестеру не нужны.
+setDiagSender((m) => sock.send(m))
 
 // Hacker view (M2, ГДД §12.6). Джек-ин делает сервер по interact-клавишу;
 // выход — CTRL/CMD+ALT+DEL (перехват ниже) или смерть (сервер сам джек-аутит).
