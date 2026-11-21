@@ -196,6 +196,11 @@ func (w *world) damage(shooter, victim *player, dmg int) bool {
 	victim.items = nil // §16.1: MEM деки умирает с хакером
 	w.scores[shooter.team]++
 	shooter.frags++ // личный счёт для таблицы конца матча
+	// §16.6 rev 2026-11-21: носитель PHYSAFE — цель №1, убийство = +5 команде
+	// (только врагу; FF по своему носителю очков не даёт)
+	if victim.carry && shooter.team != victim.team {
+		w.scores[shooter.team] += carrierKillBonus
+	}
 	// Смерти в логе не было: «непонятный» jackout у джекнутого хакера не
 	// отличить от ручного CTRL/CMD+ALT+DEL (баг-репорт владельца 2026-11-16).
 	log.Printf("combat: kill player %d -> player %d", shooter.id, victim.id)
@@ -234,6 +239,10 @@ func (w *world) envDamage(victim *player, dmg int, owner uint64) bool {
 		if op, ok := w.players[owner]; ok {
 			w.scores[op.team]++
 			op.frags++ // ловушка убила — фраг владельцу (таблица §3.3)
+			// §16.6 rev 2026-11-21: ловушка убила носителя — тот же бонус +5
+			if victim.carry && op.team != victim.team {
+				w.scores[op.team] += carrierKillBonus
+			}
 		}
 	}
 	w.sendTo(victim.id, message{"t": "death", "by": uint64(0), "respawnAt": victim.respawnAt.UnixMilli()})

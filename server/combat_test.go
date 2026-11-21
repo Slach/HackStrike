@@ -317,3 +317,31 @@ func TestShotBearing(t *testing.T) {
 		}
 	}
 }
+
+// §16.6 rev 2026-11-21 (владелец «носитель — цель номер один»): убийство
+// носителя PHYSAFE = +5 команде сверх обычного фрага; FF по своему носителю
+// бонуса не даёт.
+func TestCarrierKillBonus(t *testing.T) {
+	w, shooter, victim, _ := combatWorld(t)
+	victim.pos = vec3{0, aimLevelY, 30} // из линии огня (жертва-мишень одна)
+	foe := w.addPlayer(3, "foe", "assault", -1)
+	foe.team = 1
+	w.takeOut()
+	foe.pos = vec3{0, aimLevelY, 10}
+	foe.carry = true
+	w.fire(shooter, 0, 0) // ваншот по assault-носителю
+	if w.scores != [2]int{1 + carrierKillBonus, 0} {
+		t.Fatalf("enemy carrier kill must award frag+bonus, scores=%v", w.scores)
+	}
+
+	// FF: свой носитель — только фраг, бонуса нет
+	ally := w.addPlayer(4, "ally", "assault", -1)
+	ally.team = 0
+	w.takeOut()
+	ally.pos = vec3{0, aimLevelY, 6}
+	ally.carry = true
+	w.fire(shooter, 0, 0) // убивает союзника-носителя
+	if w.scores != [2]int{2 + carrierKillBonus, 0} {
+		t.Fatalf("FF carrier kill must NOT award the bonus, scores=%v", w.scores)
+	}
+}

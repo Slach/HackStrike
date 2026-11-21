@@ -707,8 +707,11 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	// больше не отрезает.
 	// симметрия (2026-11-21): c45 s1—s3 (bw 40) — зеркало c9 s2—s3; без него
 	// s1 (запад-мид) ходил на s3 в обход (через s2 или s6).
-	if len(cs.order) != 38 || len(cs.cables) != 40 || len(cs.doors) != 6 || len(cs.gases) != 2 {
-		t.Fatalf("m1 props: want 38 devices / 38 cables + 2 radio uplinks / 6 doors / 2 gas, got %d/%d/%d/%d",
+	// газ-стратегия (2026-11-21, владелец «4 клапана на лестницах на оба
+	// этажа»): g3..g6 — двуэтажные объёмы на 4 лестницах, зеркально к
+	// s4/s5; всего 6 газов, 42 устройства / 44 кабеля (+2 радио-аплинка).
+	if len(cs.order) != 42 || len(cs.cables) != 44 || len(cs.doors) != 6 || len(cs.gases) != 6 {
+		t.Fatalf("m1 props: want 42 devices / 42 cables + 2 radio uplinks / 6 doors / 6 gas, got %d/%d/%d/%d",
 			len(cs.order), len(cs.cables), len(cs.doors), len(cs.gases))
 	}
 	if len(cs.fires) != 3 {
@@ -753,9 +756,10 @@ func TestEmbeddedMapCyber(t *testing.T) {
 		}
 	}
 	// Двери и газ стоят в проходах/комнатах (не пересекают стены) и вне
-	// джек-ин радиусов спавнов. Газ по определению наполняет комнату от пола
-	// (min y=0) — пересечение с floor допустимо и ожидаемо, поэтому для газа
-	// проверяем только нe-floor коллайдеры.
+	// джек-ин радиусов спавнов. Газ по определению наполняет объём от пола
+	// (min y=0) — пересечение с floor допустимо и ожидаемо; с 2026-11-21
+	// газ живёт и в шахтах лестниц на оба этажа — ступени (kind stair)
+	// тоже часть объёма, их пропускаем. Остальные (стены) — чисты.
 	for _, d := range cs.doors {
 		if m.overlapsAny(d.box) {
 			t.Fatalf("door %s intersects static geometry", d.id)
@@ -763,7 +767,7 @@ func TestEmbeddedMapCyber(t *testing.T) {
 	}
 	for _, g := range cs.gases {
 		for _, c := range m.Colliders {
-			if c.Kind == "floor" {
+			if c.Kind == "floor" || c.Kind == "stair" {
 				continue
 			}
 			if boxesOverlap(g.box, aabb{vec3(c.Min), vec3(c.Max)}) {

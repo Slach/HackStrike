@@ -468,3 +468,26 @@ func TestGasPoisonDiesWithPlayer(t *testing.T) {
 		t.Fatalf("death must clear the poison debuff")
 	}
 }
+
+// §16.6 rev 2026-11-21: ловушка с владельцем убила НОСИТЕЛЯ — команде
+// владельца фраг + бонус +5 (тот же путь, что у стрелка).
+func TestCarrierKillBonusEnv(t *testing.T) {
+	w, clock := gasTestWorld(t)
+	foe := w.addPlayer(2, "f", "sniper", -1) // владелец газа
+	w.takeOut()
+	carrier := w.addPlayer(3, "c", "heavy", -1)
+	w.takeOut()
+	foe.team, carrier.team = 1, 0 // авто-баланс назначил бы наоборот
+	carrier.pos = vec3{30, 1, 30}
+	carrier.carry = true
+	g := w.cyber.devices["g1"]
+	armGas(w, g, *clock)
+	g.owner = foe.id // trojan-владелец газа — враг
+	advance(w, clock, 950) // ~31.7 с: телеграф + 8 HP/s добирают 200 HP heavy
+	if carrier.alive {
+		t.Fatalf("carrier must die in the gas")
+	}
+	if w.scores[1] != 1+carrierKillBonus || w.scores[0] != 0 {
+		t.Fatalf("trap-carrier kill must award frag+bonus to owner team, scores=%v", w.scores)
+	}
+}

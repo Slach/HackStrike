@@ -686,7 +686,7 @@ type hackerBrain struct {
 	doorDev    string
 	srvTries   int
 	chaffLeft  int
-	gasAt      time.Time
+	gasOpen    map[string]time.Time // когда какой свой газ открыт («закрыть через 5 с пустоты»)
 	placed     map[string]bool
 	guesser    *codeGuesser // valve_brute: физический перебор кода двери после клапана
 }
@@ -2140,9 +2140,23 @@ func (b *simBot) replan(g *simGame) {
 			hh.phase = "guard" // остаёмся джекнутыми: радар/watchers живут
 		}
 	case "disrupt":
-		if !own(hh.gasDev) && known(hh.gasDev) {
-			push(hackOp{kind: "vuln", dev: hh.gasDev}, hackOp{kind: "trojan", dev: hh.gasDev})
-			return
+		// «захватить все G и включить везде газ, отключая по мере
+		// необходимости» (владелец 2026-11-21): трояним ВСЕ газы — комнаты
+		// g1/g2 и лестничные g3..g6 (объёмы на оба этажа)
+		for _, gs := range w.cyber.gases {
+			if !known(gs.id) {
+				if hh.scanCap > 0 {
+					hh.scanCap--
+					push(hackOp{kind: "scan"})
+				} else {
+					hh.phase = "guard" // сеть отрезана — рулим тем, что есть
+				}
+				return
+			}
+			if !own(gs.id) {
+				push(hackOp{kind: "vuln", dev: gs.id}, hackOp{kind: "trojan", dev: gs.id})
+				return
+			}
 		}
 		if !own(hh.doorDev) && known(hh.doorDev) {
 			push(hackOp{kind: "vuln", dev: hh.doorDev}, hackOp{kind: "trojan", dev: hh.doorDev})
@@ -2154,7 +2168,7 @@ func (b *simBot) replan(g *simGame) {
 				return
 			}
 		}
-		hh.phase = "guard" // рулим газом/дверью из jackedSide
+		hh.phase = "guard" // рулим газами/дверью из jackedSide
 	case "valve_brute":
 		// Сценарий владельца 2026-11-21: хакер отключает лаву (v3 на 2F),
 		// затем выходит из деки и ФИЗИЧЕСКИ перебирает код двери умным
@@ -2271,23 +2285,31 @@ func (b *simBot) jackedSide(g *simGame) {
 		return
 	}
 	reach := g.w.reachableFor(b.pl.jackHost.id, b.pl)
-	gd := g.w.cyber.devices[hh.gasDev]
-	if gd != nil && gd.owner == b.pl.id && reach[gd.id] {
+	// «захватить все G и включить везде газ, отключая по мере необходимости»
+	// (владелец 2026-11-21): рулим КАЖДЫМ своим газом — враг в объёме
+	// (intel/прицел) → открыть, пусто дольше 5 с → закрыть
+	for _, gs := range g.w.cyber.gases {
+		if gs.owner != b.pl.id || !reach[gs.id] {
+			continue
+		}
 		enemyIn := false
 		for _, it := range b.intelFresh(g.clock) {
-			if boxesOverlap(playerBoxAt(it.p), gd.box) {
+			if boxesOverlap(playerBoxAt(it.p), gs.box) {
 				enemyIn = true
 			}
 		}
-		if b.visTarget != nil && boxesOverlap(playerBoxAt(b.visTarget.pos), gd.box) {
+		if b.visTarget != nil && boxesOverlap(playerBoxAt(b.visTarget.pos), gs.box) {
 			enemyIn = true
 		}
 		switch {
-		case enemyIn && !gd.open:
-			g.w.handleMessage(b.pl, message{"t": "ctrl", "dev": gd.id, "action": "toggle"})
-			hh.gasAt = g.clock
-		case !enemyIn && gd.open && g.clock.Sub(hh.gasAt) > 5*time.Second:
-			g.w.handleMessage(b.pl, message{"t": "ctrl", "dev": gd.id, "action": "toggle"})
+		case enemyIn && !gs.open:
+			g.w.handleMessage(b.pl, message{"t": "ctrl", "dev": gs.id, "action": "toggle"})
+			if hh.gasOpen == nil {
+				hh.gasOpen = map[string]time.Time{}
+			}
+			hh.gasOpen[gs.id] = g.clock
+		case !enemyIn && gs.open && g.clock.Sub(hh.gasOpen[gs.id]) > 5*time.Second:
+			g.w.handleMessage(b.pl, message{"t": "ctrl", "dev": gs.id, "action": "toggle"})
 		}
 	}
 	// держать свою дверь-шлюз открытой для пуша

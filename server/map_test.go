@@ -74,8 +74,8 @@ func TestMapGasValidation(t *testing.T) {
 			gases++
 		}
 	}
-	if gases != 2 {
-		t.Fatalf("m1 must carry two mirrored gas chambers g1/g2 (§14.2), got %d", gases)
+	if gases != 6 {
+		t.Fatalf("m1 must carry 6 gases: 2 mirrored chambers g1/g2 + 4 stair shafts g3..g6 (§14.2 rev 2026-11-21), got %d", gases)
 	}
 }
 
