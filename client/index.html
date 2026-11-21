@@ -3405,10 +3405,12 @@
         background: rgba(0, 0, 0, 0.92);
         padding: 12px;
         cursor: zoom-out;
+        /* §15.37: свои жесты карусели — браузерные скролл/зум не нужны */
+        touch-action: none;
       }
       .pwaLightbox img {
         max-width: 94%;
-        max-height: 86%;
+        max-height: 82%;
         object-fit: contain;
         background: #04120a;
         border: 1px solid var(--line);
@@ -3418,6 +3420,40 @@
         font-size: 11px;
         letter-spacing: 2px;
         color: var(--cy);
+      }
+      .pwaLbMeta {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+      #pwaLbCount {
+        font-size: 11px;
+        letter-spacing: 3px;
+        color: rgba(234, 255, 243, 0.85);
+      }
+      /* кнопки листания: 44px тап-зона (§15.2), поверх краёв картинки */
+      .pwaLbNav {
+        position: absolute;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 44px;
+        height: 44px;
+        font-size: 26px;
+        line-height: 1;
+        color: var(--cy);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+      .pwaLbPrev {
+        left: 8px;
+      }
+      .pwaLbNext {
+        right: 8px;
+      }
+      .pwaLbNav:disabled {
+        opacity: 0.25;
       }
       /* §15.18: iOS Safari ломает touch-drag бегунка range под
          -webkit-user-select:none (body.touch) — чекбокс (тап) жив, слайдеры
@@ -4028,11 +4064,17 @@
             <button id="pwaClose" class="btn small ghost" type="button">ИГРАТЬ В БРАУЗЕРЕ</button>
           </div>
         </div>
-        <!-- §15.37 (ревебр owner): разворот шага на весь экран; тап закрывает.
+        <!-- §15.37 (ревебр owner): разворот шага на весь экран + карусель
+             шагов платформенной секции (свайп ‹ › / стрелки, тап закрывает).
              Внутри #joinPwa — прячется вместе с модалкой. -->
         <div id="pwaLightbox" class="pwaLightbox hidden">
+          <button id="pwaLbPrev" class="pwaLbNav pwaLbPrev" type="button">‹</button>
           <img id="pwaLightboxImg" alt="шаг установки крупно" />
-          <div class="pwaLightboxCap">ТАП — ЗАКРЫТЬ</div>
+          <button id="pwaLbNext" class="pwaLbNav pwaLbNext" type="button">›</button>
+          <div class="pwaLbMeta">
+            <span id="pwaLbCount">1 / 1</span>
+            <div class="pwaLightboxCap">ТАП — ЗАКРЫТЬ · СВАЙП — ЛИСТАТЬ</div>
+          </div>
         </div>
       </div>
     </div>

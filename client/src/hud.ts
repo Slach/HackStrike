@@ -403,6 +403,9 @@ export class Hud {
   /** Нативный Android-промис установки (beforeinstallprompt, §15.37).
    *  iOS событие не шлёт — там только ручные шаги со скриншотами. */
   private deferredInstall: InstallPromptEvent | null = null
+  /** Карусель лайтбокса §15.37: слайды = шаги видимой платформенной секции. */
+  private pwaSlides: HTMLImageElement[] = []
+  private pwaSlideIdx = 0
 
   private readonly el = {
     join: byId('joinScreen'),
@@ -426,6 +429,9 @@ export class Hud {
     pwaBanner: byId<HTMLButtonElement>('pwaBanner'),
     pwaLightbox: byId('pwaLightbox'),
     pwaLightboxImg: byId<HTMLImageElement>('pwaLightboxImg'),
+    pwaLbPrev: byId<HTMLButtonElement>('pwaLbPrev'),
+    pwaLbNext: byId<HTMLButtonElement>('pwaLbNext'),
+    pwaLbCount: byId('pwaLbCount'),
     deploy: byId<HTMLButtonElement>('deployBtn'),
     resume: byId<HTMLButtonElement>('resumeBtn'),
     joinStatus: byId('joinStatus'),
@@ -635,20 +641,41 @@ export class Hud {
     this.el.pwa.addEventListener('click', (e) => {
       if (e.target === this.el.pwa) this.el.pwa.classList.add('hidden')
     })
-    // Тап по шагу (вся карточка — крупнее зона тапа) разворачивает скрин на
-    // весь экран; тап по развёрнутому закрывает (§15.37 ревебр owner: в
-    // портрете миниатюра нечитаема). Клик не доходит до backdrop-закрытия
-    // модалки — e.target внутри лайтбокса, не сам #joinPwa.
+    // Тап по шагу (вся карточка — крупнее зона тапа) разворачивает скрин в
+    // карусели лайтбокса (§15.37 ревебр owner: в портрете миниатюра
+    // нечитаема). Слайды — шаги видимой платформенной секции; тап по
+    // развёрнутому закрывает. Клик не доходит до backdrop-закрытия модалки —
+    // e.target внутри лайтбокса, не сам #joinPwa.
     for (const step of this.el.pwa.querySelectorAll('.pwaStep')) {
       const img = step.querySelector('img')
       if (!img) continue
       step.addEventListener('click', () => {
-        this.el.pwaLightboxImg.src = img.src
-        this.el.pwaLightboxImg.alt = img.alt
-        this.el.pwaLightbox.classList.remove('hidden')
+        const idx = [...this.el.pwa.querySelectorAll('.pwaSection:not(.hidden) .pwaStep img')].indexOf(img)
+        this.pwaOpenLightbox(idx)
       })
     }
-    this.el.pwaLightbox.addEventListener('click', () => this.el.pwaLightbox.classList.add('hidden'))
+    // Карусель: свайп ←/→ (порог 48px; вертикальный жест не листает), кнопки
+    // по краям, стрелки клавиатуры. Свайп click не генерирует — закрытие и
+    // навигация не путаются; тап (без смещения) доходит до click-закрытия.
+    let lbX = 0
+    let lbY = 0
+    this.el.pwaLightbox.addEventListener('touchstart', (e) => {
+      lbX = e.touches[0]?.clientX ?? 0
+      lbY = e.touches[0]?.clientY ?? 0
+    }, { passive: true })
+    this.el.pwaLightbox.addEventListener('touchend', (e) => {
+      const t = e.changedTouches[0]
+      if (!t) return
+      const dx = t.clientX - lbX
+      const dy = t.clientY - lbY
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy)) this.pwaSlide(dx < 0 ? 1 : -1)
+    }, { passive: true })
+    this.el.pwaLbPrev.addEventListener('click', () => this.pwaSlide(-1))
+    this.el.pwaLbNext.addEventListener('click', () => this.pwaSlide(1))
+    this.el.pwaLightbox.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('.pwaLbNav')) return // листание не закрывает
+      this.el.pwaLightbox.classList.add('hidden')
+    })
     // §15.37: navigator.share открывает системный шит «Поделиться» одним
     // тапом — требует user-activation, поэтому живёт только в обработчике;
     // отмена пользователя (AbortError) и отказ браузера — молча.
@@ -680,6 +707,11 @@ export class Hud {
         this.el.invite.classList.add('hidden')
         this.el.pwa.classList.add('hidden')
         this.el.pwaLightbox.classList.add('hidden')
+      }
+      // карусель лайтбокса §15.37: стрелки листают, пока лайтбокс открыт
+      if (!this.el.pwaLightbox.classList.contains('hidden')) {
+        if (e.key === 'ArrowLeft') this.pwaSlide(-1)
+        if (e.key === 'ArrowRight') this.pwaSlide(1)
       }
       // скип полёт-титров любой клавишей
       if (!this.el.crawl.classList.contains('hidden')) this.hideCrawl()
@@ -873,6 +905,32 @@ export class Hud {
     this.deferredInstall = null
     this.el.pwa.classList.add('hidden')
     this.el.pwaBanner.classList.add('hidden')
+  }
+
+  /** Карусель лайтбокса (§15.37): слайды — шаги видимой платформенной
+   *  секции (?pwahint=1 показывает обе — карусель склеит их в один список). */
+  private pwaOpenLightbox(idx: number): void {
+    this.pwaSlides = [
+      ...this.el.pwa.querySelectorAll('.pwaSection:not(.hidden) .pwaStep img'),
+    ] as HTMLImageElement[]
+    this.pwaSlideIdx = Math.max(0, Math.min(idx, this.pwaSlides.length - 1))
+    this.pwaSyncLightbox()
+    this.el.pwaLightbox.classList.remove('hidden')
+  }
+
+  private pwaSlide(delta: number): void {
+    this.pwaSlideIdx = Math.max(0, Math.min(this.pwaSlideIdx + delta, this.pwaSlides.length - 1))
+    this.pwaSyncLightbox()
+  }
+
+  private pwaSyncLightbox(): void {
+    const img = this.pwaSlides[this.pwaSlideIdx]
+    if (!img) return
+    this.el.pwaLightboxImg.src = img.src
+    this.el.pwaLightboxImg.alt = img.alt
+    this.el.pwaLbCount.textContent = `${this.pwaSlideIdx + 1} / ${this.pwaSlides.length}`
+    this.el.pwaLbPrev.disabled = this.pwaSlideIdx === 0
+    this.el.pwaLbNext.disabled = this.pwaSlideIdx >= this.pwaSlides.length - 1
   }
 
   showJoin(withPwaHint = true): void {
