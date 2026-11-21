@@ -4,12 +4,18 @@
 
 import { CLASSES } from './classes'
 import type { Cls, NetStats, SnapPlayer } from './net'
-import { IS_TOUCH } from './mobile'
+import { IS_TOUCH, IS_MOBILE_PLATFORM, isStandalonePWA } from './mobile'
 import QRCode from 'qrcode'
 
 const TEAM_END_LABEL = ['WHITEHAT', 'BLACKHAT'] as const // team 0 = WhiteHat (белая, §2)
 /** Лор извлечения (итерация 7, формулировка владельца): ЧТО мы вынесли. */
 export const EXTRACT_LORE = 'ИЗВЛЕЧЕНО: ПРОТОКОЛ «ГЕНЕАЛОГИЯ» — КОМПОНЕНТ ВИРУСА, УБИВАЮЩЕГО ПО ДНК НОСИТЕЛЯ И ВСЕХ ЕГО ДЕТЕЙ'
+
+/** beforeinstallprompt (Android Chrome, §15.37): до нативного типа DOM его нет. */
+type InstallPromptEvent = Event & {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
 
 /** Печать протокола extract-победы (ревизия 2, плейтест «проще — печать
  *  протокола»): строки телетайпом, слева, без перспектив. Лор прежний. */
@@ -394,6 +400,9 @@ export class Hud {
   private endActive = false
   private endUntilMs = 0
   private onEndDone: (() => void) | null = null
+  /** Нативный Android-промис установки (beforeinstallprompt, §15.37).
+   *  iOS событие не шлёт — там только ручные шаги со скриншотами. */
+  private deferredInstall: InstallPromptEvent | null = null
 
   private readonly el = {
     join: byId('joinScreen'),
@@ -408,6 +417,12 @@ export class Hud {
     settingsBtn: byId('settingsBtn'),
     settings: byId('joinSettings'),
     settingsClose: byId('settingsClose'),
+    pwa: byId('joinPwa'),
+    pwaIos: byId('pwaIos'),
+    pwaAndroid: byId('pwaAndroid'),
+    pwaInstallBtn: byId<HTMLButtonElement>('pwaInstallBtn'),
+    pwaClose: byId('pwaClose'),
+    pwaBanner: byId<HTMLButtonElement>('pwaBanner'),
     deploy: byId<HTMLButtonElement>('deployBtn'),
     resume: byId<HTMLButtonElement>('resumeBtn'),
     joinStatus: byId('joinStatus'),
@@ -609,10 +624,38 @@ export class Hud {
     this.el.settings.addEventListener('click', (e) => {
       if (e.target === this.el.settings) this.el.settings.classList.add('hidden')
     })
+    // Установка PWA (§15.37): авто-открытие делает showJoin (вне паузы боя);
+    // плашка #pwaBanner — путь вернуть после закрытия. Закрытие как у
+    // настроек: кнопка, клик по затемнению, ESC.
+    this.el.pwaClose.addEventListener('click', () => this.el.pwa.classList.add('hidden'))
+    this.el.pwaBanner.addEventListener('click', () => this.openPwaModal())
+    this.el.pwa.addEventListener('click', (e) => {
+      if (e.target === this.el.pwa) this.el.pwa.classList.add('hidden')
+    })
+    // Android Chrome шлёт beforeinstallprompt (с манифестом §15.37) — даём
+    // нативный диалог вместо ручных шагов; iOS события не шлёт, там кнопка
+    // остаётся скрытой и путь только через скриншоты.
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault()
+      this.deferredInstall = e as InstallPromptEvent
+      if (!this.el.pwa.classList.contains('hidden')) this.el.pwaInstallBtn.classList.remove('hidden')
+    })
+    this.el.pwaInstallBtn.addEventListener('click', () => {
+      const p = this.deferredInstall
+      if (!p) return
+      void p.prompt()
+        .then(() => p.userChoice)
+        .then((choice) => {
+          if (choice.outcome === 'accepted') this.pwaDone()
+        })
+        .catch(() => undefined) // отказ браузера без жеста/вне валидности
+    })
+    window.addEventListener('appinstalled', () => this.pwaDone())
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         this.el.settings.classList.add('hidden')
         this.el.invite.classList.add('hidden')
+        this.el.pwa.classList.add('hidden')
       }
       // скип полёт-титров любой клавишей
       if (!this.el.crawl.classList.contains('hidden')) this.hideCrawl()
@@ -775,7 +818,39 @@ export class Hud {
     this.el.deploy.disabled = !this.mapReady || this.el.name.value.trim().length === 0
   }
 
-  showJoin(): void {
+  /** §15.37: показать модалку установки с платформенной секцией шагов.
+   *  ?pwahint=1 (дебаг) показывает обе секции на любом устройстве. */
+  private openPwaModal(): void {
+    const forced = new URLSearchParams(location.search).has('pwahint')
+    const ios =
+      /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (/Macintosh/.test(navigator.userAgent) && (navigator.maxTouchPoints ?? 0) > 1)
+    this.el.pwaIos.classList.toggle('hidden', !forced && !ios)
+    this.el.pwaAndroid.classList.toggle('hidden', !forced && ios)
+    this.el.pwaInstallBtn.classList.toggle('hidden', this.deferredInstall === null)
+    this.el.pwa.classList.remove('hidden')
+  }
+
+  /** Авто-модалка при каждом открытии лобби (решение владельца 2026-11-21);
+   *  пауза боя зовёт showJoin(false) — модалкой бой не рвём. */
+  private maybePwaModal(): void {
+    if (new URLSearchParams(location.search).has('pwahint')) return this.openPwaModal()
+    if (IS_MOBILE_PLATFORM && !isStandalonePWA()) this.openPwaModal()
+  }
+
+  /** Плашка-возврат в лобби: только мобильный вне standalone. */
+  private syncPwaBanner(): void {
+    this.el.pwaBanner.classList.toggle('hidden', !(IS_MOBILE_PLATFORM && !isStandalonePWA()))
+  }
+
+  /** Установлено (нативно или шагами): в standalone больше не напоминаем. */
+  private pwaDone(): void {
+    this.deferredInstall = null
+    this.el.pwa.classList.add('hidden')
+    this.el.pwaBanner.classList.add('hidden')
+  }
+
+  showJoin(withPwaHint = true): void {
     this.el.join.classList.remove('hidden')
     if (this.el.name.value === '') {
       // Saved name first (persisted on deploy); fresh hack_XXX only once.
@@ -783,6 +858,8 @@ export class Hud {
       this.el.name.value = saved && saved.trim() ? saved : `hack_${Math.floor(100 + Math.random() * 900)}`
     }
     this.refreshDeploy()
+    this.syncPwaBanner()
+    if (withPwaHint) this.maybePwaModal()
   }
 
   hideJoin(): void {
@@ -790,9 +867,10 @@ export class Hud {
   }
 
   /** Меню паузы (§15.5): то же join-окно в середине матча. ДЕПЛОЙ скрыт —
-   *  повторный джойн из меню не нужен; вместо него «ВЕРНУТЬСЯ В БОЙ». */
+   *  повторный джойн из меню не нужен; вместо него «ВЕРНУТЬСЯ В БОЙ».
+   *  PWA-модалку не всплываем (§15.37) — пауза боя не для рекламы установки. */
   showMenu(): void {
-    this.showJoin()
+    this.showJoin(false)
     this.el.deploy.classList.add('hidden')
     this.el.resume.classList.remove('hidden')
     this.joinCardsLocked = true

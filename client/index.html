@@ -10,6 +10,13 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="HACKSTRIKE" />
+    <!-- PWA-ассеты (§15.37): манифест делает «Install app» на Android
+         полноценным fullscreen-приложением (без него — просто закладка);
+         iOS манифест не читает — источник правды, legacy-теги выше, а
+         apple-touch-icon даёт чистую иконку вместо снапшота страницы. -->
+    <meta name="theme-color" content="#020e08" />
+    <link rel="manifest" href="/pwa/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/pwa/apple-touch-icon.png" />
     <title>HACKSTRIKE</title>
     <style>
       :root {
@@ -3327,6 +3334,53 @@
       .setRow .setVal {
         flex: none;
       }
+      /* §15.37: модалка установки PWA — тот же .settings-паттерн, но панель
+         шире и скроллится на всех платформах (4 шага-скриншота не влезают ни
+         в landscape-телефон, ни в короткое окно десктопа; сам join — pan-y
+         по §15.3, скролл панели не конфликтует) */
+      .pwaPanel {
+        width: min(520px, 94%);
+        max-height: 92%;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .pwaWhy {
+        font-size: 12px;
+        line-height: 1.5;
+        color: rgba(234, 255, 243, 0.82);
+      }
+      .pwaSteps {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+      .pwaStep {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 0;
+      }
+      .pwaStep img {
+        width: 100%;
+        height: 170px;
+        object-fit: contain;
+        background: #04120a;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+      .pwaCap {
+        font-size: 11px;
+        line-height: 1.4;
+        color: rgba(234, 255, 243, 0.72);
+      }
+      .pwaCap b {
+        color: var(--cy);
+        font-weight: 600;
+      }
+      .pwaN {
+        color: var(--cy);
+        margin-right: 4px;
+      }
       /* §15.18: iOS Safari ломает touch-drag бегунка range под
          -webkit-user-select:none (body.touch) — чекбокс (тап) жив, слайдеры
          мертвы (ревебр owner). Возвращаем auto точечно; на touch — none
@@ -3820,6 +3874,9 @@
           <button type="button" data-team="-1" class="segBtn on">(A)UTO</button>
           <button type="button" data-team="1" class="segBtn t1">(B)LACKHAT</button>
         </div>
+        <!-- §15.37: плашка-возврат инструкции (после закрытия модалки путь
+             обратно; в standalone прячется — hud.ts решает по детекту) -->
+        <button id="pwaBanner" class="btn small ghost pwaBanner hidden" type="button"><span class="btnIco">↓</span>УСТАНОВИТЬ ДЛЯ УДОБНОЙ ИГРЫ</button>
         <div class="btnRow joinBtns">
           <button id="deployBtn" class="btn" disabled>ДЕПЛОЙ</button>
           <button id="resumeBtn" class="btn hidden" type="button">ВЕРНУТЬСЯ В БОЙ</button>
@@ -3893,6 +3950,34 @@
           <!-- §15.22: label «ПРИМЕНИТЬ» (ревебр owner) — изменения и так live,
                кнопка фиксирует и выходит; id прежний (settingsClose) -->
           <button id="settingsClose" class="btn small" type="button">ПРИМЕНИТЬ</button>
+        </div>
+      </div>
+      <!-- Установка PWA (§15.37): на мобильном вне standalone открывается
+           автоматически при showJoin (пауза боя showMenu не всплывает).
+           Шаги платформенные: iOS — скрины owner (Share → Add to Home
+           Screen), Android — мок Chrome (⋮ → Install app). Плюс нативная
+           кнопка beforeinstallprompt на Android (hud.ts). -->
+      <div id="joinPwa" class="settings hidden">
+        <div class="setPanel pwaPanel">
+          <div class="setHead">УСТАНОВКА // УДОБНАЯ ИГРА</div>
+          <div class="pwaWhy">В браузерной вкладке игра теряет часть экрана
+            под бары, а на iPhone полный экран не работает вовсе. Установи
+            игру как приложение — откроется во весь экран, как настоящая.</div>
+          <div id="pwaIos" class="pwaSteps hidden">
+            <div class="pwaStep"><img src="/pwa/ios-1.png" alt="Safari: кнопка Поделиться внизу" loading="lazy" /><div class="pwaCap"><span class="pwaN">1.</span>Внизу Safari — кнопка <b>«Поделиться»</b> (квадрат со стрелкой)</div></div>
+            <div class="pwaStep"><img src="/pwa/ios-2.png" alt="Меню Safari: Share" loading="lazy" /><div class="pwaCap"><span class="pwaN">2.</span>В меню выбери <b>Share</b></div></div>
+            <div class="pwaStep"><img src="/pwa/ios-3.png" alt="Список: Add to Home Screen" loading="lazy" /><div class="pwaCap"><span class="pwaN">3.</span>Пролистай вниз — <b>Add to Home Screen</b></div></div>
+            <div class="pwaStep"><img src="/pwa/ios-4.png" alt="Диалог Add to Home Screen" loading="lazy" /><div class="pwaCap"><span class="pwaN">4.</span>Жми <b>Add</b> (тумблер <b>Open as Web App</b> включён)</div></div>
+          </div>
+          <div id="pwaAndroid" class="pwaSteps hidden">
+            <div class="pwaStep"><img src="/pwa/and-1.svg" alt="Меню Chrome: Install app" loading="lazy" /><div class="pwaCap"><span class="pwaN">1.</span>Меню <b>⋮</b> → <b>Install app</b> («Добавить на гл. экран»)</div></div>
+            <div class="pwaStep"><img src="/pwa/and-2.svg" alt="Диалог установки Chrome" loading="lazy" /><div class="pwaCap"><span class="pwaN">2.</span>В диалоге жми <b>Install</b></div></div>
+            <div class="pwaStep"><img src="/pwa/and-3.svg" alt="Иконка на главном экране" loading="lazy" /><div class="pwaCap"><span class="pwaN">3.</span>Иконка на гл. экране — игра без баров, во весь экран</div></div>
+          </div>
+          <div class="btnRow">
+            <button id="pwaInstallBtn" class="btn small hidden" type="button">↓ УСТАНОВИТЬ</button>
+            <button id="pwaClose" class="btn small ghost" type="button">ИГРАТЬ В БРАУЗЕРЕ</button>
+          </div>
         </div>
       </div>
     </div>

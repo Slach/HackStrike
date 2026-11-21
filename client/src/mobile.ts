@@ -19,6 +19,39 @@ import type { Controls } from './controls'
 export const IS_TOUCH =
   matchMedia('(pointer: coarse)').matches || (navigator.maxTouchPoints ?? 0) > 0
 
+/** Платформенная подсказка «это телефон» — ЕДИНСТВЕННОЕ место, где UA
+ *  легален (ГДД §15.37): выбирает платформенные шаги инструкции установки
+ *  (iOS vs Chrome), на UI-режим и геймплей не влияет. iPadOS 13+ маскируется
+ *  под Macintosh — ловим по maxTouchPoints. */
+export const IS_MOBILE_PLATFORM =
+  /iPhone|iPad|iPod|Android|Mobi/i.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && (navigator.maxTouchPoints ?? 0) > 1)
+
+/** Игра открыта как установленное приложение, а не вкладка браузера
+ *  (ГДД §15.37). standalone — манифест на Android + iOS ≥ 16.4; fullscreen —
+ *  наш манифест ставит display:"fullscreen"; navigator.standalone — iOS-legacy
+ *  до 16.4 (см. legacy-теги в index.html, §15.4). */
+export function isStandalonePWA(): boolean {
+  if (matchMedia('(display-mode: standalone)').matches) return true
+  if (matchMedia('(display-mode: fullscreen)').matches) return true
+  return (
+    'standalone' in window.navigator &&
+    (window.navigator as Navigator & { standalone?: boolean }).standalone === true
+  )
+}
+
+/** Запрет браузерного зума страницы (§15.37): user-scalable=no Safari в
+ *  обычной вкладке игнорирует — гасим Safari-события gesture* (Chrome их не
+ *  диспатчит). Touch-пинч деки/V-вида (§15.26/§15.36) живёт на touchmove и
+ *  сюда не попадает; double-tap-zoom уже глушит touch-action (none на зонах
+ *  игры, pan-y на оверлеях §15.3 — pan-y запрещает его по спеке). */
+export function preventPageZoom(): void {
+  const stop = (e: Event) => e.preventDefault()
+  for (const type of ['gesturestart', 'gesturechange', 'gestureend'] as const) {
+    document.addEventListener(type, stop, { passive: false })
+  }
+}
+
 /** ДЕПЛОЙ на touch: развернуть на весь экран и принудить ландшафт (GDD §15.4).
  *  Fullscreen-first, затем screen.orientation.lock('landscape') — Chrome на
  *  Android разрешает lock только в fullscreen, поэтому ждём промис перед локом.

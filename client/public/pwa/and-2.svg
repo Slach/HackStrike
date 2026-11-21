@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 740" font-family="Roboto,'Segoe UI',Helvetica,Arial,sans-serif">
+  <!-- Мок Chrome Android: bottom-sheet диалог установки (ГДД §15.37). -->
+  <rect width="360" height="740" fill="#04120a"/>
+  <text x="180" y="130" fill="#37ff9b" font-size="26" font-weight="700" text-anchor="middle" letter-spacing="6">HACKSTRIKE</text>
+  <rect x="30" y="160" width="140" height="52" rx="6" fill="none" stroke="#1c5c37"/>
+  <rect x="190" y="160" width="140" height="52" rx="6" fill="none" stroke="#1c5c37"/>
+  <rect x="0" y="0" width="360" height="56" fill="#202124"/>
+  <rect x="52" y="10" width="256" height="36" rx="18" fill="#303134"/>
+  <path d="M68 26v-3a2.5 2.5 0 0 1 5 0v3" stroke="#9aa0a6" stroke-width="1.6" fill="none"/>
+  <rect x="66" y="26" width="9" height="7" rx="1.5" fill="#9aa0a6"/>
+  <text x="82" y="33" fill="#e8eaed" font-size="13">game.hackstrike.net</text>
+  <g fill="#e8eaed">
+    <circle cx="329" cy="21.5" r="2.1"/><circle cx="329" cy="28" r="2.1"/><circle cx="329" cy="34.5" r="2.1"/>
+  </g>
+  <rect x="0" y="56" width="360" height="684" fill="#000" opacity="0.55"/>
+  <!-- bottom sheet -->
+  <path d="M0 500h360v226a14 14 0 0 1-14 14H14A14 14 0 0 1 0 726z" fill="#292a2d"/>
+  <rect x="163" y="510" width="34" height="4" rx="2" fill="#5f6368"/>
+  <text x="24" y="552" fill="#e8eaed" font-size="16" font-weight="500">Install app</text>
+  <rect x="24" y="574" width="56" height="56" rx="14" fill="#0d130e" stroke="#37ff9b" stroke-opacity="0.45"/>
+  <g fill="#37ff9b">
+    <rect x="38" y="586" width="8" height="32"/>
+    <rect x="58" y="586" width="8" height="32"/>
+    <rect x="38" y="600" width="28" height="9"/>
+  </g>
+  <text x="96" y="596" fill="#e8eaed" font-size="15" font-weight="500">HACKSTRIKE</text>
+  <text x="96" y="616" fill="#9aa0a6" font-size="12">game.hackstrike.net</text>
+  <!-- подсвеченный шаг: Install -->
+  <rect x="240" y="578" width="96" height="42" rx="21" fill="#8ab4f8"/>
+  <text x="288" y="605" fill="#202124" font-size="14" font-weight="700" text-anchor="middle">Install</text>
+  <path d="M314 512v40h-11l16 18 16-18h-11v-40z" fill="#37ff9b"/>
+  <text x="180" y="690" fill="#9aa0a6" font-size="12" text-anchor="middle">Игра откроется без адресной строки, во весь экран</text>
+</svg>

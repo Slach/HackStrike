@@ -30,7 +30,7 @@ import { PropsView } from './props'
 import { CamView } from './camview'
 import { HackView } from './hackview'
 import { CLASS_BY_KEY } from './classes'
-import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen } from './mobile'
+import { IS_TOUCH, TouchOverlay, startKeyboardTracker, enterLandscapeFullscreen, exitLandscapeFullscreen, preventPageZoom } from './mobile'
 
 // 66 мс (было 100; ×1.5 ревебр owner 2026-11-17, ГДД §15.13): тап-движение
 // на мобиле. Серверная lag-compensation синхронизирована — rewindTicks=3.
@@ -71,6 +71,8 @@ if (IS_TOUCH) {
   touch = new TouchOverlay(controls)
   touch.onCam = () => camToggle() // §13.7: КАМЕРЫ = V (открыть/следующая)
 }
+// §15.37: браузерный pinch/двойной тап страницы глушим всегда (на Chrome no-op)
+preventPageZoom()
 const views = new PlayerViews(scene)
 const buffer = new SnapshotBuffer()
 const autofire = new AutoFire()

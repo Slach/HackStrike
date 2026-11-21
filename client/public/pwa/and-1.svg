@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 740" font-family="Roboto,'Segoe UI',Helvetica,Arial,sans-serif">
+  <!-- Мок Chrome Android: меню ⋮ → Install app (ГДД §15.37). Векторный макет:
+       реальный скрин сторонних сайтов не годился, рисуем сами в палитре игры. -->
+  <rect width="360" height="740" fill="#04120a"/>
+  <!-- мок лобби под браузером -->
+  <text x="180" y="130" fill="#37ff9b" font-size="26" font-weight="700" text-anchor="middle" letter-spacing="6">HACKSTRIKE</text>
+  <rect x="30" y="160" width="140" height="52" rx="6" fill="none" stroke="#1c5c37"/>
+  <rect x="190" y="160" width="140" height="52" rx="6" fill="none" stroke="#1c5c37"/>
+  <rect x="30" y="230" width="300" height="52" rx="6" fill="none" stroke="#1c5c37"/>
+  <rect x="0" y="0" width="360" height="56" fill="#202124"/>
+  <rect x="8" y="10" width="36" height="36" rx="6" fill="#3c4043"/>
+  <text x="26" y="34" fill="#e8eaed" font-size="14" text-anchor="middle">3</text>
+  <rect x="52" y="10" width="256" height="36" rx="18" fill="#303134"/>
+  <path d="M68 26v-3a2.5 2.5 0 0 1 5 0v3" stroke="#9aa0a6" stroke-width="1.6" fill="none"/>
+  <rect x="66" y="26" width="9" height="7" rx="1.5" fill="#9aa0a6"/>
+  <text x="82" y="33" fill="#e8eaed" font-size="13">game.hackstrike.net</text>
+  <g fill="#e8eaed">
+    <circle cx="329" cy="21.5" r="2.1"/><circle cx="329" cy="28" r="2.1"/><circle cx="329" cy="34.5" r="2.1"/>
+  </g>
+  <!-- меню ⋮ -->
+  <rect x="116" y="60" width="232" height="354" rx="12" fill="#292a2d"/>
+  <g stroke="#9aa0a6" stroke-width="1.8" fill="none">
+    <rect x="132" y="68" width="13" height="13" rx="2"/>
+    <path d="M135 74.5h7M138.5 71v7"/>
+    <circle cx="138.5" cy="110" r="7"/><path d="M138.5 106v4.5l3 2"/>
+    <path d="M134.5 146h8l-4 5zM138.5 151v4M133 156h11"/>
+    <path d="M134 184v13h9v-13M134 184l4.5 3 4.5-3"/>
+    <rect x="132" y="222" width="9" height="11" rx="1.5"/>
+    <rect x="137" y="226" width="9" height="11" rx="1.5" fill="#292a2d"/>
+  </g>
+  <g fill="#e8eaed" font-size="14">
+    <text x="156" y="80">New tab</text>
+    <text x="156" y="115">History</text>
+    <text x="156" y="151">Downloads</text>
+    <text x="156" y="191">Bookmarks</text>
+    <text x="156" y="231">Recent tabs</text>
+    <text x="156" y="343">Find in page</text>
+    <text x="156" y="383">Desktop site</text>
+  </g>
+  <rect x="124" y="258" width="216" height="1.2" fill="#3c4043"/>
+  <rect x="124" y="312" width="216" height="1.2" fill="#3c4043"/>
+  <!-- подсвеченный шаг: Install app -->
+  <rect x="121" y="262" width="222" height="46" rx="8" fill="#3c4043" stroke="#37ff9b" stroke-width="2"/>
+  <g stroke="#37ff9b" stroke-width="1.8" fill="none">
+    <path d="M134 274h9l-4.5 5.5zM138.5 279.5v6M133.5 285.5h10"/>
+  </g>
+  <text x="156" y="291" fill="#e8eaed" font-size="14" font-weight="500">Install app</text>
+  <!-- зелёная стрелка на шаг -->
+  <path d="M352 278h-30v-9l-18 15.5 18 15.5v-9h30z" fill="#37ff9b"/>
+</svg>
