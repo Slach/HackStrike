@@ -11,6 +11,7 @@
 // place, so a pending button click is never swallowed by a re-render.
 
 import { IS_TOUCH } from './mobile'
+import { osName } from './platform'
 import type {
   CamSeen,
   ClientMessage,
@@ -32,6 +33,17 @@ type ScanMsg = Extract<ServerMessage, { t: 'scan' }>
 type DeniedMsg = Extract<ServerMessage, { t: 'denied' }>
 type CamMsg = Extract<ServerMessage, { t: 'cam' }>
 type RadarMsg = Extract<ServerMessage, { t: 'radar' }>
+
+// Подсказка джек-аута по ОС (ГДД §5.4, §11 2026-11-21): на windows тройка —
+// Secure Attention Sequence и до страницы не доходит, там CTRL+ALT+⌫ («kill X»).
+// ОС за сессию не меняется — выбираем один раз при загрузке модуля.
+const EXIT_HINT = {
+  windows: 'ВЫХОД: CTRL+ALT+⌫',
+  macos: 'ВЫХОД: CMD+ALT+DEL',
+  linux: 'ВЫХОД: CTRL+ALT+DEL',
+  other: 'ВЫХОД: CTRL/CMD+ALT+DEL',
+  // ключи обязаны покрывать OsName целиком — иначе noImplicitAny уронит сборку
+}[osName()]
 
 export interface HackViewDeps {
   send: (msg: ClientMessage) => void
@@ -2771,7 +2783,7 @@ export class HackView {
       exit.addEventListener('click', () => this.deps.jackout())
       head.append(exit)
     } else {
-      head.append(txt('span', 'hv-exit', 'ВЫХОД: CTRL/CMD+ALT+DEL'))
+      head.append(txt('span', 'hv-exit', EXIT_HINT))
     }
     main.append(head)
 

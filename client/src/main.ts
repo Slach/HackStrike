@@ -847,10 +847,13 @@ function hackviewOff(relock: boolean): void {
 
 // Джек-аут из деки — ТОЛЬКО тройка Ctrl/Cmd+Alt+Del (фишка: специально
 // неудобно, «системный» жест, решение владельца 2026-11-15). ESC/Backspace
-// принадлежат деке (палитра, меню). NB: на Windows Ctrl+Alt+Del перехватывается
-// ОС и до страницы не доходит. На mac клавиша «Delete» физически = Backspace
-// (e.code 'Backspace'), forward-Delete только с Fn — принимаем оба кода,
-// иначе тройка Cmd+Alt+Delete на mac-ноутбуке не работает (плейтест M3).
+// принадлежат деке (палитра, меню). На mac клавиша «Delete» физически =
+// Backspace (e.code 'Backspace'), forward-Delete только с Fn — принимаем оба
+// кода, иначе тройка Cmd+Alt+Delete на mac-ноутбуке не работает (плейтест M3).
+// На Windows Ctrl+Alt+Del — Secure Attention Sequence: ядро перехватывает её
+// до страницы, потому на win рабочий путь Ctrl+Alt+⌫ («kill X», ГДД §5.4 /
+// §11 2026-11-21) — сюда попадает тем же code 'Backspace'; подсказка в деке
+// выбирается по ОС.
 window.addEventListener(
   'keydown',
   (e) => {
