@@ -1243,8 +1243,10 @@ export class Hud {
     const el = this.el.hudCode
     if (el === null) return
     const parts: string[] = []
-    if (door !== null) parts.push(`КОД D3: ${door}`)
-    if (safe !== null) parts.push(`СЕЙФ: ${safe}`)
+    // пустая строка — «код устарел» (codes door="" после ротации §16.5):
+    // не «КОД D3: », а пропуск, плашка гаснет если и safe пуст (§15.43)
+    if (door) parts.push(`КОД D3: ${door}`)
+    if (safe) parts.push(`СЕЙФ: ${safe}`)
     if (parts.length === 0) {
       el.classList.add('hidden')
       return

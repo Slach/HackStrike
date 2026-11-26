@@ -1393,6 +1393,24 @@ func (w *world) doorKeyTick() {
 	w.doorKeyCode = w.doorKeyCodeNow(name)
 	w.doorKeyName = name
 	log.Printf("room: door_key rotated -> %s on %s", name, srv.id)
+	// Ротация убивает ранее узнанные коды, кроме ставшего prev: команда,
+	// видевшая в HUD мёртвый код, вводила его и получала невпопад подсказку
+	// «цифры от других дверей» (плейтест 2026-11-26).
+	for team, code := range w.doorCodes {
+		if code == "" || code == w.doorKeyCode || code == w.doorKeyPrevCode {
+			continue // пустого нет; ставший prev всё ещё открывает
+		}
+		delete(w.doorCodes, team)
+		m := message{"t": "codes", "door": ""}
+		if s := w.safeCodes[team]; s != "" {
+			m["safe"] = s
+		}
+		for _, p := range w.players {
+			if p.team == team {
+				w.sendTo(p.id, m)
+			}
+		}
+	}
 }
 
 // resetDoorKey — новый матч (§16.5): SRV1 чистится от старых поколений,
@@ -2057,6 +2075,13 @@ func (w *world) noteTeamCode(team int, name, code string) {
 		w.safeCodes = map[int]string{}
 	}
 	if strings.HasPrefix(name, "door_key") {
+		// Мёртвое поколение валиден-ещё-prev не публикуем: код устареет,
+		// а HUD «КОД D3» останется — игрок будет набирать мусор и ловить
+		// невпопад подсказку (плейтест 2026-11-26). Код живого поколения
+		// (текущее или prev) публикуется.
+		if code != w.doorKeyCode && code != w.doorKeyPrevCode {
+			return
+		}
 		w.doorCodes[team] = code
 	} else if strings.HasPrefix(name, "safe_key") {
 		w.safeCodes[team] = code
@@ -2297,17 +2322,12 @@ func (w *world) handleEnter(pl *player, msg message) {
 		w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": false, "match": -1})
 		return
 	}
-	// подсказка N/4: цифра верна И на своей позиции; секрет — поколение,
-	// с которым код согласуется лучше (грейс держит два).
-	secret := w.doorKeyCode
-	if w.doorKeyPrevCode != "" {
-		mc := hintMatch(w.doorKeyCode, code)
-		mp := hintMatch(w.doorKeyPrevCode, code)
-		if mp > mc {
-			secret = w.doorKeyPrevCode
-		}
-	}
-	match := hintMatch(secret, code)
+	// Подсказка N/4: цифра верна И на своей позиции, счёт — по ТЕКУЩЕМУ
+	// коду. Грейс prev держит только валидность: сравнение с невидимым
+	// prev-секретом («лучшее из двух») давало «1/4 на своём месте» против
+	// кода, которого игрок никогда не видел (плейтест 2026-11-26 «цифры
+	// подходят от других дверей»).
+	match := hintMatch(w.doorKeyCode, code)
 	w.sendTo(pl.id, message{"t": "code", "dev": devID, "ok": false, "match": match})
 	log.Printf("room: player %d wrong code on %s (N/4=%d)", pl.id, devID, match)
 	w.fireWatchers(dev, pl, "code", "")

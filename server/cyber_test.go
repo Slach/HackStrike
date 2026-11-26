@@ -3124,6 +3124,105 @@ func TestCodeLock(t *testing.T) {
 	}
 }
 
+// §15.43 (плейтест 2026-11-26 «1/4 на своём месте, цифры будто от другой
+// двери»): при грейсе prev-поколения подсказка обязана считаться по ТЕКУЩЕМУ
+// коду, даже когда prev согласуется лучше. Тест конструирует секрет, где prev
+// даёт больше совпадений, и проверяет, что ответ — match текущего.
+func TestCodeLockHintUsesCurrentNotPrev(t *testing.T) {
+	w := newWorld(mustParseEmbeddedMap(t))
+	now := time.Now()
+	w.now = func() time.Time { return now }
+	h := w.addPlayer(1, "h", "hacker", -1)
+	w.takeOut()
+	h.pos = vec3{32, 8, 41}
+	// руками строим грейс-пару: текущий «9999» (0 совпадений с «1234»),
+	// prev «1234» (4 совпадения) — прежний «максимум из двух» дал бы 4
+	w.doorKeyCode = "9999"
+	w.doorKeyPrevCode = "1234"
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": "1234"})
+	var hint message
+	for _, om := range w.takeOut() {
+		if om.msg["t"] == "code" && om.to == h.id {
+			hint = om.msg
+		}
+	}
+	if hint == nil {
+		t.Fatal("enter must be answered")
+	}
+	if hint["ok"] != true {
+		t.Fatalf("prev code stays valid during grace: %+v", hint)
+	}
+	// а с НЕсовпадающим вводом — подсказка по текущему коду, не по prev
+	// (пауза 3 с — анти-флуд не должен съесть ответ подсказкой match=-1)
+	now = now.Add(3 * time.Second)
+	w.handleMessage(h, message{"t": "enter", "dev": "d3", "code": "9990"})
+	for _, om := range w.takeOut() {
+		if om.msg["t"] == "code" && om.msg["ok"] == false {
+			hint = om.msg
+		}
+	}
+	if m, _ := hint["match"].(int); m != 3 {
+		t.Fatalf("hint must follow current code 9999 vs 9990 = 3, got %+v", hint)
+	}
+	// prev «1234» против «9990» дал бы 0 — «лучшее из двух» вернуло бы этот бред
+}
+
+// §15.43: ротация door_key сбрасывает узнанный КОД у всех, кто его знал
+// (кроме ставшего prev), и расшифровка мёртвого поколения не печатает код.
+func TestDoorKeyRotationInvalidatesKnownCode(t *testing.T) {
+	w := newWorld(mustParseEmbeddedMap(t))
+	now := time.Now()
+	w.now = func() time.Time { return now }
+	h := w.addPlayer(1, "h", "hacker", -1) // team после авто-баланса
+	w.takeOut()
+	// команда «узнала» текущий код
+	w.noteTeamCode(h.team, "door_key_x", w.doorKeyCode)
+	if w.doorCodes[h.team] != w.doorKeyCode {
+		t.Fatalf("known code must be stored, got %v", w.doorCodes)
+	}
+	// мёртвое поколение не публикуется
+	dead := "0815"
+	if dead == w.doorKeyCode || dead == w.doorKeyPrevCode {
+		dead = "0816"
+	}
+	w.noteTeamCode(h.team, "door_key_old", dead)
+	if w.doorCodes[h.team] != w.doorKeyCode {
+		t.Fatalf("dead generation code must not overwrite: %v", w.doorCodes)
+	}
+	// ротация: познанный код уже НЕ prev? (prev = старый текущий — он всё
+	// ещё валиден, сбрасывать нельзя). Проверяем на реально мёртвом коде:
+	w.doorCodes[h.team] = "7777" // «узнали» код два поколения назад
+	w.doorKeyPrevCode = "6666"
+	now = now.Add(121 * time.Second)
+	w.simulateTick()
+	if w.doorKeyPrevCode == "6666" || w.doorKeyCode == "7777" {
+		t.Fatalf("setup: rotation must move codes, prev=%s cur=%s", w.doorKeyPrevCode, w.doorKeyCode)
+	}
+	if _, ok := w.doorCodes[h.team]; ok {
+		t.Fatalf("rotation must invalidate known code %v", w.doorCodes)
+	}
+	// команде улетел codes с door="" (HUD-гаситель)
+	got := false
+	for _, om := range w.takeOut() {
+		if om.msg["t"] == "codes" && om.to == h.id {
+			if d, has := om.msg["door"]; has && d == "" {
+				got = true
+			}
+		}
+	}
+	if !got {
+		t.Fatal("rotation must send codes{door:\"\"} to team that knew the dead code")
+	}
+	// known==current на момент ротации НЕ сбрасывается (он становится prev
+	// и всё ещё открывает дверь)
+	w.noteTeamCode(h.team, "door_key_cur", w.doorKeyCode)
+	now = now.Add(121 * time.Second)
+	w.simulateTick()
+	if w.doorCodes[h.team] == "" {
+		t.Fatalf("code that became prev must survive rotation: %v", w.doorCodes)
+	}
+}
+
 // --- §16.4 decrypt ------------------------------------------------------------
 
 // decryptWorld — мир для decrypt-тестов: cyberTestWorld + SRV-станция на s1
@@ -3312,8 +3411,11 @@ func TestDecryptNpuDenied(t *testing.T) {
 // 60 МБ = 30 с), отменяется джек-аутом; результат enc:false + код в MEM деки.
 func TestDecryptDeckJob(t *testing.T) {
 	w, h, clock := decryptWorld(t)
-	h.items = append(h.items, dataItem{Name: "door_key", MB: 60, Enc: true})
-	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	// имя — реальное поколение (§16.5): у мёртвого поколения код не
+	// публикуется (§15.43), фикстура обязана нести живой door_key_HH_MM
+	key := w.doorKeyName
+	h.items = append(h.items, dataItem{Name: key, MB: 60, Enc: true})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": key})
 	p := findProg(h, "decrypt")
 	if p == nil {
 		t.Fatalf("deck decrypt not started")
@@ -3337,13 +3439,13 @@ func TestDecryptDeckJob(t *testing.T) {
 	}
 	// уже расшифрованный item — decrypted (denied; owner: не смешивать
 	// «уже скопировано» и «уже расшифровано» в одном reason)
-	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": key})
 	if !hasDenied(w.takeOut(), h.id, "decrypted") {
 		t.Fatalf("decrypt of a plain (enc:false) item must be denied decrypted")
 	}
 	// джек-аут отменяет дековую джобу (процесс деки, §16.4)
 	h.items[0].Enc = true
-	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": "door_key"})
+	w.handleMessage(h, message{"t": "run", "prog": "decrypt", "dev": "deck", "data": key})
 	for i := 0; i < 2*30; i++ {
 		*clock = clock.Add(time.Second / 30)
 		w.simulateTick()
