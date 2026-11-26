@@ -18,11 +18,16 @@ type InstallPromptEvent = Event & {
 }
 
 /** Печать протокола extract-победы (ревизия 2, плейтест «проще — печать
- *  протокола»): строки телетайпом, слева, без перспектив. Лор прежний. */
+ *  протокола»): строки телетайпом, слева, без перспектив. Лор прежний.
+ *  Ревизия 3 (плейтест 2026-11-26 «в титрах ОЧЕНЬ КРИВО текст без переносов
+ *  и отступов после знаков препинания»): строки рендерятся block'ами (§ CSS),
+ *  поэтому в источнике одна строка = одна строка экрана; разделитель вместо
+ *  «====» — пустая строка с классом cl-hr (CSS-линия во всю ширину листа,
+ *  символьная полоска не попадала в ширину и лезла в заголовок). */
 const CRAWL_LINES: readonly { text: string; cls?: string }[] = [
   { text: 'HACKSTRIKE // ОПЕРАЦИЯ № 001', cls: 'cl-head' },
   { text: 'КОНТЕЙНЕР: PHYSAFE-01 ..... СТАТУС: ВСКРЫТ', cls: 'cl-head' },
-  { text: '========================================', cls: 'cl-dim' },
+  { text: '', cls: 'cl-hr' },
   { text: 'ПРОТОКОЛ «ГЕНЕАЛОГИЯ»', cls: 'cl-title' },
   { text: 'внутри — не золото и не код. внутри — протокол.' },
   { text: '' },
@@ -1463,11 +1468,13 @@ export class Hud {
       if (i >= CRAWL_LINES.length) return
       const l = CRAWL_LINES[i++]
       const row = document.createElement('span')
-      if (l.cls !== undefined) row.className = l.cls
-      row.textContent = l.text === '' ? ' ' : l.text
-      this.el.crawlText.insertBefore(row, cursor)
+      // cl-row: каждая запись источника — отдельная строка экрана (плейтест
+      // 2026-11-26: inline-склеивание давало «001КОНТЕЙНЕР» и «строк,каждая»)
+      row.className = 'cl-row' + (l.cls !== undefined ? ' ' + l.cls : '')
+      row.textContent = l.text === '' && l.cls === undefined ? ' ' : l.text
       cursor.remove()
-      this.el.crawlText.append(cursor) // курсор всегда за последней строкой
+      row.append(cursor) // курсор ВНУТРИ ряда: ряды block — иначе уехал бы на строку ниже
+      this.el.crawlText.append(row)
     }
     step() // первая строка — сразу, экран не пустой
     window.clearInterval(this.crawlTimer)

@@ -790,9 +790,22 @@
         line-height: 1.75;
         white-space: pre-wrap;
       }
+      /* Плейтест 2026-11-26: строки титров были inline-span'ами в pre-wrap —
+         склеивались в кашу («001КОНТЕЙНЕР», «строк,каждая»). Теперь каждая
+         запись источника — block: одна строка = одна строка экрана. */
+      #crawlText .cl-row {
+        display: block;
+        min-height: 1em;
+      }
       #crawlText .cl-head {
         color: #37ff9b;
         letter-spacing: 2px;
+      }
+      /* Разделитель: символьная «====» не попадала в ширину листа и залезала
+         в заголовок (тот же плейтест) — честная линия через border */
+      #crawlText .cl-hr {
+        border-top: 1px solid rgba(255, 215, 94, 0.4);
+        margin: 6px 0 2px;
       }
       #crawlText .cl-title {
         display: block;
